@@ -7,12 +7,12 @@ use ../nu-multiproof/git-proof.nu
 def "extract single file" [] {
     let proof_dir = (^mktemp -d | str trim)
 
-    let result = (git-proof extract spec/cybergraph-model.md --out-dir $proof_dir)
+    let result = (git-proof extract nu-multiproof/mod.nu --out-dir $proof_dir)
 
     assert equal $result.version 1
     assert equal $result.object_format "sha256"
     assert equal ($result.files | length) 1
-    assert equal ($result.files | first | get path) "spec/cybergraph-model.md"
+    assert equal ($result.files | first | get path) "nu-multiproof/mod.nu"
     assert (($proof_dir | path join "manifest.json") | path exists)
     assert (($proof_dir | path join "objects") | path exists)
     assert (($proof_dir | path join "pubkeys") | path exists)
@@ -24,10 +24,10 @@ def "extract single file" [] {
 def "extract multiple files with deduplication" [] {
     let proof_dir = (^mktemp -d | str trim)
 
-    let result = (git-proof extract spec/cybergraph-model.md toolkit.nu --out-dir $proof_dir)
+    let result = (git-proof extract nu-multiproof/mod.nu toolkit.nu --out-dir $proof_dir)
 
     assert equal ($result.files | length) 2
-    # commit + root tree + spec subtree + 2 blobs = 5 unique objects
+    # commit + root tree + nu-multiproof subtree + 2 blobs = 5 unique objects
     assert equal ($result.objects | length) 5
 
     rm --recursive $proof_dir
@@ -37,12 +37,12 @@ def "extract multiple files with deduplication" [] {
 def "verify valid proof" [] {
     let proof_dir = (^mktemp -d | str trim)
 
-    git-proof extract spec/cybergraph-model.md --out-dir $proof_dir
+    git-proof extract nu-multiproof/mod.nu --out-dir $proof_dir
     let result = (git-proof verify $proof_dir)
 
     assert equal $result.valid true
     assert equal ($result.files | length) 1
-    assert equal ($result.files | first | get path) "spec/cybergraph-model.md"
+    assert equal ($result.files | first | get path) "nu-multiproof/mod.nu"
 
     rm --recursive $proof_dir
 }

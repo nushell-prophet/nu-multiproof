@@ -1,5 +1,6 @@
 export def main [] {}
 
+# Requires nutest as sibling directory: git clone https://github.com/vyadh/nutest ../nutest
 export def 'main test' [--fail] {
     use ../nutest/nutest
 
