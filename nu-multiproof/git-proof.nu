@@ -26,6 +26,7 @@ def parse-commit-tree []: string -> string {
 
 # Copy git loose objects between directories
 def copy-loose-objects [src: path, dest: path] {
+    let src = $src | path expand
     glob ($src | path join "??/*") | each {|file|
         let rel = ($file | path relative-to $src)
         mkdir ($dest | path join $rel | path dirname)

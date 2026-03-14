@@ -51,7 +51,9 @@ def "verify valid proof" [] {
 def "verify checks signature" [] {
     let proof_dir = (^mktemp -d | str trim)
 
-    git-proof extract toolkit.nu --out-dir $proof_dir
+    # Use a known signed commit — HEAD may not be signed
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status == "G" | first | get hash)
+    git-proof extract allowed_signers --commit $signed --out-dir $proof_dir
     let result = (git-proof verify $proof_dir)
 
     assert equal $result.valid true
