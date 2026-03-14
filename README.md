@@ -21,7 +21,7 @@ use nu-multiproof/
 nu-multiproof init
 
 # Generate content manifest (SHA-256, git hash, IPFS CID v0)
-nu-multiproof tree-hashes --nushell-only
+nu-multiproof tree-hashes
 
 # Extract a git merkle proof for specific files
 nu-multiproof git-proof extract src/main.nu README.md

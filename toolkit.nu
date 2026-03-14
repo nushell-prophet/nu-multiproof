@@ -37,7 +37,7 @@ export def 'main hash' [
 ] {
     use nu-multiproof/tree-hashes.nu
 
-    tree-hashes --nushell-only --echo=$echo --path $path
+    tree-hashes --echo=$echo --path $path
 }
 
 export def 'main proof-extract' [

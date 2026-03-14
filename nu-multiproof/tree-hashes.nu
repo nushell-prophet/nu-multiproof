@@ -11,7 +11,7 @@ const OUTPUT_FILE = "tree-hashes.csv"
 const MULTIPROOFS_DIR = "multiproofs"
 
 export def build-tree [
-    --nushell-only
+    --ipfs  # Compute CIDs using ipfs CLI (supports large files and directory CIDs)
     --path: path  # Target git repo root (default: git root of current directory)
 ]: nothing -> table {
     let root = if $path != null { $path | path expand } else {
@@ -39,7 +39,16 @@ export def build-tree [
     )
 
     # Content CIDs
-    let content_cid_table = if $nushell_only {
+    let content_cid_table = if $ipfs {
+        ^ipfs add --recursive ...$IPFS_FLAGS $root
+        | lines
+        | parse "added {cid} {path}"
+        | where { $in.path != $root_basename }
+        | reduce --fold {} {|row acc|
+            let rel = $row.path | str replace $"($root_basename)/" ""
+            $acc | insert $rel $row.cid
+        }
+    } else {
         $entries
         | where not $it.is_dir
         | each {|e|
@@ -53,15 +62,6 @@ export def build-tree [
             }
         }
         | reduce --fold {} {|row acc| $acc | insert $row.key $row.val }
-    } else {
-        ^ipfs add --recursive ...$IPFS_FLAGS $root
-        | lines
-        | parse "added {cid} {path}"
-        | where { $in.path != $root_basename }
-        | reduce --fold {} {|row acc|
-            let rel = $row.path | str replace $"($root_basename)/" ""
-            $acc | insert $rel $row.cid
-        }
     }
 
     # Git hashes: tree hashes for directories, blob hashes for files (working copy)
@@ -106,10 +106,10 @@ export def build-tree [
 # Generate tree hashes and save to multiproofs/tree-hashes.csv
 export def main [
     --echo # Output as nushell table instead of saving to file
-    --nushell-only # Compute CIDs using pure Nushell (no ipfs CLI dependency, files ≤ 256 KB only)
+    --ipfs # Compute CIDs using ipfs CLI (supports large files and directory CIDs)
     --path: path  # Target git repo root (default: git root of current directory)
 ] {
-    let table = if $nushell_only { build-tree --nushell-only --path $path } else { build-tree --path $path }
+    let table = if $ipfs { build-tree --ipfs --path $path } else { build-tree --path $path }
     let target_root = if $path != null { $path | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
