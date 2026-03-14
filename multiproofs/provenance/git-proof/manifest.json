@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "object_format": "sha256",
+  "commit": "ff8545e1d6a1f3ce195f7ed5049d6f0ba29834176878603af21e6a255fe673e7",
+  "tree": "1bdbce0a9b67794b2fad09084ab0b41ca7b552a7812940d1cd66ee6d9e063f50",
+  "files": [
+    {
+      "path": "nu-multiproof/mod.nu",
+      "hash": "7e2935487e19369266a9f639c69abe0800403622f7abf8bbd8f8da17d6e64bf8"
+    },
+    {
+      "path": "nu-multiproof/cid-v0.nu",
+      "hash": "5fd8a23aab90c61340e109b4ad88d37b2fb8433a36cce42faa2006ddc2873f32"
+    },
+    {
+      "path": "nu-multiproof/tree-hashes.nu",
+      "hash": "83706418bc8e7f09bb43273baf64ace67dd063f1594d6774eda71403db3e7cef"
+    },
+    {
+      "path": "nu-multiproof/git-proof.nu",
+      "hash": "fbe00da7014a1f27c66fab091b152abbd7c2236130da53d1f539f82ccba14787"
+    },
+    {
+      "path": "nu-multiproof/ots.nu",
+      "hash": "49f7972f1a1af5d1e8cabbeca2bfa93eaf9242c4e12bb7da4713a15ed50f1a1e"
+    },
+    {
+      "path": "nu-multiproof/ssh-sign.nu",
+      "hash": "7eed78ecdd055082a3d3b1818b5dd4d60ba2d8e988978d98566da8eb6be0d0a6"
+    },
+    {
+      "path": "nu-multiproof/init.nu",
+      "hash": "52d35d27e89b899176e222c70c4c48b4257f33043acf42bacfcd33091d0393b9"
+    }
+  ],
+  "objects": [
+    {
+      "hash": "ff8545e1d6a1f3ce195f7ed5049d6f0ba29834176878603af21e6a255fe673e7",
+      "type": "commit"
+    },
+    {
+      "hash": "1bdbce0a9b67794b2fad09084ab0b41ca7b552a7812940d1cd66ee6d9e063f50",
+      "type": "tree"
+    },
+    {
+      "hash": "1ba132a61ecadf206dc3492a8ca305cc4279a64c5002eef62d11d74d3759b7f5",
+      "type": "tree"
+    },
+    {
+      "hash": "7e2935487e19369266a9f639c69abe0800403622f7abf8bbd8f8da17d6e64bf8",
+      "type": "blob"
+    },
+    {
+      "hash": "5fd8a23aab90c61340e109b4ad88d37b2fb8433a36cce42faa2006ddc2873f32",
+      "type": "blob"
+    },
+    {
+      "hash": "83706418bc8e7f09bb43273baf64ace67dd063f1594d6774eda71403db3e7cef",
+      "type": "blob"
+    },
+    {
+      "hash": "fbe00da7014a1f27c66fab091b152abbd7c2236130da53d1f539f82ccba14787",
+      "type": "blob"
+    },
+    {
+      "hash": "49f7972f1a1af5d1e8cabbeca2bfa93eaf9242c4e12bb7da4713a15ed50f1a1e",
+      "type": "blob"
+    },
+    {
+      "hash": "7eed78ecdd055082a3d3b1818b5dd4d60ba2d8e988978d98566da8eb6be0d0a6",
+      "type": "blob"
+    },
+    {
+      "hash": "52d35d27e89b899176e222c70c4c48b4257f33043acf42bacfcd33091d0393b9",
+      "type": "blob"
+    }
+  ],
+  "pubkeys": [
+    "claude-code.pub",
+    "maxim-uvarov1.pub",
+    "maxim-uvarov2.pub"
+  ]
+}
