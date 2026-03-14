@@ -14,10 +14,6 @@ steps:
     commands:
       - git fetch --unshallow origin || true
       - git fetch origin --tags || true
-      - echo "--- commit count ---"
-      - git rev-list --count HEAD
-      - echo "--- log ---"
-      - git log --oneline
       - git init --bare --object-format=sha1 /tmp/sha1-mirror
       - git fast-export --all | git -C /tmp/sha1-mirror fast-import
       - git -C /tmp/sha1-mirror remote add github https://x-access-token:$GITHUB_TOKEN@github.com/nushell-prophet/nu-multiproof.git
