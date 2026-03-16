@@ -49,6 +49,89 @@ export def 'main root-cid' [
     tree-hashes root-cid --path $path --only-hash=$only_hash
 }
 
+# Resolve SSH signing key from git config (file path or inline key::)
+def resolve-signing-key [root: path]: nothing -> record<key: string, name: string> {
+    let git_key = (do { ^git -C $root config user.signingKey } | complete)
+    if $git_key.exit_code != 0 {
+        error make {msg: "no git signing key configured — use --no-sign or set user.signingKey"}
+    }
+    let raw = $git_key.stdout | str trim
+    if ($raw | str starts-with "key::") {
+        let key_data = $raw | str replace "key::" ""
+        let tmp = $nu.temp-dir | path join "seal-signing-key.pub"
+        $key_data | save --raw --force $tmp
+        {key: $tmp, name: null}
+    } else {
+        let expanded = $raw | path expand
+        let key_path = if ($expanded | path exists) { $expanded
+        } else if ($"($expanded).pub" | path exists) { $"($expanded).pub"
+        } else {
+            error make {msg: $"signing key not found: ($raw)"}
+        }
+        {key: ($key_path | into string), name: null}
+    }
+}
+
+# Full seal pipeline: hash → root-cid → sign → stamp.
+# Also upgrades any pending OTS timestamps opportunistically.
+export def 'main seal' [
+    --path: path       # Target directory (default: current directory)
+    --key: path        # SSH private key (default: from git config user.signingKey)
+    --no-sign          # Skip SSH signing
+    --no-stamp         # Skip OTS timestamping
+    --only-hash        # Compute root CID without adding to IPFS
+] {
+    use nu-multiproof/tree-hashes.nu
+    use nu-multiproof/ots.nu
+    use nu-multiproof/ssh-sign.nu
+
+    let root = if $path != null { $path | path expand } else {
+        ^git rev-parse --show-toplevel | str trim
+    }
+    let manifest_path = $root | path join "multiproofs/tree-hashes.csv"
+    let ots_dir = $root | path join "multiproofs/ots-timestamps"
+
+    # 1. Upgrade any pending OTS timestamps
+    if ($ots_dir | path exists) {
+        glob ($ots_dir | path join "**/*.ots") | each {|ots_file|
+            try { ots upgrade $ots_file } catch { }
+        }
+    }
+
+    # 2. Regenerate manifest
+    tree-hashes --path $root
+    print $"Manifest: multiproofs/tree-hashes.csv"
+
+    # 3. Compute root CID
+    let root_cid = tree-hashes root-cid --path $root --only-hash=$only_hash
+    print $"Root CID: ($root_cid)"
+
+    mut result = {root_cid: $root_cid, manifest: $manifest_path}
+
+    # 4. Sign the manifest
+    if not $no_sign {
+        let resolved = if $key != null {
+            {key: ($key | into string), name: null}
+        } else {
+            resolve-signing-key $root
+        }
+        let sig = if $resolved.name != null {
+            ssh-sign sign $manifest_path --key $resolved.key --name $resolved.name
+        } else {
+            ssh-sign sign $manifest_path --key $resolved.key
+        }
+        $result = ($result | insert sig $sig)
+    }
+
+    # 5. OTS timestamp the manifest
+    if not $no_stamp {
+        let stamp_result = ots stamp $manifest_path
+        $result = ($result | insert ots $stamp_result.ots)
+    }
+
+    $result
+}
+
 export def 'main proof-extract' [
     ...files: string            # Target file paths to prove
     --commit: string = "HEAD"   # Commit to prove against
