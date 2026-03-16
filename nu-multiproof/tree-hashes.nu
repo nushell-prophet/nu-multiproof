@@ -111,8 +111,10 @@ export def build-tree [
 # The root CID is stored as a "." row in tree-hashes.csv. No circularity:
 # tree-hashes.csv is excluded from its own manifest (build-tree filters it out),
 # so the root CID covers all listed files but not the CSV itself.
-# Signing the CSV therefore implicitly covers the root CID — no need to sign
-# the 46-char string separately.
+# Not a separate file/git tag/provenance bundle because: the "." row collapses
+# the root CID into the existing manifest — no new artifact to track.
+# Signing the CSV implicitly covers the root CID. User decided signing the
+# 46-char CID string separately is unnecessary — the CSV is the single artifact.
 #
 # The temp-dir staging ensures we add exactly the files from the manifest,
 # not whatever happens to be on disk. CID parameters match IPFS_CID_FLAGS
@@ -126,6 +128,8 @@ export def root-cid [
     }
     let manifest_path = $root | path join $MULTIPROOFS_DIR $OUTPUT_FILE
     let manifest = open $manifest_path
+    # Why manifest not glob/git-ls-files: the manifest defines what's "in" the worktree.
+    # The user's file list is the CSV, not whatever happens to be on disk.
     let files = $manifest | where content_sha256 != "" | get filepath
 
     let tmp = $nu.temp-dir | path join "nu-multiproof-ipfs-add"

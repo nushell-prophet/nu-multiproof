@@ -89,8 +89,8 @@ def resolve-signing-key [root: path]: nothing -> record<key: string, name: strin
 export def 'main seal' [
     --path: path       # Target directory (default: current directory)
     --key: path        # SSH private key (default: from git config user.signingKey)
-    --no-sign          # Skip SSH signing
-    --no-stamp         # Skip OTS timestamping
+    --no-sign          # Skip SSH signing (on by default — seal should be complete)
+    --no-stamp         # Skip OTS timestamping (on by default — seal should be complete)
     --only-hash        # Compute root CID without adding to IPFS
 ] {
     use nu-multiproof/tree-hashes.nu
@@ -103,7 +103,8 @@ export def 'main seal' [
     let manifest_path = $root | path join "multiproofs/tree-hashes.csv"
     let ots_dir = $root | path join "multiproofs/ots-timestamps"
 
-    # 1. Upgrade pending OTS — runs before new work so previous seals progress
+    # 1. Upgrade pending OTS — every seal progresses previous seals automatically,
+    #    so there's no need for a separate upgrade command
     if ($ots_dir | path exists) {
         glob ($ots_dir | path join "**/*.ots") | each {|ots_file|
             try { ots upgrade $ots_file } catch { }
