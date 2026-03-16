@@ -105,8 +105,18 @@ export def build-tree [
 }
 
 # Add manifest files to IPFS and return the root CID (CID v0, 46 chars).
-# Reads tree-hashes.csv, stages listed files into a temp directory, runs ipfs add -r.
-# Stores the root CID as a "." row in the manifest.
+# Reads tree-hashes.csv for the file list, stages them into a temp directory,
+# runs `ipfs add -r` to get a single root hash for the whole worktree.
+#
+# The root CID is stored as a "." row in tree-hashes.csv. No circularity:
+# tree-hashes.csv is excluded from its own manifest (build-tree filters it out),
+# so the root CID covers all listed files but not the CSV itself.
+# Signing the CSV therefore implicitly covers the root CID — no need to sign
+# the 46-char string separately.
+#
+# The temp-dir staging ensures we add exactly the files from the manifest,
+# not whatever happens to be on disk. CID parameters match IPFS_CID_FLAGS
+# so individual file CIDs are consistent with the content_cid column.
 export def root-cid [
     --path: path  # Target git repo root (default: git root of current directory)
     --only-hash   # Compute CID without adding content to IPFS

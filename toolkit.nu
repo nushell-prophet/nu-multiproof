@@ -73,7 +73,19 @@ def resolve-signing-key [root: path]: nothing -> record<key: string, name: strin
 }
 
 # Full seal pipeline: hash → root-cid → sign → stamp.
-# Also upgrades any pending OTS timestamps opportunistically.
+#
+# Operations order:
+#   1. Upgrade pending OTS — opportunistic; tries all .ots files, silent on failure
+#      (Bitcoin confirmation takes hours/days, so this progresses previous seals)
+#   2. tree-hashes — regenerate manifest from current worktree files
+#   3. root-cid — compute IPFS root CID, append "." row to manifest
+#   4. ssh-sign — sign the manifest (on by default; --no-sign to skip)
+#   5. ots stamp — timestamp the manifest (on by default; --no-stamp to skip)
+#
+# Committing is deliberately outside this pipeline. It's a user decision with
+# context (message, scope, timing). Also avoids circularity: git-proof proves
+# files existed in a signed commit, but seal artifacts would need to be in
+# that commit — keeping them separate sidesteps the chicken-and-egg.
 export def 'main seal' [
     --path: path       # Target directory (default: current directory)
     --key: path        # SSH private key (default: from git config user.signingKey)
@@ -91,24 +103,24 @@ export def 'main seal' [
     let manifest_path = $root | path join "multiproofs/tree-hashes.csv"
     let ots_dir = $root | path join "multiproofs/ots-timestamps"
 
-    # 1. Upgrade any pending OTS timestamps
+    # 1. Upgrade pending OTS — runs before new work so previous seals progress
     if ($ots_dir | path exists) {
         glob ($ots_dir | path join "**/*.ots") | each {|ots_file|
             try { ots upgrade $ots_file } catch { }
         }
     }
 
-    # 2. Regenerate manifest
+    # 2. Regenerate manifest — must precede root-cid (provides the file list)
     tree-hashes --path $root
     print $"Manifest: multiproofs/tree-hashes.csv"
 
-    # 3. Compute root CID
+    # 3. Compute root CID — single IPFS hash covering all manifest files
     let root_cid = tree-hashes root-cid --path $root --only-hash=$only_hash
     print $"Root CID: ($root_cid)"
 
     mut result = {root_cid: $root_cid, manifest: $manifest_path}
 
-    # 4. Sign the manifest
+    # 4. Sign the manifest — covers root CID via the "." row
     if not $no_sign {
         let resolved = if $key != null {
             {key: ($key | into string), name: null}
@@ -123,7 +135,7 @@ export def 'main seal' [
         $result = ($result | insert sig $sig)
     }
 
-    # 5. OTS timestamp the manifest
+    # 5. OTS timestamp — anchors the manifest (with root CID) to Bitcoin
     if not $no_stamp {
         let stamp_result = ots stamp $manifest_path
         $result = ($result | insert ots $stamp_result.ots)
