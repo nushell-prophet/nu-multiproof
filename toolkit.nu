@@ -40,6 +40,15 @@ export def 'main hash' [
     tree-hashes --echo=$echo --path $path
 }
 
+export def 'main root-cid' [
+    --path: path       # Target directory (default: current directory)
+    --only-hash        # Compute CID without adding content to IPFS
+] {
+    use nu-multiproof/tree-hashes.nu
+
+    tree-hashes root-cid --path $path --only-hash=$only_hash
+}
+
 export def 'main proof-extract' [
     ...files: string            # Target file paths to prove
     --commit: string = "HEAD"   # Commit to prove against

@@ -7,6 +7,7 @@ use cid-v0.nu
 
 # Hashes name strings as-is (no trailing newline). To reproduce: printf '%s' 'name' | ipfs add ...
 const IPFS_FLAGS = ["--only-hash" "--progress=false" "--cid-version=0" "--raw-leaves=false" "--hash=sha2-256" "--chunker=size-262144"]
+const IPFS_CID_FLAGS = ["--progress=false" "--cid-version=0" "--raw-leaves=false" "--hash=sha2-256" "--chunker=size-262144"]
 const OUTPUT_FILE = "tree-hashes.csv"
 const MULTIPROOFS_DIR = "multiproofs"
 
@@ -101,6 +102,42 @@ export def build-tree [
             content_cid: (if $e.is_dir { "" } else { $content_cid_table | get $e.rel })
         }
     }
+}
+
+# Add manifest files to IPFS and return the root CID (CID v0, 46 chars).
+# Reads tree-hashes.csv, stages listed files into a temp directory, runs ipfs add -r.
+export def root-cid [
+    --path: path  # Target git repo root (default: git root of current directory)
+    --only-hash   # Compute CID without adding content to IPFS
+]: nothing -> string {
+    let root = if $path != null { $path | path expand } else {
+        ^git rev-parse --show-toplevel | str trim
+    }
+    let manifest = $root | path join $MULTIPROOFS_DIR $OUTPUT_FILE
+    let files = open $manifest | where content_sha256 != "" | get filepath
+
+    let tmp = $nu.temp-dir | path join "nu-multiproof-ipfs-add"
+    rm --recursive --force $tmp
+    mkdir $tmp
+
+    $files | each {|f|
+        let dest = $tmp | path join $f
+        mkdir ($dest | path dirname)
+        cp ($root | path join $f) $dest
+    }
+
+    let flags = if $only_hash {
+        ["--recursive" "--only-hash" ...$IPFS_CID_FLAGS]
+    } else {
+        ["--recursive" ...$IPFS_CID_FLAGS]
+    }
+
+    let cid = ^ipfs add ...$flags $tmp
+        | lines | last
+        | parse "added {cid} {path}" | get cid.0
+
+    rm --recursive --force $tmp
+    $cid
 }
 
 # Generate tree hashes and save to multiproofs/tree-hashes.csv
