@@ -106,6 +106,7 @@ export def build-tree [
 
 # Add manifest files to IPFS and return the root CID (CID v0, 46 chars).
 # Reads tree-hashes.csv, stages listed files into a temp directory, runs ipfs add -r.
+# Stores the root CID as a "." row in the manifest.
 export def root-cid [
     --path: path  # Target git repo root (default: git root of current directory)
     --only-hash   # Compute CID without adding content to IPFS
@@ -113,8 +114,9 @@ export def root-cid [
     let root = if $path != null { $path | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
-    let manifest = $root | path join $MULTIPROOFS_DIR $OUTPUT_FILE
-    let files = open $manifest | where content_sha256 != "" | get filepath
+    let manifest_path = $root | path join $MULTIPROOFS_DIR $OUTPUT_FILE
+    let manifest = open $manifest_path
+    let files = $manifest | where content_sha256 != "" | get filepath
 
     let tmp = $nu.temp-dir | path join "nu-multiproof-ipfs-add"
     rm --recursive --force $tmp
@@ -137,6 +139,14 @@ export def root-cid [
         | parse "added {cid} {path}" | get cid.0
 
     rm --recursive --force $tmp
+
+    # Store root CID as "." row in the manifest
+    $manifest
+    | where filepath != "."
+    | append {filepath: ".", content_sha256: "", content_git: "", content_cid: $cid}
+    | to csv --separator ','
+    | save --raw --force $manifest_path
+
     $cid
 }
 
