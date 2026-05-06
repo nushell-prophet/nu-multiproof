@@ -32,6 +32,8 @@ nu-multiproof git-proof verify proof/
 nu-multiproof ots stamp multiproofs/tree-hashes.csv
 # Upgrade pending attestation to Bitcoin (hours/days later)
 nu-multiproof ots upgrade multiproofs/ots-timestamps/tree-hashes.ABCD1234/tree-hashes.ots
+# Promote an upgraded provenance bundle into ots-verified/ (move + optional sign + rename to tree-hashes)
+nu-multiproof ots promote multiproofs/provenance/ots-pending/<bundle>/<bundle>.ots --key ~/.ssh/id_ed25519
 # Inspect a timestamp
 nu-multiproof ots info tree-hashes.ots
 
@@ -67,6 +69,8 @@ This repository contains proofs of its own origin in `multiproofs/provenance/`:
 - **`git-proof/`** — merkle proof that commit [`ff8545e`] in the source repository was signed with an ECDSA-SK hardware key and contained the exact files in `nu-multiproof/`
 - **`ots-verified/tree-hashes.CCA016A8/`** — Bitcoin block 939896 timestamp of an earlier content snapshot, with SSH signature
 - **`ots-pending/`** — timestamp of the current content, awaiting Bitcoin confirmation
+
+After `ots upgrade` confirms a pending bundle (hours-to-days after stamping), run `ots promote` to optionally sign the `.ots`, move the bundle into `ots-verified/`, and rename filenames to match the verified-bundle convention. Then commit the rename and update the block-height reference in this section.
 
 Verify the git proof:
 

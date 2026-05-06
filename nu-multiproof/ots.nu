@@ -1,6 +1,8 @@
 # Pure Nushell OpenTimestamps implementation — no `ots` CLI dependency.
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
+use ssh-sign.nu
+
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 const OP_SHA256 = 0x08
 const OP_RIPEMD160 = 0x03
@@ -281,4 +283,76 @@ export def upgrade [path: path] {
 
     $upgraded | save --raw --force $path
     print $"Upgraded: ($path)"
+}
+
+# Promote a verified pending bundle from ots-pending/ to ots-verified/.
+# Why: provenance bundles split into pending/verified by directory.
+# The verified bundle additionally carries an SSH signature on the .ots,
+# witnessing that a real human observed the Bitcoin confirmation.
+export def promote [
+    path: path                          # Path to .ots inside ots-pending/<bundle>/
+    --key: path                         # SSH private key (optional). Sign .ots before move.
+    --name: string                      # Signer name override, forwarded to ssh-sign sign
+    --rename: string = "tree-hashes"    # New filename stem. Why default tree-hashes: matches the canonical verified-bundle convention in this repo; pending stems are commonly accidental (e.g. nu-multiproof- prefix from extraction).
+] {
+    let parsed = open --raw $path | parse-ots
+    if $parsed.attestation.type == "pending" {
+        error make {msg: $"still pending — run `ots upgrade` first: ($path)"}
+    }
+    if $parsed.attestation.type != "bitcoin" {
+        error make {msg: $"unexpected attestation type: ($parsed.attestation.type)"}
+    }
+
+    let bundle_dir = $path | path dirname
+    let pending_parent = $bundle_dir | path dirname
+    if ($pending_parent | path basename) != "ots-pending" {
+        error make {msg: $"not in ots-pending/: ($bundle_dir)"}
+    }
+
+    if $key != null {
+        if $name != null {
+            ssh-sign sign $path --key $key --name $name
+        } else {
+            ssh-sign sign $path --key $key
+        }
+    }
+
+    let provenance = $pending_parent | path dirname
+    let parsed_dir = $bundle_dir | path basename | path parse
+    let old_stem = $parsed_dir.stem
+    let suffix = $parsed_dir.extension
+    let new_stem = $rename
+    let new_dir = $provenance | path join "ots-verified" $"($new_stem).($suffix)"
+    if ($new_dir | path exists) {
+        error make {msg: $"target exists: ($new_dir)"}
+    }
+    mkdir ($new_dir | path dirname)
+
+    let tracked = (do { ^git ls-files --error-unmatch $bundle_dir } | complete).exit_code == 0
+    if $tracked {
+        ^git mv $bundle_dir $new_dir
+    } else {
+        mv $bundle_dir $new_dir
+    }
+
+    if $new_stem != $old_stem {
+        ls $new_dir | get name | each {|f|
+            let base = $f | path basename
+            if ($base | str starts-with $"($old_stem).") {
+                let tail = $base | str substring (($old_stem | str length) + 1)..
+                let target = $new_dir | path join $"($new_stem).($tail)"
+                if $tracked {
+                    ^git mv $f $target
+                } else {
+                    mv $f $target
+                }
+            }
+        }
+    }
+
+    let height = $parsed.attestation.height
+    print $"Promoted to: ($new_dir)"
+    print $"Bitcoin block: ($height)"
+    print $"Suggested commit: provenance: promote ots bundle to ($new_stem).($suffix) \(block ($height)\)"
+    print "Reminder: update README.md provenance section with the new bundle path and block height."
 }
