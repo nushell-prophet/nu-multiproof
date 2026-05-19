@@ -51,8 +51,11 @@ def "verify valid proof" [] {
 def "verify checks signature" [] {
     let proof_dir = (^mktemp -d | str trim)
 
-    # Use a known signed commit — HEAD may not be signed
-    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status == "G" | first | get hash)
+    # Use any signed commit — HEAD may not be signed.
+    # Not status == "G" because: %G? reflects *local* trust (allowedSignersFile),
+    # not whether the commit carries a signature. The proof bundles its own pubkeys
+    # and points git at them at verify time, so any non-"N" status is a valid fixture.
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
     git-proof extract allowed_signers --commit $signed --out-dir $proof_dir
     let result = (git-proof verify $proof_dir)
 
