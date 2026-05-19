@@ -88,6 +88,31 @@ def "verify fails when signer key not in bundle" [] {
 }
 
 @test
+def "verify fails when bundled pubkey tampered" [] {
+    let proof_dir = (^mktemp -d | str trim)
+
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    let signer_fp = (^git log -1 --format='%GK' $signed | str trim)
+
+    git-proof extract allowed_signers --commit $signed --out-dir $proof_dir
+
+    # Overwrite the matching pubkey with a malformed key. The allowedSignersFile
+    # parser flags the line "invalid key" and git verify-commit can no longer
+    # match the signer.
+    glob ($proof_dir | path join "pubkeys/*.pub") | each {|f|
+        let fp = (^ssh-keygen -lf $f | split row " " | get 1)
+        if $fp == $signer_fp {
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITAMPERED tampered" | save --force $f
+        }
+    }
+
+    let result = (git-proof verify $proof_dir)
+    assert equal $result.signature.valid false
+
+    rm --recursive $proof_dir
+}
+
+@test
 def "blob hash matches git" [] {
     let proof_dir = (^mktemp -d | str trim)
 
