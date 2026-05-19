@@ -257,9 +257,11 @@ def verify-signature [
 
     let signers_file = ($tmp_repo | path dirname | path join "allowed_signers")
     $signers | save --force $signers_file
-    ^git --git-dir $tmp_repo config gpg.ssh.allowedSignersFile $signers_file
 
-    let result = (do { ^git --git-dir $tmp_repo verify-commit $manifest.commit } | complete)
+    # Pass the signers file via -c so we don't persist git config in the temp repo
+    let result = (do {
+        ^git -c $"gpg.ssh.allowedSignersFile=($signers_file)" --git-dir $tmp_repo verify-commit $manifest.commit
+    } | complete)
     let output = if ($result.stderr | str trim | is-not-empty) {
         $result.stderr | str trim
     } else {
