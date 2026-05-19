@@ -56,7 +56,7 @@ def "verify checks signature" [] {
     # not whether the commit carries a signature. The proof bundles its own pubkeys
     # and points git at them at verify time, so any non-"N" status is a valid fixture.
     let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
-    git-proof extract allowed_signers --commit $signed --out-dir $proof_dir
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
     let result = (git-proof verify $proof_dir)
 
     assert equal $result.valid true
@@ -72,7 +72,7 @@ def "verify fails when signer key not in bundle" [] {
     let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
     let signer_fp = (^git log -1 --format='%GK' $signed | str trim)
 
-    git-proof extract allowed_signers --commit $signed --out-dir $proof_dir
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
 
     # Remove the pubkey that matches the signer; remaining keys are non-matching.
     # This models a bundle whose pubkeys/ never contained the signer's key.
@@ -94,7 +94,7 @@ def "verify fails when bundled pubkey tampered" [] {
     let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
     let signer_fp = (^git log -1 --format='%GK' $signed | str trim)
 
-    git-proof extract allowed_signers --commit $signed --out-dir $proof_dir
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
 
     # Overwrite the matching pubkey with a malformed key. The allowedSignersFile
     # parser flags the line "invalid key" and git verify-commit can no longer
