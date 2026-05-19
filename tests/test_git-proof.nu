@@ -66,6 +66,28 @@ def "verify checks signature" [] {
 }
 
 @test
+def "verify fails when signer key not in bundle" [] {
+    let proof_dir = (^mktemp -d | str trim)
+
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    let signer_fp = (^git log -1 --format='%GK' $signed | str trim)
+
+    git-proof extract allowed_signers --commit $signed --out-dir $proof_dir
+
+    # Remove the pubkey that matches the signer; remaining keys are non-matching.
+    # This models a bundle whose pubkeys/ never contained the signer's key.
+    glob ($proof_dir | path join "pubkeys/*.pub") | each {|f|
+        let fp = (^ssh-keygen -lf $f | split row " " | get 1)
+        if $fp == $signer_fp { rm $f }
+    }
+
+    let result = (git-proof verify $proof_dir)
+    assert equal $result.signature.valid false
+
+    rm --recursive $proof_dir
+}
+
+@test
 def "blob hash matches git" [] {
     let proof_dir = (^mktemp -d | str trim)
 
