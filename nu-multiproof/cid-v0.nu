@@ -21,7 +21,7 @@ def unixfs-dag-pb []: binary -> binary {
     let content = $in
     let n = $content | bytes length
     if $n > $MAX_SINGLE_CHUNK {
-        error make { msg: $"content exceeds single chunk: ($n) > ($MAX_SINGLE_CHUNK)" }
+        error make {msg: $"content exceeds single chunk: ($n) > ($MAX_SINGLE_CHUNK)"}
     }
     let nv = $n | varint
     # UnixFS Data: type=File(2), data=content (omitted when empty), filesize=n
@@ -36,11 +36,13 @@ def unixfs-dag-pb []: binary -> binary {
 def base58-encode []: binary -> string {
     let hex = $in | encode hex
     let pair_count = ($hex | str length) // 2
-    let byte_list = (0..<$pair_count | each {|i|
-        let s = $i * 2
-        let hex_pair = $hex | str substring ($s)..<($s + 2)
-        $"0x($hex_pair)" | into int
-    })
+    let byte_list = (
+        0..<$pair_count | each {|i|
+            let s = $i * 2
+            let hex_pair = $hex | str substring ($s)..<($s + 2)
+            $"0x($hex_pair)" | into int
+        }
+    )
     let chars = $BASE58_ALPHABET | split chars
     let leading = $byte_list | take while { $in == 0 } | length
     mut nums = $byte_list
@@ -53,7 +55,7 @@ def base58-encode []: binary -> string {
             $quotient ++= [($val // 58)]
             $carry = $val mod 58
         }
-        $digits = [$carry, ...$digits]
+        $digits = [$carry ...$digits]
         $nums = ($quotient | skip while { $in == 0 })
     }
     let ones = (0..<$leading | each { '1' } | str join)

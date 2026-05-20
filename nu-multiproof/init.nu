@@ -3,8 +3,8 @@
 # Initialize multiproofs/ structure in a git repo.
 # Creates the directory, copies public keys from ssh-agent or a given path.
 export def main [
-    --path: path       # Target git repo root (default: git root of current directory)
-    --pubkey: path     # SSH public key file to copy (default: signing key from git config)
+    --path: path # Target git repo root (default: git root of current directory)
+    --pubkey: path # SSH public key file to copy (default: signing key from git config)
 ] {
     let root = if $path != null { $path | path expand } else {
         ^git rev-parse --show-toplevel | str trim

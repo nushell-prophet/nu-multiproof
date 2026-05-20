@@ -116,11 +116,13 @@ def "verify fails when bundled pubkey tampered" [] {
 def "blob hash matches git" [] {
     let proof_dir = (^mktemp -d | str trim)
 
-    let git_hash = (^git ls-tree HEAD toolkit.nu
+    let git_hash = (
+        ^git ls-tree HEAD toolkit.nu
         | lines
         | parse "{mode} {type} {hash}\t{name}"
         | first
-        | get hash)
+        | get hash
+    )
 
     let result = (git-proof extract toolkit.nu --out-dir $proof_dir)
     let proof_hash = ($result.files | first | get hash)

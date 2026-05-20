@@ -39,32 +39,32 @@ def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
         if ($b | bits and 0x80) == 0 { break }
         $shift = $shift * 128
     }
-    {value: $value, offset: $pos}
+    {value: $value offset: $pos}
 }
 
 # Parse length-prefixed bytes at offset
 def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
     let buf = $in
     let len = $buf | parse-varuint $offset
-    if $len.value == 0 { return {bytes: 0x[], offset: $len.offset} }
+    if $len.value == 0 { return {bytes: 0x[] offset: $len.offset} }
     let start = $len.offset
     let end = $start + $len.value - 1
-    {bytes: ($buf | bytes at $start..($end)), offset: ($end + 1)}
+    {bytes: ($buf | bytes at $start..($end)) offset: ($end + 1)}
 }
 
 # Parse one operation given the tag byte already read
-def parse-op [tag: int, offset: int]: binary -> record<op: record, offset: int> {
+def parse-op [tag: int offset: int]: binary -> record<op: record, offset: int> {
     let buf = $in
     match $tag {
-        0x08 => { {op: {type: "sha256"}, offset: $offset} }
+        0x08 => { {op: {type: "sha256"} offset: $offset} }
         0x03 => { error make {msg: "RIPEMD-160 replay not supported"} }
         0xf0 => {
             let vb = $buf | parse-varbytes $offset
-            {op: {type: "append", data: $vb.bytes}, offset: $vb.offset}
+            {op: {type: "append" data: $vb.bytes} offset: $vb.offset}
         }
         0xf1 => {
             let vb = $buf | parse-varbytes $offset
-            {op: {type: "prepend", data: $vb.bytes}, offset: $vb.offset}
+            {op: {type: "prepend" data: $vb.bytes} offset: $vb.offset}
         }
         _ => { error make {msg: $"unknown op tag: ($tag)"} }
     }
@@ -91,15 +91,15 @@ def parse-timestamp [offset: int] {
 
             let attestation = if $att_tag == $ATT_PENDING {
                 let inner = $vb.bytes | parse-varbytes 0
-                {type: "pending", url: ($inner.bytes | decode utf-8)}
+                {type: "pending" url: ($inner.bytes | decode utf-8)}
             } else if $att_tag == $ATT_BITCOIN {
                 let height = $vb.bytes | parse-varuint 0
-                {type: "bitcoin", height: $height.value}
+                {type: "bitcoin" height: $height.value}
             } else {
-                {type: "unknown", tag: ($att_tag | encode hex)}
+                {type: "unknown" tag: ($att_tag | encode hex)}
             }
 
-            return {ops: $ops, attestation: $attestation, att_offset: $att_start, offset: $pos}
+            return {ops: $ops attestation: $attestation att_offset: $att_start offset: $pos}
         } else {
             let parsed = $buf | parse-op $tag $pos
             $ops = $ops ++ [$parsed.op]
@@ -166,29 +166,33 @@ export def info [path: path] {
 
     for op in $parsed.ops {
         $lines = $lines ++ [
-            (match $op.type {
-                "sha256" => "  sha256"
-                "append" => $"  append ($op.data | encode hex)"
-                "prepend" => $"  prepend ($op.data | encode hex)"
-                _ => $"  ($op.type)"
-            })
+            (
+                match $op.type {
+                    "sha256" => "  sha256"
+                    "append" => $"  append ($op.data | encode hex)"
+                    "prepend" => $"  prepend ($op.data | encode hex)"
+                    _ => $"  ($op.type)"
+                }
+            )
         ]
     }
 
     let att = $parsed.attestation
     $lines = $lines ++ [
-        (match $att.type {
-            "pending" => (["  verify PendingAttestation(\"" $att.url "\")"] | str join)
-            "bitcoin" => (["  verify BitcoinBlockHeaderAttestation(" ($att.height | into string) ")"] | str join)
-            _ => (["  verify UnknownAttestation(" $att.tag ")"] | str join)
-        })
+        (
+            match $att.type {
+                "pending" => (["  verify PendingAttestation(\"" $att.url "\")"] | str join)
+                "bitcoin" => (["  verify BitcoinBlockHeaderAttestation(" ($att.height | into string) ")"] | str join)
+                _ => (["  verify UnknownAttestation(" $att.tag ")"] | str join)
+            }
+        )
     ]
 
     $lines | str join "\n"
 }
 
 # Create an OTS timestamp proof for a file
-export def stamp [path: path, --out-dir: string] {
+export def stamp [path: path --out-dir: string] {
     let out_dir = if $out_dir != null { $out_dir } else {
         let git_root = ^git rev-parse --show-toplevel | str trim
         $git_root | path join "multiproofs/ots-timestamps"
@@ -201,11 +205,11 @@ export def stamp [path: path, --out-dir: string] {
     $merkle_tip | save --raw --force $tmp
     let status = (
         ^curl --silent --show-error
-            --write-out "%{http_code}"
-            --output $"($tmp).resp"
-            --data-binary $"@($tmp)"
-            --header "Content-Type: application/x-www-form-urlencoded"
-            $"($DEFAULT_CALENDAR)/digest"
+        --write-out "%{http_code}"
+        --output $"($tmp).resp"
+        --data-binary $"@($tmp)"
+        --header "Content-Type: application/x-www-form-urlencoded"
+        $"($DEFAULT_CALENDAR)/digest"
     )
     rm $tmp
     if $status != "200" {
@@ -242,7 +246,7 @@ export def stamp [path: path, --out-dir: string] {
     print $"Frozen copy: ($copy_path)"
     print $"Timestamped: ($ots_path)"
 
-    {dir: $bundle_dir, copy: $copy_path, ots: $ots_path}
+    {dir: $bundle_dir copy: $copy_path ots: $ots_path}
 }
 
 # Upgrade a pending OTS attestation to a Bitcoin block header attestation
@@ -262,10 +266,10 @@ export def upgrade [path: path] {
     let tmp = mktemp
     let status = (
         ^curl --silent --show-error
-            --write-out "%{http_code}"
-            --output $tmp
-            --header "Accept: application/vnd.opentimestamps.v1"
-            $url
+        --write-out "%{http_code}"
+        --output $tmp
+        --header "Accept: application/vnd.opentimestamps.v1"
+        $url
     )
     if $status == "404" {
         rm $tmp
@@ -290,10 +294,10 @@ export def upgrade [path: path] {
 # The verified bundle additionally carries an SSH signature on the .ots,
 # witnessing that a real human observed the Bitcoin confirmation.
 export def promote [
-    path: path                          # Path to .ots inside ots-pending/<bundle>/
-    --key: path                         # SSH private key (optional). Sign .ots before move.
-    --name: string                      # Signer name override, forwarded to ssh-sign sign
-    --rename: string = "tree-hashes"    # New filename stem. Why default tree-hashes: matches the canonical verified-bundle convention in this repo; pending stems are commonly accidental (e.g. nu-multiproof- prefix from extraction).
+    path: path # Path to .ots inside ots-pending/<bundle>/
+    --key: path # SSH private key (optional). Sign .ots before move.
+    --name: string # Signer name override, forwarded to ssh-sign sign
+    --rename: string = "tree-hashes" # New filename stem. Why default tree-hashes: matches the canonical verified-bundle convention in this repo; pending stems are commonly accidental (e.g. nu-multiproof- prefix from extraction).
 ] {
     let parsed = open --raw $path | parse-ots
     if $parsed.attestation.type == "pending" {

@@ -14,7 +14,8 @@ def build-pending-ots [--with-ops] {
     let url_bytes = "https://a.pool.opentimestamps.org" | into binary
     mut ots = ($HEADER | bytes add --end 0x[01 08] | bytes add --end $ZERO_HASH)
     if $with_ops {
-        $ots = ($ots
+        $ots = (
+            $ots
             | bytes add --end 0x[f0 04 deadbeef]
             | bytes add --end 0x[08]
         )

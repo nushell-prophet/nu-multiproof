@@ -1,4 +1,4 @@
-export def main [] {}
+export def main [] { }
 
 # Requires nutest as sibling directory: git clone https://github.com/vyadh/nutest ../nutest
 export def 'main test' [--fail] {
@@ -13,9 +13,9 @@ export def 'main test' [--fail] {
 
 export def 'main stamp' [
     path: path
-    --out-dir: string   # Default: multiproofs/ots-timestamps from git root
-    --key: string   # SSH private key path for signing (optional)
-    --name: string  # Signer name for .sig file (default: stem of matching pubkey in multiproofs/pubkeys/)
+    --out-dir: string # Default: multiproofs/ots-timestamps from git root
+    --key: string # SSH private key path for signing (optional)
+    --name: string # Signer name for .sig file (default: stem of matching pubkey in multiproofs/pubkeys/)
 ] {
     use nu-multiproof/ots.nu
     use nu-multiproof/ssh-sign.nu
@@ -33,7 +33,7 @@ export def 'main stamp' [
 
 export def 'main hash' [
     --echo
-    --path: path  # Target directory (default: current directory)
+    --path: path # Target directory (default: current directory)
 ] {
     use nu-multiproof/tree-hashes.nu
 
@@ -41,8 +41,8 @@ export def 'main hash' [
 }
 
 export def 'main root-cid' [
-    --path: path             # Target directory (default: current directory)
-    --publish-to-ipfs        # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
+    --path: path # Target directory (default: current directory)
+    --publish-to-ipfs # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
 ] {
     use nu-multiproof/tree-hashes.nu
 
@@ -60,15 +60,17 @@ def resolve-signing-key [root: path]: nothing -> record<key: string, name: strin
         let key_data = $raw | str replace "key::" ""
         let tmp = $nu.temp-dir | path join "seal-signing-key.pub"
         $key_data | save --raw --force $tmp
-        {key: $tmp, name: null}
+        {key: $tmp name: null}
     } else {
         let expanded = $raw | path expand
-        let key_path = if ($expanded | path exists) { $expanded
-        } else if ($"($expanded).pub" | path exists) { $"($expanded).pub"
+        let key_path = if ($expanded | path exists) {
+            $expanded
+        } else if ($"($expanded).pub" | path exists) {
+            $"($expanded).pub"
         } else {
             error make {msg: $"signing key not found: ($raw)"}
         }
-        {key: ($key_path | into string), name: null}
+        {key: ($key_path | into string) name: null}
     }
 }
 
@@ -87,12 +89,12 @@ def resolve-signing-key [root: path]: nothing -> record<key: string, name: strin
 # files existed in a signed commit, but seal artifacts would need to be in
 # that commit — keeping them separate sidesteps the chicken-and-egg.
 export def 'main seal' [
-    --path: path       # Target directory (default: current directory)
-    --key: path        # SSH private key (default: from git config user.signingKey)
-    --no-root-cid        # Skip IPFS root CID (on by default — opt out when ipfs CLI unavailable)
-    --no-sign            # Skip SSH signing (on by default — seal should be complete)
-    --no-stamp           # Skip OTS timestamping (on by default — seal should be complete)
-    --publish-to-ipfs    # Publish root CID to local IPFS daemon (default: only-hash, no daemon needed)
+    --path: path # Target directory (default: current directory)
+    --key: path # SSH private key (default: from git config user.signingKey)
+    --no-root-cid # Skip IPFS root CID (on by default — opt out when ipfs CLI unavailable)
+    --no-sign # Skip SSH signing (on by default — seal should be complete)
+    --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
+    --publish-to-ipfs # Publish root CID to local IPFS daemon (default: only-hash, no daemon needed)
 ] {
     use nu-multiproof/tree-hashes.nu
     use nu-multiproof/ots.nu
@@ -128,7 +130,7 @@ export def 'main seal' [
     # 4. Sign the manifest — covers root CID via the "." row
     if not $no_sign {
         let resolved = if $key != null {
-            {key: ($key | into string), name: null}
+            {key: ($key | into string) name: null}
         } else {
             resolve-signing-key $root
         }
@@ -150,8 +152,8 @@ export def 'main seal' [
 }
 
 export def 'main proof-extract' [
-    ...files: string            # Target file paths to prove
-    --commit: string = "HEAD"   # Commit to prove against
+    ...files: string # Target file paths to prove
+    --commit: string = "HEAD" # Commit to prove against
     --out-dir: string = "proof" # Output directory
 ] {
     use nu-multiproof/git-proof.nu
@@ -160,7 +162,7 @@ export def 'main proof-extract' [
 }
 
 export def 'main proof-verify' [
-    proof_dir: string = "proof"  # Proof bundle directory
+    proof_dir: string = "proof" # Proof bundle directory
 ] {
     use nu-multiproof/git-proof.nu
 

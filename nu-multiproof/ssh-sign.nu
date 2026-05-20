@@ -7,7 +7,7 @@ def pubkey-material []: string -> string {
 
 # Match the signing key against registered pubkeys; return the registered stem.
 # Why: signer identity = filename in multiproofs/pubkeys/, not the private-key filename.
-def lookup-signer-name [key: path, pubkeys_dir: path]: nothing -> string {
+def lookup-signer-name [key: path pubkeys_dir: path]: nothing -> string {
     let pub_path = if ($key | str ends-with ".pub") { $key } else {
         let candidate = $"($key).pub"
         if not ($candidate | path exists) {
@@ -36,10 +36,10 @@ def lookup-signer-name [key: path, pubkeys_dir: path]: nothing -> string {
 # Sign a file with an SSH key.
 # Creates {path}.{name}.sig alongside the input file.
 export def sign [
-    path: path           # File to sign
-    --key: path          # SSH private key path (or public key if agent has the private key)
-    --name: string       # Signer name for the .sig file (default: stem of matching pubkey in --pubkeys-dir)
-    --pubkeys-dir: path  # Directory of registered *.pub files (default: multiproofs/pubkeys from git root)
+    path: path # File to sign
+    --key: path # SSH private key path (or public key if agent has the private key)
+    --name: string # Signer name for the .sig file (default: stem of matching pubkey in --pubkeys-dir)
+    --pubkeys-dir: path # Directory of registered *.pub files (default: multiproofs/pubkeys from git root)
     --namespace: string = "file"
 ] {
     let signer_name = if $name != null { $name } else {
@@ -65,9 +65,9 @@ export def sign [
 # Verify a file's SSH signatures against public keys in a directory.
 # If --sig is given, verifies that single file. Otherwise finds all {path}.*.sig files.
 export def verify [
-    path: path                         # File to verify (or a .sig file — original is inferred)
-    --sig: string                      # Specific signature file (default: all .sig files)
-    --pubkeys-dir: string              # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
+    path: path # File to verify (or a .sig file — original is inferred)
+    --sig: string # Specific signature file (default: all .sig files)
+    --pubkeys-dir: string # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
     --namespace: string = "file"
 ] {
     # If a .sig file was passed, infer the original file
@@ -91,11 +91,12 @@ export def verify [
         let git_root = ^git rev-parse --show-toplevel | str trim
         $git_root | path join "multiproofs/pubkeys"
     }
-    let pubkeys = (glob ($pubkeys_dir | path join "*.pub")
+    let pubkeys = (
+        glob ($pubkeys_dir | path join "*.pub")
         | each {|file|
             let key = (open --raw $file | str trim)
             let name = ($file | path parse | get stem)
-            {name: $name, key: $key}
+            {name: $name key: $key}
         }
     )
 
@@ -117,34 +118,36 @@ export def verify [
 
     let base = $path | path basename
     let results = $sig_files | each {|sig_path|
-        let sig_basename = $sig_path | path basename
-        let current_name = if $sig_basename == $"($base).sig" {
-            null
-        } else {
-            $sig_basename | str replace $"($base)." "" | str replace ".sig" ""
-        }
+            let sig_basename = $sig_path | path basename
+            let current_name = if $sig_basename == $"($base).sig" {
+                null
+            } else {
+                $sig_basename | str replace $"($base)." "" | str replace ".sig" ""
+            }
 
-        # Try each pubkey individually to identify the signer
-        let matched = $pubkeys | each {|pk|
-            let tmp = mktemp
-            $"($pk.name) namespaces=\"($namespace)\" ($pk.key)" | save --force $tmp
-            let result = (do {
-                open --raw $path | ^ssh-keygen -Y verify -f $tmp -I $pk.name -n $namespace -s $sig_path
-            } | complete)
-            rm $tmp
-            if $result.exit_code == 0 { $pk.name } else { null }
-        } | where $it != null
+            # Try each pubkey individually to identify the signer
+            let matched = $pubkeys | each {|pk|
+                    let tmp = mktemp
+                    $"($pk.name) namespaces=\"($namespace)\" ($pk.key)" | save --force $tmp
+                    let result = (
+                        do {
+                            open --raw $path | ^ssh-keygen -Y verify -f $tmp -I $pk.name -n $namespace -s $sig_path
+                        } | complete
+                    )
+                    rm $tmp
+                    if $result.exit_code == 0 { $pk.name } else { null }
+                } | where $it != null
 
-        if ($matched | is-empty) {
-            let label = $current_name | default "unknown"
-            print $"($label): invalid \(no matching pubkey\)"
-            {signer: $label, valid: false, error: "no matching pubkey"}
-        } else {
-            let signer = $matched | first
-            print $"($signer): valid"
-            {signer: $signer, valid: true}
+            if ($matched | is-empty) {
+                let label = $current_name | default "unknown"
+                print $"($label): invalid \(no matching pubkey\)"
+                {signer: $label valid: false error: "no matching pubkey"}
+            } else {
+                let signer = $matched | first
+                print $"($signer): valid"
+                {signer: $signer valid: true}
+            }
         }
-    }
 
     $results
 }
