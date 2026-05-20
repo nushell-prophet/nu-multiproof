@@ -27,6 +27,8 @@ nu-multiproof tree-hashes
 nu-multiproof git-proof extract src/main.nu README.md
 # Verify it (works without the original repo)
 nu-multiproof git-proof verify proof/
+# Render multiproofs/pubkeys/ into an allowed_signers file for `git verify-commit`
+nu-multiproof git-proof render-allowed-signers --to allowed_signers
 
 # Timestamp a file via OpenTimestamps
 nu-multiproof ots stamp multiproofs/tree-hashes.csv
