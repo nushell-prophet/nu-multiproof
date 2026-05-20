@@ -41,12 +41,12 @@ export def 'main hash' [
 }
 
 export def 'main root-cid' [
-    --path: path       # Target directory (default: current directory)
-    --only-hash        # Compute CID without adding content to IPFS
+    --path: path             # Target directory (default: current directory)
+    --publish-to-ipfs        # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
 ] {
     use nu-multiproof/tree-hashes.nu
 
-    tree-hashes root-cid --path $path --only-hash=$only_hash
+    tree-hashes root-cid --path $path --publish-to-ipfs=$publish_to_ipfs
 }
 
 # Resolve SSH signing key from git config (file path or inline key::)
@@ -89,10 +89,10 @@ def resolve-signing-key [root: path]: nothing -> record<key: string, name: strin
 export def 'main seal' [
     --path: path       # Target directory (default: current directory)
     --key: path        # SSH private key (default: from git config user.signingKey)
-    --no-root-cid      # Skip IPFS root CID (on by default — opt out when ipfs CLI unavailable)
-    --no-sign          # Skip SSH signing (on by default — seal should be complete)
-    --no-stamp         # Skip OTS timestamping (on by default — seal should be complete)
-    --only-hash        # Compute root CID without adding to IPFS
+    --no-root-cid        # Skip IPFS root CID (on by default — opt out when ipfs CLI unavailable)
+    --no-sign            # Skip SSH signing (on by default — seal should be complete)
+    --no-stamp           # Skip OTS timestamping (on by default — seal should be complete)
+    --publish-to-ipfs    # Publish root CID to local IPFS daemon (default: only-hash, no daemon needed)
 ] {
     use nu-multiproof/tree-hashes.nu
     use nu-multiproof/ots.nu
@@ -120,7 +120,7 @@ export def 'main seal' [
 
     # 3. Compute root CID — single IPFS hash covering all manifest files
     if not $no_root_cid {
-        let root_cid = tree-hashes root-cid --path $root --only-hash=$only_hash
+        let root_cid = tree-hashes root-cid --path $root --publish-to-ipfs=$publish_to_ipfs
         print $"Root CID: ($root_cid)"
         $result = ($result | insert root_cid $root_cid)
     }

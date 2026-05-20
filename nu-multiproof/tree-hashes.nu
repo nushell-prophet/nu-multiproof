@@ -120,8 +120,8 @@ export def build-tree [
 # not whatever happens to be on disk. CID parameters match IPFS_CID_FLAGS
 # so individual file CIDs are consistent with the content_cid column.
 export def root-cid [
-    --path: path  # Target git repo root (default: git root of current directory)
-    --only-hash   # Compute CID without adding content to IPFS
+    --path: path         # Target git repo root (default: git root of current directory)
+    --publish-to-ipfs    # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
 ]: nothing -> string {
     let root = if $path != null { $path | path expand } else {
         ^git rev-parse --show-toplevel | str trim
@@ -142,10 +142,10 @@ export def root-cid [
         cp ($root | path join $f) $dest
     }
 
-    let flags = if $only_hash {
-        ["--recursive" "--only-hash" ...$IPFS_CID_FLAGS]
-    } else {
+    let flags = if $publish_to_ipfs {
         ["--recursive" ...$IPFS_CID_FLAGS]
+    } else {
+        ["--recursive" "--only-hash" ...$IPFS_CID_FLAGS]
     }
 
     let cid = ^ipfs add ...$flags $tmp
