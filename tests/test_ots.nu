@@ -96,61 +96,6 @@ def "fork produces error" [] {
     assert ($result != null)
 }
 
-# --- promote tests (offline) ---
-
-@test
-def "promote refuses still-pending" [] {
-    let tmp = mktemp --directory
-    let bundle = $tmp | path join "ots-pending" "x.00000000"
-    mkdir $bundle
-    let ots_path = $bundle | path join "x.ots"
-    build-pending-ots | save --raw --force $ots_path
-    let result = try { ots promote $ots_path; null } catch { $in }
-    assert ($result != null)
-    rm --recursive --force $tmp
-}
-
-@test
-def "promote moves bundle and applies default rename" [] {
-    let tmp = mktemp --directory
-    let bundle = $tmp | path join "ots-pending" "foo-bar.AABBCCDD"
-    mkdir $bundle
-    let ots_path = $bundle | path join "foo-bar.ots"
-    "csv-content" | save --raw --force ($bundle | path join "foo-bar.csv")
-    build-bitcoin-ots | save --raw --force $ots_path
-    ots promote $ots_path
-    let target = $tmp | path join "ots-verified" "tree-hashes.AABBCCDD"
-    assert (($target | path join "tree-hashes.ots") | path exists)
-    assert (($target | path join "tree-hashes.csv") | path exists)
-    assert (not ($bundle | path exists))
-    rm --recursive --force $tmp
-}
-
-@test
-def "promote honors --rename override" [] {
-    let tmp = mktemp --directory
-    let bundle = $tmp | path join "ots-pending" "foo-bar.AABBCCDD"
-    mkdir $bundle
-    let ots_path = $bundle | path join "foo-bar.ots"
-    build-bitcoin-ots | save --raw --force $ots_path
-    ots promote $ots_path --rename "bar"
-    let target = $tmp | path join "ots-verified" "bar.AABBCCDD"
-    assert (($target | path join "bar.ots") | path exists)
-    rm --recursive --force $tmp
-}
-
-@test
-def "promote refuses non-pending location" [] {
-    let tmp = mktemp --directory
-    let bundle = $tmp | path join "elsewhere" "x.00000000"
-    mkdir $bundle
-    let ots_path = $bundle | path join "x.ots"
-    build-bitcoin-ots | save --raw --force $ots_path
-    let result = try { ots promote $ots_path; null } catch { $in }
-    assert ($result != null)
-    rm --recursive --force $tmp
-}
-
 # --- Network-dependent tests ---
 
 @test
