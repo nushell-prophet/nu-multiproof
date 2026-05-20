@@ -89,6 +89,7 @@ def resolve-signing-key [root: path]: nothing -> record<key: string, name: strin
 export def 'main seal' [
     --path: path       # Target directory (default: current directory)
     --key: path        # SSH private key (default: from git config user.signingKey)
+    --no-root-cid      # Skip IPFS root CID (on by default — opt out when ipfs CLI unavailable)
     --no-sign          # Skip SSH signing (on by default — seal should be complete)
     --no-stamp         # Skip OTS timestamping (on by default — seal should be complete)
     --only-hash        # Compute root CID without adding to IPFS
@@ -115,11 +116,14 @@ export def 'main seal' [
     tree-hashes --path $root
     print $"Manifest: multiproofs/tree-hashes.csv"
 
-    # 3. Compute root CID — single IPFS hash covering all manifest files
-    let root_cid = tree-hashes root-cid --path $root --only-hash=$only_hash
-    print $"Root CID: ($root_cid)"
+    mut result = {manifest: $manifest_path}
 
-    mut result = {root_cid: $root_cid, manifest: $manifest_path}
+    # 3. Compute root CID — single IPFS hash covering all manifest files
+    if not $no_root_cid {
+        let root_cid = tree-hashes root-cid --path $root --only-hash=$only_hash
+        print $"Root CID: ($root_cid)"
+        $result = ($result | insert root_cid $root_cid)
+    }
 
     # 4. Sign the manifest — covers root CID via the "." row
     if not $no_sign {
