@@ -1,20 +1,60 @@
 # SSH file signing and verification via ssh-keygen.
 
+# Extract algorithm + base64 blob from a public key line, dropping the trailing comment.
+def pubkey-material []: string -> string {
+    str trim | split row " " | first 2 | str join " "
+}
+
+# Match the signing key against registered pubkeys; return the registered stem.
+# Why: signer identity = filename in multiproofs/pubkeys/, not the private-key filename.
+def lookup-signer-name [key: path, pubkeys_dir: path]: nothing -> string {
+    let pub_path = if ($key | str ends-with ".pub") { $key } else {
+        let candidate = $"($key).pub"
+        if not ($candidate | path exists) {
+            error make {msg: $"public key file not found: ($candidate)"}
+        }
+        $candidate
+    }
+    let signing = open --raw $pub_path | pubkey-material
+
+    let matches = glob ($pubkeys_dir | path join "*.pub")
+        | each {|file|
+            let registered = open --raw $file | pubkey-material
+            if $registered == $signing { $file | path parse | get stem } else { null }
+        }
+        | where $it != null
+
+    if ($matches | is-empty) {
+        error make {msg: $"signing key not registered in ($pubkeys_dir)/ — add its pubkey or pass --name explicitly"}
+    }
+    if ($matches | length) > 1 {
+        error make {msg: $"multiple pubkeys match in ($pubkeys_dir)/: ($matches | str join ', ')"}
+    }
+    $matches | first
+}
+
 # Sign a file with an SSH key.
 # Creates {path}.{name}.sig alongside the input file.
 export def sign [
     path: path           # File to sign
     --key: path          # SSH private key path (or public key if agent has the private key)
-    --name: string       # Signer name for the .sig file (default: key filename stem)
+    --name: string       # Signer name for the .sig file (default: stem of matching pubkey in --pubkeys-dir)
+    --pubkeys-dir: path  # Directory of registered *.pub files (default: multiproofs/pubkeys from git root)
     --namespace: string = "file"
 ] {
+    let signer_name = if $name != null { $name } else {
+        let dir = if $pubkeys_dir != null { $pubkeys_dir } else {
+            ^git rev-parse --show-toplevel | str trim | path join "multiproofs/pubkeys"
+        }
+        lookup-signer-name $key $dir
+    }
+
     ^ssh-keygen -Y sign -f $key -n $namespace $path
     let default_sig = $"($path).sig"
     if not ($default_sig | path exists) {
         error make {msg: $"signature file not created: ($default_sig)"}
     }
 
-    let signer_name = $name | default ($key | path parse | get stem)
     let sig_path = $"($path).($signer_name).sig"
     mv $default_sig $sig_path
 
@@ -24,13 +64,11 @@ export def sign [
 
 # Verify a file's SSH signatures against public keys in a directory.
 # If --sig is given, verifies that single file. Otherwise finds all {path}.*.sig files.
-# By default, renames each valid .sig file to match the signer's pubkey name.
 export def verify [
     path: path                         # File to verify (or a .sig file — original is inferred)
     --sig: string                      # Specific signature file (default: all .sig files)
     --pubkeys-dir: string              # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
     --namespace: string = "file"
-    --no-rename                        # Skip renaming sig files to match signer pubkey name
 ] {
     # If a .sig file was passed, infer the original file
     let path = if ($path | str ends-with ".sig") {
@@ -103,16 +141,7 @@ export def verify [
             {signer: $label, valid: false, error: "no matching pubkey"}
         } else {
             let signer = $matched | first
-            let needs_rename = (not $no_rename) and ($current_name != $signer)
-
-            if $needs_rename {
-                let new_sig_path = $"($path).($signer).sig"
-                mv $sig_path $new_sig_path
-                print $"($signer): valid \(renamed from ($sig_basename)\)"
-            } else {
-                print $"($signer): valid"
-            }
-
+            print $"($signer): valid"
             {signer: $signer, valid: true}
         }
     }

@@ -6,13 +6,16 @@ use ../nu-multiproof/ssh-sign.nu
 @test
 def "sign creates named sig file" [] {
     let tmp_dir = (^mktemp -d | str trim)
-    let key_path = $"($tmp_dir)/alice"
+    let key_path = $"($tmp_dir)/somekey"
     let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
 
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $pubkeys_dir
+    cp $"($key_path).pub" ($pubkeys_dir | path join "alice.pub")
     "hello world" | save --force $test_file
 
-    ssh-sign sign $test_file --key $key_path
+    ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
     assert ($"($test_file).alice.sig" | path exists)
     assert (not ($"($test_file).sig" | path exists))
 
@@ -47,7 +50,7 @@ def "sign and verify round-trip" [] {
 
     "hello world" | save --force $test_file
 
-    ssh-sign sign $test_file --key $key_path
+    ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | length) 1
     assert equal ($results | first | get valid) true
@@ -72,8 +75,8 @@ def "multiple signers" [] {
 
     "hello world" | save --force $test_file
 
-    ssh-sign sign $test_file --key $key_alice
-    ssh-sign sign $test_file --key $key_bob
+    ssh-sign sign $test_file --key $key_alice --pubkeys-dir $pubkeys_dir
+    ssh-sign sign $test_file --key $key_bob --pubkeys-dir $pubkeys_dir
     assert ($"($test_file).alice.sig" | path exists)
     assert ($"($test_file).bob.sig" | path exists)
 
@@ -99,7 +102,7 @@ def "verify fails with wrong key" [] {
     cp $"($wrong_key).pub" ($pubkeys_dir | path join "wrong.pub")
 
     "hello world" | save --force $test_file
-    ssh-sign sign $test_file --key $sign_key
+    ssh-sign sign $test_file --key $sign_key --name attacker
 
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | first | get valid) false
@@ -119,7 +122,7 @@ def "verify fails with tampered content" [] {
     cp $"($key_path).pub" ($pubkeys_dir | path join "test.pub")
 
     "original content" | save --force $test_file
-    ssh-sign sign $test_file --key $key_path
+    ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
 
     "tampered content" | save --force $test_file
 

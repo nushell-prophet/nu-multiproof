@@ -15,7 +15,7 @@ export def 'main stamp' [
     path: path
     --out-dir: string   # Default: multiproofs/ots-timestamps from git root
     --key: string   # SSH private key path for signing (optional)
-    --name: string  # Signer name for .sig file (default: key filename stem)
+    --name: string  # Signer name for .sig file (default: stem of matching pubkey in multiproofs/pubkeys/)
 ] {
     use nu-multiproof/ots.nu
     use nu-multiproof/ssh-sign.nu
