@@ -81,6 +81,52 @@ use nu-multiproof/
 nu-multiproof git-proof verify multiproofs/provenance/git-proof
 ```
 
+## Verifying commit signatures
+
+Commits in this repo are SSH-signed. Verifying an SSH-signed commit involves two distinct checks:
+
+1. **Cryptographic validity** — does the signature mathematically match the commit bytes under some public key? Key-agnostic, no trust required.
+2. **Trust** — is that public key one *you* choose to recognize as a valid signer? Verifier-side policy.
+
+Git conflates them: it refuses to verify SSH signatures unless `gpg.ssh.allowedSignersFile` is configured and points to an existing file. That file maps principals → keys → namespaces; it is your **local trust list**, not part of any commit. Setting it is a statement *you* make about which keys you trust — the repo cannot make it for you.
+
+`multiproofs/pubkeys/` is this project's source of truth for who can sign. `git-proof render-allowed-signers --to <path>` writes those keys into a correctly-formatted trust file. It does **not** mutate git config — wiring is the caller's choice.
+
+### One-shot inspection
+
+`git -c key=value` overrides config for a single invocation, no persisted state:
+
+```nushell
+use nu-multiproof/
+nu-multiproof git-proof render-allowed-signers --to /tmp/nu-multiproof-signers
+git -c gpg.ssh.allowedSignersFile=/tmp/nu-multiproof-signers log --show-signature -1
+```
+
+### Per-clone setup
+
+For repeated inspection, render once and point this clone's **local** git config at the file:
+
+```nushell
+let signers = $"(git rev-parse --git-dir | str trim)/allowed_signers"
+nu-multiproof git-proof render-allowed-signers --to $signers
+git config gpg.ssh.allowedSignersFile $signers
+```
+
+`.git/config` lives inside this clone's `.git/` directory — it is not tracked, not pushed, not shared with collaborators. Plain `git log --show-signature` now resolves cleanly. Re-run the render after any change to `multiproofs/pubkeys/`.
+
+### Reading the output
+
+```
+Good "git" signature for * with ECDSA-SK key SHA256:7SOGNZ2C…
+```
+
+- `Good` — both checks above passed.
+- `for *` — the matched principal is the wildcard from the rendered file: confirms the key is in the project's trust list, but does not attach a personal identity. This is the appropriate trust statement for a project's tracked signers — collective trust, not individual identification.
+
+### Self-verifying proof bundles
+
+`git-proof verify <proof-bundle>` is the preferred verifier for historical commits packaged as proof bundles: it bundles its own pubkeys with the proof and verifies in a temp repo via `git -c`, with no `allowedSignersFile` setup needed and no dependence on the verifier's local trust at all.
+
 ## License
 
 MIT
