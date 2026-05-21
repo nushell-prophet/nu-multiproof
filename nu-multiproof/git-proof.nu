@@ -16,9 +16,13 @@ def parse-ls-tree []: string -> table<mode: string, type: string, hash: string, 
     lines | parse "{mode} {type} {hash}\t{name}"
 }
 
-# Extract tree hash from commit object text
+# Extract tree hash from commit object text.
+# Why: commit body lines can start with "tree " — only the header section
+# (everything before the first blank line) carries the actual tree pointer.
 def parse-commit-tree []: string -> string {
-    lines
+    split row --regex '\r?\n\r?\n'
+    | first
+    | lines
     | where ($it starts-with "tree ")
     | first
     | str replace "tree " ""
