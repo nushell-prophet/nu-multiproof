@@ -201,12 +201,14 @@ export def stamp [path: path --out-dir: string] {
 
     let tmp = mktemp
     $merkle_tip | save --raw --force $tmp
+    # Why: /digest expects raw bytes; application/x-www-form-urlencoded was
+    # misleading and could break with stricter calendar servers.
     let status = (
         ^curl --silent --show-error
         --write-out "%{http_code}"
         --output $"($tmp).resp"
         --data-binary $"@($tmp)"
-        --header "Content-Type: application/x-www-form-urlencoded"
+        --header "Content-Type: application/octet-stream"
         $"($DEFAULT_CALENDAR)/digest"
     )
     rm $tmp
