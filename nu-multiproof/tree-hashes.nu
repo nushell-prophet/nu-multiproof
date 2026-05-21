@@ -227,9 +227,9 @@ export def main [
     }
     let out_dir = $target_root | path join $MULTIPROOFS_DIR
     mkdir $out_dir
-    $table
-    | if $echo { } else {
-        to csv --separator ','
-        | save --raw --force ($out_dir | path join $OUTPUT_FILE)
+    if $echo {
+        $table
+    } else {
+        $table | to csv --separator ',' | save --raw --force ($out_dir | path join $OUTPUT_FILE)
     }
 }
