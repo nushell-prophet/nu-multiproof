@@ -72,6 +72,16 @@ This repository contains proofs of how it came to exist in [`multiproofs/origin-
 
 These are archival artifacts. Ongoing operational timestamps live in [`multiproofs/ots-timestamps/`](multiproofs/ots-timestamps/).
 
+### Bundle contract
+
+An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is self-contained provenance: every file needed to assert *"signer X endorsed content C at time T, anchored to Bitcoin block B"* lives in the directory, with no reference to anything outside it.
+
+- `<stem>.<ext>` — frozen content snapshot (the manifest at stamp time)
+- `<stem>.ots` — Bitcoin-anchored timestamp over the snapshot's hash
+- `<stem>.<ext>.<signer>.sig` (when signing is on) — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig)
+
+`seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and its live sig — the previous bundle remains intact because the sig was already copied in.
+
 Verify the git proof:
 
 ```nushell
