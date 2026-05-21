@@ -177,7 +177,10 @@ export def root-cid [
     # The user's file list is the CSV, not whatever happens to be on disk.
     let files = $manifest | where content_sha256 != "" | get filepath
 
-    let tmp = $nu.temp-dir | path join "nu-multiproof-ipfs-add"
+    # Why uuid: matches the other two stage dirs in this file. Without it,
+    # two concurrent root-cid invocations (e.g. seal pipelines against
+    # different repos under the same user) race on the same path.
+    let tmp = $nu.temp-dir | path join $"nu-multiproof-ipfs-add-(random uuid)"
     rm --recursive --force $tmp
     mkdir $tmp
 
