@@ -264,7 +264,20 @@ export def stamp [path: path --out-dir: string] {
     print $"Frozen copy: ($copy_path)"
     print $"Timestamped: ($ots_path)"
 
-    {dir: $bundle_dir copy: $copy_path ots: $ots_path}
+    # Why: a self-contained bundle must answer "signer X endorsed content C at
+    # time T, anchored to Bitcoin block B" using only files in the bundle dir.
+    # Snapshot any sibling `<path>.<signer>.sig` next to the frozen copy so
+    # the binding survives the next `seal` (which overwrites the live sig).
+    let sigs = glob $"($path).*.sig"
+    let bundled_sigs = $sigs | each {|sig|
+        let sig_name = $sig | path basename
+        let dest = $"($bundle_dir)/($sig_name)"
+        cp $sig $dest
+        print $"Bundled sig: ($dest)"
+        $dest
+    }
+
+    {dir: $bundle_dir copy: $copy_path ots: $ots_path sigs: $bundled_sigs}
 }
 
 # Upgrade a pending OTS attestation to a Bitcoin block header attestation
