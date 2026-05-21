@@ -153,21 +153,19 @@ def "upgrade rejects malformed response and leaves original intact" [] {
     rm --recursive $tmp_dir
 }
 
-# Stamp with extensionless input must not produce a trailing-dot copy path.
+# Pure-function regression checks on the copy-path construction. Why split
+# from stamp: the trailing-dot bug lived in string transformation, not in the
+# network call — testing it directly removes the OTS_NETWORK_TEST gate.
 @test
-def "stamp extensionless input has no trailing dot" [] {
-    if ($env.OTS_NETWORK_TEST? | default "false") != "true" { return }
+def "copy-path-for extensionless input has no trailing dot" [] {
+    let result = (ots copy-path-for "/tmp/x/README" "/tmp/x/README.deadbeef")
+    assert equal $result "/tmp/x/README.deadbeef/README"
+}
 
-    let tmp_dir = (^mktemp -d | str trim)
-    let test_file = $"($tmp_dir)/README"
-    "hello" | save --raw --force $test_file
-
-    let result = ots stamp $test_file --out-dir $tmp_dir
-
-    assert (not ($result.copy | str ends-with ".")) $"copy path has trailing dot: ($result.copy)"
-    assert ($result.copy | str ends-with "/README") $"unexpected copy path: ($result.copy)"
-
-    rm --recursive $tmp_dir
+@test
+def "copy-path-for preserves extension" [] {
+    let result = (ots copy-path-for "/tmp/x/data.csv" "/tmp/x/data.deadbeef")
+    assert equal $result "/tmp/x/data.deadbeef/data.csv"
 }
 
 # --- Network-dependent tests ---

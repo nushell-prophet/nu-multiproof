@@ -189,6 +189,19 @@ export def info [path: path] {
     $lines | str join "\n"
 }
 
+# Bundle copy-path for an input file. Pure; extracted from `stamp` so the
+# extensionless-input edge case is testable without a real stamp.
+# Why no trailing dot: extensionless input ("README") was producing "README."
+# because `($stem).($ext)` collapsed to "README." when `$ext` was empty.
+export def copy-path-for [path: path, bundle_dir: string]: nothing -> string {
+    let parsed = $path | path parse
+    if ($parsed.extension | is-empty) {
+        $"($bundle_dir)/($parsed.stem)"
+    } else {
+        $"($bundle_dir)/($parsed.stem).($parsed.extension)"
+    }
+}
+
 # Create an OTS timestamp proof for a file
 export def stamp [path: path --out-dir: string] {
     let out_dir = if $out_dir != null { $out_dir } else {
@@ -233,19 +246,11 @@ export def stamp [path: path --out-dir: string] {
     )
 
     let hash_prefix = $file_hash | encode hex | str substring 0..<8
-    let parsed = $path | path parse
-    let stem = $parsed.stem
-    let ext = $parsed.extension
+    let stem = ($path | path parse | get stem)
 
     let bundle_dir = $"($out_dir)/($stem).($hash_prefix)"
     mkdir $bundle_dir
-    # Why no trailing dot: extensionless input ("README") was producing
-    # "README." (literal trailing dot).
-    let copy_path = if ($ext | is-empty) {
-        $"($bundle_dir)/($stem)"
-    } else {
-        $"($bundle_dir)/($stem).($ext)"
-    }
+    let copy_path = (copy-path-for $path $bundle_dir)
     let ots_path = $"($bundle_dir)/($stem).ots"
 
     # Why: bundle dir is keyed by file hash, so re-stamping unchanged content
