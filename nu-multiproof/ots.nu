@@ -280,8 +280,11 @@ export def stamp [path: path --out-dir: string] {
     {dir: $bundle_dir copy: $copy_path ots: $ots_path sigs: $bundled_sigs}
 }
 
-# Upgrade a pending OTS attestation to a Bitcoin block header attestation
-export def upgrade [path: path] {
+# Upgrade a pending OTS attestation to a Bitcoin block header attestation.
+# --response-file: read the calendar response from a local file instead of
+# fetching it. Why: enables offline tests of the splice/validate/write logic
+# without a real calendar; also lets callers pre-fetch responses.
+export def upgrade [path: path --response-file: path] {
     let buf = open --raw $path
     let parsed = $buf | parse-ots
 
@@ -290,28 +293,32 @@ export def upgrade [path: path] {
         return
     }
 
-    let current_hash = $parsed.hash | replay-ops $parsed.ops
-    let hash_hex = $current_hash | encode hex
-
-    let url = $"($parsed.attestation.url)/timestamp/($hash_hex)"
-    let tmp = mktemp
-    let status = (
-        ^curl --silent --show-error
-        --write-out "%{http_code}"
-        --output $tmp
-        --header "Accept: application/vnd.opentimestamps.v1"
-        $url
-    )
-    if $status == "404" {
+    let new_bytes = if $response_file != null {
+        open --raw $response_file
+    } else {
+        let current_hash = $parsed.hash | replay-ops $parsed.ops
+        let hash_hex = $current_hash | encode hex
+        let url = $"($parsed.attestation.url)/timestamp/($hash_hex)"
+        let tmp = mktemp
+        let status = (
+            ^curl --silent --show-error
+            --write-out "%{http_code}"
+            --output $tmp
+            --header "Accept: application/vnd.opentimestamps.v1"
+            $url
+        )
+        if $status == "404" {
+            rm $tmp
+            error make {msg: "timestamp not yet confirmed by Bitcoin — try again later"}
+        }
+        if $status != "200" {
+            rm $tmp
+            error make {msg: $"calendar returned status ($status)"}
+        }
+        let bytes = open --raw $tmp
         rm $tmp
-        error make {msg: "timestamp not yet confirmed by Bitcoin — try again later"}
+        $bytes
     }
-    if $status != "200" {
-        rm $tmp
-        error make {msg: $"calendar returned status ($status)"}
-    }
-    let new_bytes = open --raw $tmp
-    rm $tmp
 
     let prefix = $buf | bytes at 0..($parsed.att_offset - 1)
     let upgraded = $prefix | bytes add --end $new_bytes

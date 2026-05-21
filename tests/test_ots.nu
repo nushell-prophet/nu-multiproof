@@ -96,6 +96,80 @@ def "fork produces error" [] {
     assert ($result != null)
 }
 
+# --- Upgrade offline tests (use --response-file to bypass calendar fetch) ---
+
+# Construct a valid bitcoin attestation payload that, when spliced at att_offset
+# of a pending OTS, produces a parseable upgraded buffer.
+# Format: TAG_ATTESTATION (0x00) + ATT_BITCOIN_TAG (8 bytes) + varbytes payload.
+# Payload encodes the block height as varuint, length-prefixed.
+def build-bitcoin-attestation-bytes [] {
+    # Height 123456 as LEB128 = 0xC0C407 (3 bytes); outer varbytes len = 3.
+    0x[00]
+    | bytes add --end $ATT_BITCOIN_TAG
+    | bytes add --end 0x[03 C0C407]
+}
+
+@test
+def "upgrade splices valid response and writes atomically" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let ots_path = $"($tmp_dir)/pending.ots"
+    build-pending-ots | save --raw --force $ots_path
+    let original = open --raw $ots_path
+
+    let response = $"($tmp_dir)/response.bin"
+    build-bitcoin-attestation-bytes | save --raw --force $response
+
+    ots upgrade $ots_path --response-file $response
+
+    let upgraded = open --raw $ots_path
+    assert ($upgraded != $original) "ots not modified"
+    let info = ots info $ots_path
+    assert ($info | str contains "BitcoinBlockHeaderAttestation(123456)")
+
+    rm --recursive $tmp_dir
+}
+
+@test
+def "upgrade rejects malformed response and leaves original intact" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let ots_path = $"($tmp_dir)/pending.ots"
+    build-pending-ots | save --raw --force $ots_path
+    let original = open --raw $ots_path
+
+    let response = $"($tmp_dir)/garbage.bin"
+    0x[deadbeefcafebabe] | save --raw --force $response
+
+    let outcome = (try {
+        ots upgrade $ots_path --response-file $response
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+
+    # Why both checks: error surfaces the failure, and the file content
+    # check proves the atomic-rename design held — no partial write.
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    let after = open --raw $ots_path
+    assert equal $after $original "original ots was modified despite validation failure"
+
+    rm --recursive $tmp_dir
+}
+
+# Stamp with extensionless input must not produce a trailing-dot copy path.
+@test
+def "stamp extensionless input has no trailing dot" [] {
+    if ($env.OTS_NETWORK_TEST? | default "false") != "true" { return }
+
+    let tmp_dir = (^mktemp -d | str trim)
+    let test_file = $"($tmp_dir)/README"
+    "hello" | save --raw --force $test_file
+
+    let result = ots stamp $test_file --out-dir $tmp_dir
+
+    assert (not ($result.copy | str ends-with ".")) $"copy path has trailing dot: ($result.copy)"
+    assert ($result.copy | str ends-with "/README") $"unexpected copy path: ($result.copy)"
+
+    rm --recursive $tmp_dir
+}
+
 # --- Network-dependent tests ---
 
 @test
