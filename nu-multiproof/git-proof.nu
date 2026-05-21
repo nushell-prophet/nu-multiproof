@@ -74,20 +74,22 @@ def find-path-objects [
     $objects
 }
 
-# Convert git objects to SHA-256 loose format.
+# Extract loose objects from the source repo into a fresh bare repo
+# of the same object format, then copy them out.
 #
-# Git objects in a SHA-1 repo can't be directly copied into a SHA-256 repo —
-# the hash-based storage paths differ. This packs objects from the current repo,
-# then unpacks them into a temporary bare SHA-256 repo, letting git rehash them.
-def repack-objects-sha256 [
-    hashes: list<string> # Object hashes to convert
+# Not a SHA-1→SHA-256 conversion: tree object bodies encode child references
+# as raw hash bytes, which `git unpack-objects` does not rewrite. The bundle
+# format must match the source; cross-format conversion would need
+# tree-rewriting (out of scope). Caller must ensure source repo is SHA-256.
+def extract-loose-objects [
+    hashes: list<string> # Object hashes to extract
     dest: path # Directory to receive loose objects
     --path: path # Target git repo root
 ] {
     let tmp_dir = (^mktemp -d | str trim)
     let hashes_file = ($tmp_dir | path join "hashes.txt")
     let pack_file = ($tmp_dir | path join "pack.bin")
-    let bare_repo = ($tmp_dir | path join "sha256-repo")
+    let bare_repo = ($tmp_dir | path join "bare-repo")
 
     $hashes | str join "\n" | save --force $hashes_file
     ^git init --bare --object-format=sha256 $bare_repo o+e>| ignore
@@ -115,6 +117,12 @@ export def extract [
 
     let root = if $path != null { $path | path expand } else {
         ^git rev-parse --show-toplevel | str trim
+    }
+    # Why: tree objects encode children as raw hash bytes; SHA-1 sources would
+    # need tree rewriting to produce a self-consistent SHA-256 bundle.
+    let src_format = (^git -C $root config extensions.objectFormat | complete | get stdout | str trim)
+    if $src_format != "sha256" {
+        error make {msg: $"git-proof requires a SHA-256 repo \(extensions.objectFormat=sha256\); source is '($src_format)'"}
     }
     let commit_hash = (^git -C $root rev-parse $commit | str trim)
     let tree_hash = (^git -C $root cat-file -p $commit_hash | parse-commit-tree)
@@ -144,7 +152,7 @@ export def extract [
     let objects_dir = ($out_dir | path join "objects")
     mkdir $objects_dir
 
-    repack-objects-sha256 ($unique_objects | get hash) $objects_dir --path $root
+    extract-loose-objects ($unique_objects | get hash) $objects_dir --path $root
 
     # Copy pubkeys from target repo's multiproofs/pubkeys/
     let pubkeys_dir = ($out_dir | path join "pubkeys")
