@@ -88,26 +88,26 @@ export def build-tree [
         | reduce --fold {} {|row acc| $acc | insert $row.key $row.val }
     }
 
-    # Git hashes: tree hashes for directories, blob hashes for files (working copy)
-    let git_hashes = (
-        ^git -C $root ls-tree -r -t HEAD
+    # Git hashes: build a temp index from working-tree files, then ls-tree the
+    # resulting tree. Gives blob AND tree hashes from the same snapshot, so a
+    # modified file's parent dir hash changes too. Not `ls-tree HEAD` because:
+    # it reflects committed state, not the working tree the manifest describes.
+    let git_hashes = if ($tracked_files | is-empty) {
+        {}
+    } else {
+        let tmp_index = $nu.temp-dir | path join $"nu-multiproof-build-tree-index-(random uuid)"
+        rm --force $tmp_index
+        let ls_tree = with-env {GIT_INDEX_FILE: $tmp_index} {
+            $tracked_files | str join (char nl) | ^git -C $root update-index --add --stdin
+            let tree = ^git -C $root write-tree | str trim
+            ^git -C $root ls-tree -r -t $tree
+        }
+        rm --force $tmp_index
+        $ls_tree
         | lines
         | parse "{mode} {type} {hash}\t{path}"
         | select path hash
         | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
-    )
-
-    let file_entries = $entries | where not $it.is_dir
-    let git_blob_hashes = if ($file_entries | is-empty) {
-        {}
-    } else {
-        $file_entries
-        | each {|e| $root | path join $e.rel }
-        | str join (char nl)
-        | ^git -C $root hash-object --stdin-paths
-        | lines
-        | zip ($file_entries | each { $in.rel })
-        | reduce --fold {} {|pair acc| $acc | insert $pair.1 $pair.0 }
     }
 
     # Join lookup tables into final CSV structure
@@ -116,13 +116,7 @@ export def build-tree [
         {
             filepath: $e.rel
             content_sha256: $e.content_sha256
-            content_git: (
-                if $e.is_dir {
-                    $git_hashes | get --optional $e.rel | default ""
-                } else {
-                    $git_blob_hashes | get --optional $e.rel | default ""
-                }
-            )
+            content_git: ($git_hashes | get --optional $e.rel | default "")
             content_cid: (if $e.is_dir { "" } else { $content_cid_table | get $e.rel })
         }
     }

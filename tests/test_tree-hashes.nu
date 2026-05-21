@@ -68,3 +68,33 @@ def "hidden tracked files are included" [] {
         assert ($row.0.content_sha256 | is-not-empty) $"hidden tracked file ($f) has empty content_sha256"
     }
 }
+
+@test
+def "directory content_git matches working-tree blob hashes of its files" [] {
+    let result = tree-hashes --echo
+    let dirs = $result | where content_sha256 == "" and filepath != "."
+    # For each directory row, the content_git must be non-empty AND must derive
+    # from the same snapshot as its file rows (i.e., the temp-index tree).
+    # We assert parity by recomputing: for each dir, the hash listed in the
+    # manifest must match the tree hash for that path in a fresh temp index
+    # built from the same files.
+    let files = $result | where content_sha256 != "" and filepath != "."
+    let tmp_index = $nu.temp-dir | path join $"nutest-tree-(random uuid)"
+    rm --force $tmp_index
+    let ls_tree = with-env {GIT_INDEX_FILE: $tmp_index} {
+        $files.filepath | str join (char nl) | ^git update-index --add --stdin
+        let tree = ^git write-tree | str trim
+        ^git ls-tree -r -t $tree
+    }
+    rm --force $tmp_index
+    let expected = (
+        $ls_tree
+        | lines
+        | parse "{mode} {type} {hash}\t{path}"
+        | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
+    )
+    for d in $dirs {
+        assert ($d.content_git | is-not-empty) $"directory ($d.filepath) has empty content_git"
+        assert equal $d.content_git ($expected | get $d.filepath) $"directory ($d.filepath) content_git mismatch"
+    }
+}
