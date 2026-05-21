@@ -74,8 +74,10 @@ export def verify [
     let path = if ($path | str ends-with ".sig") {
         # Strip .{name}.sig or .sig suffix to find original
         let p = $path | into string
-        let original = if ($p =~ '\.\w+\.sig$') {
-            $p | str replace --regex '\.\w+\.sig$' ''
+        # Why: signer names can contain `-` (e.g. `maxim-uvarov2`), which `\w` excludes.
+        # Match anything between the last two dots that isn't a dot or slash.
+        let original = if ($p =~ '\.[^./]+\.sig$') {
+            $p | str replace --regex '\.[^./]+\.sig$' ''
         } else {
             $p | str replace --regex '\.sig$' ''
         }

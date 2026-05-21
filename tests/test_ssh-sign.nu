@@ -140,6 +140,32 @@ def "verify fails with tampered content" [] {
 }
 
 @test
+def "verify infers original from .sig path with hyphenated signer" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let key_path = $"($tmp_dir)/test_key"
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $pubkeys_dir
+    cp $"($key_path).pub" ($pubkeys_dir | path join "maxim-uvarov2.pub")
+
+    "hello world" | save --force $test_file
+    ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
+
+    # Why: signer names can contain `-`. The infer branch uses a regex on the
+    # `.sig` path to recover the original; `\w` excludes `-` so this would fail.
+    let sig_path = $"($test_file).maxim-uvarov2.sig"
+    assert ($sig_path | path exists) $"sig not written at expected path: ($sig_path)"
+    let results = ssh-sign verify $sig_path --pubkeys-dir $pubkeys_dir
+    assert equal ($results | length) 1
+    assert equal ($results | first | get valid) true
+    assert equal ($results | first | get signer) "maxim-uvarov2"
+
+    rm --recursive $tmp_dir
+}
+
+@test
 def "verify with explicit --sig" [] {
     let tmp_dir = (^mktemp -d | str trim)
     let key_path = $"($tmp_dir)/test_key"
