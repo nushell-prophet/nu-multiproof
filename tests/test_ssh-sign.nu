@@ -138,3 +138,27 @@ def "verify fails with tampered content" [] {
 
     rm --recursive $tmp_dir
 }
+
+@test
+def "verify with explicit --sig" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let key_path = $"($tmp_dir)/test_key"
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $pubkeys_dir
+    cp $"($key_path).pub" ($pubkeys_dir | path join "test.pub")
+
+    "hello world" | save --force $test_file
+    ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
+
+    # Why explicit --sig: exercises the single-file branch (was unexercised);
+    # default flow uses the glob branch.
+    let results = ssh-sign verify $test_file --sig $"($test_file).test.sig" --pubkeys-dir $pubkeys_dir
+    assert equal ($results | length) 1
+    assert equal ($results | first | get valid) true
+    assert equal ($results | first | get signer) "test"
+
+    rm --recursive $tmp_dir
+}
