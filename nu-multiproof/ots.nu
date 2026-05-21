@@ -303,6 +303,26 @@ export def upgrade [path: path] {
     let prefix = $buf | bytes at 0..($parsed.att_offset - 1)
     let upgraded = $prefix | bytes add --end $new_bytes
 
-    $upgraded | save --raw --force $path
+    # Why: validate the upgraded buffer parses to a Bitcoin attestation before
+    # touching the file. A malformed calendar response would otherwise destroy
+    # the pending bundle. Validate-then-atomic-rename keeps the original
+    # intact on any failure.
+    let validation = try {
+        let reparsed = $upgraded | parse-ots
+        if $reparsed.attestation.type != "bitcoin" {
+            {ok: false reason: $"upgraded attestation type is ($reparsed.attestation.type), expected bitcoin"}
+        } else {
+            {ok: true}
+        }
+    } catch {|e|
+        {ok: false reason: $e.msg}
+    }
+    if not $validation.ok {
+        error make {msg: $"upgrade aborted, original untouched: ($validation.reason)"}
+    }
+
+    let tmp_out = $"($path).new"
+    $upgraded | save --raw --force $tmp_out
+    mv $tmp_out $path
     print $"Upgraded: ($path)"
 }
