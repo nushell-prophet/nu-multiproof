@@ -247,6 +247,18 @@ export def stamp [path: path --out-dir: string] {
         $"($bundle_dir)/($stem).($ext)"
     }
     let ots_path = $"($bundle_dir)/($stem).ots"
+
+    # Why: bundle dir is keyed by file hash, so re-stamping unchanged content
+    # reuses the directory. The new .ots has a different nonce + calendar
+    # response — both are independent attestations worth keeping. Rename the
+    # existing one to <stem>.<timestamp>.ots so the prior proof survives.
+    if ($ots_path | path exists) {
+        let stamp = (date now | format date "%Y%m%d-%H%M%S")
+        let archived = $"($bundle_dir)/($stem).($stamp).ots"
+        mv $ots_path $archived
+        print $"Archived previous: ($archived)"
+    }
+
     cp $path $copy_path
     $ots | save --raw --force $ots_path
     print $"Frozen copy: ($copy_path)"
