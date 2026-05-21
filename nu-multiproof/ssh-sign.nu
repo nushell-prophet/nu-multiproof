@@ -66,8 +66,8 @@ export def sign [
 # If --sig is given, verifies that single file. Otherwise finds all {path}.*.sig files.
 export def verify [
     path: path # File to verify (or a .sig file — original is inferred)
-    --sig: string # Specific signature file (default: all .sig files)
-    --pubkeys-dir: string # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
+    --sig: path # Specific signature file (default: all .sig files)
+    --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
     --namespace: string = "file"
 ] {
     # If a .sig file was passed, infer the original file
