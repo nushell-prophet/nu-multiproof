@@ -56,11 +56,7 @@ def find-path-objects [
         let name = $it.item
         let is_last = $it.index == $last_index
 
-        let entries = if $path != null {
-            ^git -C $path ls-tree $current_tree | parse-ls-tree
-        } else {
-            ^git ls-tree $current_tree | parse-ls-tree
-        }
+        let entries = (^git -C $path ls-tree $current_tree | parse-ls-tree)
         let entry = ($entries | where name == $name)
 
         if ($entry | is-empty) {
@@ -104,11 +100,7 @@ def extract-loose-objects [
 
     $hashes | str join "\n" | save --force $hashes_file
     ^git init --bare --object-format=sha256 $bare_repo o+e>| ignore
-    if $path != null {
-        open --raw $hashes_file | ^git -C $path pack-objects --stdout | save --raw --force $pack_file
-    } else {
-        open --raw $hashes_file | ^git pack-objects --stdout | save --raw --force $pack_file
-    }
+    open --raw $hashes_file | ^git -C $path pack-objects --stdout | save --raw --force $pack_file
     open --raw $pack_file | ^git --git-dir $bare_repo unpack-objects
 
     copy-loose-objects ($bare_repo | path join "objects") $dest
