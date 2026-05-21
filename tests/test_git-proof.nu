@@ -121,6 +121,64 @@ def "verify fails when bundled pubkey tampered" [] {
     rm --recursive $proof_dir
 }
 
+# A path like `a/b` where `a` is a blob must fail-fast inside `extract`.
+# Previously, the cursor only advanced on trees, so `b` was searched in the
+# root tree — silently succeeding (when `b` was a sibling) or erroring with
+# a misleading "not found in tree <root>" message (when it wasn't).
+@test
+def "extract errors when path descends into a blob with sibling at root" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    let proof_dir = $"($tmp_dir)/proof"
+    mkdir $repo
+    ^git -C $repo init --object-format=sha256 -q
+    ^git -C $repo config user.email "test@example.com"
+    ^git -C $repo config user.name "test"
+
+    "blob a" | save --force $"($repo)/a"
+    "blob b" | save --force $"($repo)/b"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo commit -m init o+e>| ignore
+
+    let outcome = (try {
+        git-proof extract "a/b" --path $repo --out-dir $proof_dir
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert ($outcome | str contains "is a blob") $"expected blob-descend error, got ($outcome)"
+    # Why: error must fire before any objects are extracted.
+    assert (not ($proof_dir | path exists)) "proof dir created despite error"
+
+    rm --recursive $tmp_dir
+}
+
+@test
+def "extract errors when path descends into a blob without sibling" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    let proof_dir = $"($tmp_dir)/proof"
+    mkdir $repo
+    ^git -C $repo init --object-format=sha256 -q
+    ^git -C $repo config user.email "test@example.com"
+    ^git -C $repo config user.name "test"
+
+    "blob a" | save --force $"($repo)/a"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo commit -m init o+e>| ignore
+
+    let outcome = (try {
+        git-proof extract "a/b" --path $repo --out-dir $proof_dir
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert ($outcome | str contains "is a blob") $"expected blob-descend error, got ($outcome)"
+    assert (not ($proof_dir | path exists)) "proof dir created despite error"
+
+    rm --recursive $tmp_dir
+}
+
 @test
 def "render-allowed-signers writes one wildcard line per pubkey" [] {
     let tmp_dir = (^mktemp -d | str trim)

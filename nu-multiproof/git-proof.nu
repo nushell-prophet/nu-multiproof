@@ -48,10 +48,14 @@ def find-path-objects [
     --path: path # Target git repo root
 ]: nothing -> list<record<hash: string, type: string>> {
     let parts = ($file_path | split row "/")
+    let last_index = ($parts | length) - 1
     mut objects = []
     mut current_tree = $tree_hash
 
-    for name in $parts {
+    for it in ($parts | enumerate) {
+        let name = $it.item
+        let is_last = $it.index == $last_index
+
         let entries = if $path != null {
             ^git -C $path ls-tree $current_tree | parse-ls-tree
         } else {
@@ -68,6 +72,13 @@ def find-path-objects [
 
         if $entry.type == "tree" {
             $current_tree = $entry.hash
+        } else if not $is_last {
+            # Why: without this, the cursor stayed at the previous tree and the
+            # next segment was looked up there — producing either a misleading
+            # "not found in tree <root>" message or, worse, a silent success
+            # with a bogus proof (when a sibling at the wrong level happened to
+            # share the name).
+            error make {msg: $"'($name)' is a ($entry.type); cannot descend into ($file_path)"}
         }
     }
 
