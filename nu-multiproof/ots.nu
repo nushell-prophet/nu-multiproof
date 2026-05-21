@@ -239,7 +239,13 @@ export def stamp [path: path --out-dir: string] {
 
     let bundle_dir = $"($out_dir)/($stem).($hash_prefix)"
     mkdir $bundle_dir
-    let copy_path = $"($bundle_dir)/($stem).($ext)"
+    # Why no trailing dot: extensionless input ("README") was producing
+    # "README." (literal trailing dot).
+    let copy_path = if ($ext | is-empty) {
+        $"($bundle_dir)/($stem)"
+    } else {
+        $"($bundle_dir)/($stem).($ext)"
+    }
     let ots_path = $"($bundle_dir)/($stem).ots"
     cp $path $copy_path
     $ots | save --raw --force $ots_path
