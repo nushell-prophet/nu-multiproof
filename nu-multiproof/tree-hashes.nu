@@ -166,7 +166,11 @@ export def root-cid [
     # would leave a sig that no longer matches. Fail-fast so a user running
     # the primitive standalone doesn't end up with a stale signature. `seal`
     # removes the sig itself before calling root-cid so it can proceed.
-    let stale_sigs = glob $"($manifest_path).*.sig"
+    # Both `<manifest>.<signer>.sig` and bare `<manifest>.sig` are checked —
+    # mirrors what `ssh-sign verify` itself accepts.
+    let named_sigs = glob $"($manifest_path).*.sig"
+    let bare_sig = $"($manifest_path).sig"
+    let stale_sigs = if ($bare_sig | path exists) { $named_sigs ++ [$bare_sig] } else { $named_sigs }
     if not ($stale_sigs | is-empty) {
         let names = $stale_sigs | each { path basename } | str join ", "
         error make {msg: $"manifest has signatures \(($names)\) — root-cid would invalidate them. Delete them or run `main seal` which handles this."}
