@@ -160,6 +160,18 @@ export def root-cid [
         ^git rev-parse --show-toplevel | str trim
     }
     let manifest_path = $root | path join $MULTIPROOFS_DIR $OUTPUT_FILE
+
+    # Why: root-cid rewrites the manifest by appending/replacing the "." row.
+    # Any existing sibling .sig signs the old content, so silently rewriting
+    # would leave a sig that no longer matches. Fail-fast so a user running
+    # the primitive standalone doesn't end up with a stale signature. `seal`
+    # removes the sig itself before calling root-cid so it can proceed.
+    let stale_sigs = glob $"($manifest_path).*.sig"
+    if not ($stale_sigs | is-empty) {
+        let names = $stale_sigs | each { path basename } | str join ", "
+        error make {msg: $"manifest has signatures \(($names)\) — root-cid would invalidate them. Delete them or run `main seal` which handles this."}
+    }
+
     let manifest = open $manifest_path
     # Why manifest not glob/git-ls-files: the manifest defines what's "in" the worktree.
     # The user's file list is the CSV, not whatever happens to be on disk.

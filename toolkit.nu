@@ -120,6 +120,11 @@ export def 'main seal' [
     tree-hashes --path $root
     print $"Manifest: multiproofs/tree-hashes.csv"
 
+    # Why: sigs from a previous seal sign the old manifest; root-cid refuses
+    # to clobber them. seal owns the regeneration flow — clear stale sigs so
+    # step 4 (sign) can produce fresh ones against the new manifest.
+    glob $"($manifest_path).*.sig" | each {|sig| rm $sig }
+
     mut result = {manifest: $manifest_path}
 
     # 3. Compute root CID — single IPFS hash covering all manifest files
