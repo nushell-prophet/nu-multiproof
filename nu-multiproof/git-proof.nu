@@ -356,7 +356,7 @@ export def verify [
         print $"   FAIL: ($invalid | length) objects have invalid hashes"
         $invalid | each {|r| print $"     ($r.hash | str substring 0..12)...: ($r.error)" }
         rm --recursive $tmp_dir
-        return {valid: false error: "object hash verification failed"}
+        return {valid: false structure_valid: false error: "object hash verification failed"}
     }
     print $"   OK: all ($hash_results | length) objects verified"
 
@@ -369,7 +369,7 @@ export def verify [
         print "   FAIL: merkle path verification failed"
         $path_invalid | each {|r| print $"     ($r.step): ($r.error)" }
         rm --recursive $tmp_dir
-        return {valid: false error: "merkle path verification failed"}
+        return {valid: false structure_valid: false error: "merkle path verification failed"}
     }
     $path_results | each {|r| print $"   OK: ($r.step)" }
 
@@ -381,13 +381,20 @@ export def verify [
     if $sig_result.valid {
         print $"   OK: ($sig_result.detail)"
     } else {
-        print $"   WARN: ($sig_result.error)"
-        print "   (signature check requires ssh-keygen; proof structure is still valid)"
+        print $"   FAIL: ($sig_result.error)"
     }
 
-    print "\nProof is VALID."
+    # Why: callers checking only `.valid` must reject unsigned/wrongly-signed
+    # bundles. `structure_valid` is exposed for callers that want each leg.
+    let overall = $sig_result.valid
+    if $overall {
+        print "\nProof is VALID."
+    } else {
+        print "\nProof is INVALID (structure ok, signature failed)."
+    }
     {
-        valid: true
+        valid: $overall
+        structure_valid: true
         commit: $manifest.commit
         files: $manifest.files
         signature: $sig_result

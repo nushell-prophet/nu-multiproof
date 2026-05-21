@@ -37,10 +37,14 @@ def "extract multiple files with deduplication" [] {
 def "verify valid proof" [] {
     let proof_dir = (^mktemp -d | str trim)
 
-    git-proof extract nu-multiproof/mod.nu --out-dir $proof_dir
+    # Why signed commit: top-level `valid` requires both structure AND signature.
+    # HEAD may not be signed, so pick any commit with a signature attached.
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract nu-multiproof/mod.nu --commit $signed --out-dir $proof_dir
     let result = (git-proof verify $proof_dir)
 
     assert equal $result.valid true
+    assert equal $result.structure_valid true
     assert equal ($result.files | length) 1
     assert equal ($result.files | first | get path) "nu-multiproof/mod.nu"
 
@@ -83,6 +87,9 @@ def "verify fails when signer key not in bundle" [] {
 
     let result = (git-proof verify $proof_dir)
     assert equal $result.signature.valid false
+    # Why: callers checking only `.valid` must reject this bundle.
+    assert equal $result.valid false
+    assert equal $result.structure_valid true
 
     rm --recursive $proof_dir
 }
@@ -108,6 +115,8 @@ def "verify fails when bundled pubkey tampered" [] {
 
     let result = (git-proof verify $proof_dir)
     assert equal $result.signature.valid false
+    assert equal $result.valid false
+    assert equal $result.structure_valid true
 
     rm --recursive $proof_dir
 }
