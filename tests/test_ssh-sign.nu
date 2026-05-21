@@ -104,8 +104,12 @@ def "verify fails with wrong key" [] {
     "hello world" | save --force $test_file
     ssh-sign sign $test_file --key $sign_key --name attacker
 
+    # Why: sig is cryptographically valid (good format, matches content) but
+    # the signer's key isn't in pubkeys_dir. Must surface as `unrecognized_signer`,
+    # not collapse with the tampered-content case below.
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | first | get valid) false
+    assert equal ($results | first | get error) "unrecognized_signer"
 
     rm --recursive $tmp_dir
 }
@@ -126,8 +130,11 @@ def "verify fails with tampered content" [] {
 
     "tampered content" | save --force $test_file
 
+    # Why: signature no longer matches content — must surface as
+    # `invalid_signature`, distinct from the unrecognized-signer case above.
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | first | get valid) false
+    assert equal ($results | first | get error) "invalid_signature"
 
     rm --recursive $tmp_dir
 }

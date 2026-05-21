@@ -139,9 +139,23 @@ export def verify [
                 } | where $it != null
 
             if ($matched | is-empty) {
+                # Why: distinguish "sig is good but signer not in our bundle"
+                # from "sig itself is broken". `-Y check-novalidate` verifies
+                # the signature against its embedded public key without
+                # consulting allowed_signers.
+                let cn = (
+                    do {
+                        open --raw $path | ^ssh-keygen -Y check-novalidate -n $namespace -s $sig_path
+                    } | complete
+                )
                 let label = $current_name | default "unknown"
-                print $"($label): invalid \(no matching pubkey\)"
-                {signer: $label valid: false error: "no matching pubkey"}
+                if $cn.exit_code == 0 {
+                    print $"($label): unrecognized signer \(sig cryptographically valid but key not in pubkeys_dir\)"
+                    {signer: $label valid: false error: "unrecognized_signer"}
+                } else {
+                    print $"($label): invalid signature"
+                    {signer: $label valid: false error: "invalid_signature"}
+                }
             } else {
                 let signer = $matched | first
                 print $"($signer): valid"
