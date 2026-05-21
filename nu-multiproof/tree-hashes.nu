@@ -9,7 +9,6 @@ use cid-v0.nu
 # --only-hash is baked in here on purpose: per-file content_cid is a column in the manifest,
 # not something the user shares standalone. Publishing N individual files to the daemon serves
 # no use case — only the root CID gets shared, and root-cid has its own --publish-to-ipfs opt-in.
-const IPFS_FLAGS = ["--only-hash" "--progress=false" "--cid-version=0" "--raw-leaves=false" "--hash=sha2-256" "--chunker=size-262144"]
 const IPFS_CID_FLAGS = ["--progress=false" "--cid-version=0" "--raw-leaves=false" "--hash=sha2-256" "--chunker=size-262144"]
 const OUTPUT_FILE = "tree-hashes.csv"
 const MULTIPROOFS_DIR = "multiproofs"
@@ -77,7 +76,7 @@ export def build-tree [
         }
         let tmp_basename = $tmp | path basename
         let table = (
-            ^ipfs add --recursive ...$IPFS_FLAGS $tmp
+            ^ipfs add --recursive --only-hash ...$IPFS_CID_FLAGS $tmp
             | lines
             | parse "added {cid} {path}"
             | where { $in.path != $tmp_basename }
