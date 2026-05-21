@@ -55,3 +55,16 @@ def "no root row with empty filepath" [] {
     let empty = $result | where { $in.filepath | into string | is-empty }
     assert equal ($empty | length) 0
 }
+
+@test
+def "hidden tracked files are included" [] {
+    let result = tree-hashes --echo
+    let tracked = ^git ls-files | lines
+    let hidden = $tracked | where { $in | path basename | str starts-with "." }
+    # Test only runs assertion if the repo has any hidden tracked files
+    for f in $hidden {
+        let row = $result | where filepath == $f
+        assert equal ($row | length) 1 $"hidden tracked file ($f) missing from manifest"
+        assert ($row.0.content_sha256 | is-not-empty) $"hidden tracked file ($f) has empty content_sha256"
+    }
+}

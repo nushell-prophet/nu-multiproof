@@ -1,7 +1,7 @@
 #!/usr/bin/env nu
 
 # Generate a CSV manifest of content hashes (SHA-256, git object, IPFS CID v0)
-# for all non-hidden files and directories in the repo.
+# for all git-tracked files and their parent directories.
 
 use cid-v0.nu
 
@@ -21,26 +21,47 @@ export def build-tree [
     let root = if $path != null { $path | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
-    let multiproofs = $root | path join $MULTIPROOFS_DIR
-    let exclude_path = $multiproofs | path join $OUTPUT_FILE
     let root_basename = $root | path basename
+    let exclude_rel = ([$MULTIPROOFS_DIR $OUTPUT_FILE] | path join)
 
-    # Build file list with SHA-256 hashes (Nushell built-in, no process spawning)
-    let entries = (
-        glob ($root | path join '**/*') --no-symlink --exclude [**/.*/** tree-hashes.csv.*.ots]
-        | where { path basename | str starts-with "." | not $in }
-        | where $it != $exclude_path
+    # File set: git-tracked files only. Hidden tracked files (.woodpecker.yaml,
+    # .gitignore) are included; .git/ is excluded by ls-files semantics.
+    # Not glob+filter because: it dropped hidden tracked files and mixed
+    # working-tree with VCS noise.
+    let tracked_files = (
+        ^git -C $root ls-files
+        | lines
+        | where { $in != $exclude_rel }
         | sort
-        | each {|entry|
-            let is_dir = ($entry | path type) == dir
-            let rel = $entry | path relative-to $root
+    )
+
+    # Synthesize directory entries from file paths (ls-files returns only files).
+    let dir_entries = (
+        $tracked_files
+        | each {|f|
+            let parts = $f | path split
+            if ($parts | length) <= 1 { [] } else {
+                1..(($parts | length) - 1) | each {|n| $parts | first $n | path join }
+            }
+        }
+        | flatten
+        | uniq
+        | sort
+        | each {|d| {rel: $d is_dir: true content_sha256: ""} }
+    )
+
+    let file_entries = (
+        $tracked_files
+        | each {|f|
             {
-                rel: $rel
-                is_dir: $is_dir
-                content_sha256: (if $is_dir { "" } else { open --raw $entry | hash sha256 })
+                rel: $f
+                is_dir: false
+                content_sha256: (open --raw ($root | path join $f) | hash sha256)
             }
         }
     )
+
+    let entries = $dir_entries ++ $file_entries | sort-by rel
 
     # Content CIDs
     let content_cid_table = if $ipfs {
@@ -53,8 +74,7 @@ export def build-tree [
             $acc | insert $rel $row.cid
         }
     } else {
-        $entries
-        | where not $it.is_dir
+        $file_entries
         | each {|e|
             let content = open --raw ($root | path join $e.rel) | into binary
             let size = $content | bytes length
@@ -92,7 +112,6 @@ export def build-tree [
 
     # Join lookup tables into final CSV structure
     $entries
-    | where { $in.rel | into string | is-not-empty }
     | each {|e|
         {
             filepath: $e.rel
