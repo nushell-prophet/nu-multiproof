@@ -221,7 +221,7 @@ export def main [
     --ipfs # Compute CIDs using ipfs CLI (supports large files and directory CIDs)
     --path: path # Target git repo root (default: git root of current directory)
 ] {
-    let table = if $ipfs { build-tree --ipfs --path $path } else { build-tree --path $path }
+    let table = (build-tree --ipfs=$ipfs --path $path)
     let target_root = if $path != null { $path | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
