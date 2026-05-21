@@ -141,7 +141,9 @@ export def 'main seal' [
         } else {
             resolve-signing-key $root
         }
-        let sig = ssh-sign sign $manifest_path --key $resolved.key
+        # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
+        # git root, but seal may target a different repo via --path.
+        let sig = ssh-sign sign $manifest_path --key $resolved.key --pubkeys-dir ($root | path join "multiproofs/pubkeys")
         $result = ($result | insert sig $sig)
     }
 

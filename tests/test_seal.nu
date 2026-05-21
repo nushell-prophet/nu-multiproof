@@ -1,0 +1,75 @@
+use std/assert
+use std/testing *
+
+use ../toolkit.nu *
+
+# seal happy path with --no-stamp --no-root-cid:
+# avoids the OTS calendar network call and the ipfs CLI, but still
+# exercises tree-hashes regen + signing-key resolution + sig clearing.
+@test
+def "seal produces manifest and signature" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+
+    # SHA-256 not required for seal (only git-proof requires it)
+    ^git -C $repo init -q
+    ^git -C $repo config user.email "seal-test@example.com"
+    ^git -C $repo config user.name "Seal Test"
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    ^git -C $repo config user.signingKey $"($key_path).pub"
+
+    # Bootstrap pubkeys/ via init so signer-name lookup works
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+
+    "hello\n" | save --force $"($repo)/README.md"
+    ^git -C $repo add README.md
+    ^git -C $repo commit -q -m "init"
+
+    let result = main seal --path $repo --no-stamp --no-root-cid
+
+    let manifest = $"($repo)/multiproofs/tree-hashes.csv"
+    assert ($manifest | path exists) "manifest not created"
+    let sigs = (glob $"($manifest).*.sig")
+    assert equal ($sigs | length) 1 $"expected exactly one sig, got ($sigs)"
+    assert ($result.sig | str ends-with ".sshkey.sig")
+
+    rm --recursive $tmp_dir
+}
+
+# Second seal must succeed even though previous seal left a sig next to the
+# manifest. Why: root-cid refuses to clobber sigs; seal must clear them
+# itself before regen so its own flow keeps working.
+@test
+def "seal re-runs without root-cid sig conflict" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+
+    ^git -C $repo init -q
+    ^git -C $repo config user.email "seal-test@example.com"
+    ^git -C $repo config user.name "Seal Test"
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    ^git -C $repo config user.signingKey $"($key_path).pub"
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+
+    "v1\n" | save --force $"($repo)/file.txt"
+    ^git -C $repo add file.txt
+    ^git -C $repo commit -q -m "init"
+
+    main seal --path $repo --no-stamp --no-root-cid
+    # Second invocation must not error: stale sig from first run gets cleared
+    main seal --path $repo --no-stamp --no-root-cid
+
+    let manifest = $"($repo)/multiproofs/tree-hashes.csv"
+    let sigs = (glob $"($manifest).*.sig")
+    assert equal ($sigs | length) 1
+
+    rm --recursive $tmp_dir
+}
