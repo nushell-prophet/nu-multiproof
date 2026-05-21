@@ -44,10 +44,19 @@ export def main [
             } else {
                 # It's a file path
                 let expanded = $raw | path expand
-                if ($expanded | path exists) {
-                    $expanded
-                } else if ($"($expanded).pub" | path exists) {
+                # Why: prefer the .pub sibling when both exist, so a misconfigured
+                # signingKey pointing at the private key still resolves to the public one.
+                if ($"($expanded).pub" | path exists) {
                     $"($expanded).pub"
+                } else if ($expanded | path exists) {
+                    # Validate it's actually a public key before copying — otherwise
+                    # a private-key path would be copied into pubkeys/ (and committed).
+                    let first_line = (open --raw $expanded | lines | first | default "")
+                    if ($first_line | str starts-with "ssh-") or ($first_line | str starts-with "sk-") or ($first_line | str starts-with "ecdsa-") {
+                        $expanded
+                    } else {
+                        error make {msg: $"($raw) does not look like an SSH public key — point user.signingKey at the .pub file"}
+                    }
                 } else {
                     print $"Warning: git signing key path not found: ($raw)"
                     print "Use --pubkey to specify a public key file"
@@ -77,7 +86,7 @@ def resolve-key-name [key: string]: nothing -> string {
     # 3+ fields = type, base64, comment — use comment
     if ($parts | length) >= 3 {
         # Sanitize: take alphanumeric/hyphen/underscore only
-        $parts | last | str replace --regex '[^a-zA-Z0-9_-]' '' | str replace --regex '^$' 'signer'
+        $parts | last | str replace --all --regex '[^a-zA-Z0-9_-]' '' | str replace --regex '^$' 'signer'
     } else {
         # No comment — derive from key type
         $parts | first | str replace "@openssh.com" "" | str replace "sk-ecdsa-sha2-nistp256" "ecdsa-sk" | str replace "ssh-" ""
