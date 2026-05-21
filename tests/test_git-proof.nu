@@ -122,6 +122,47 @@ def "verify fails when bundled pubkey tampered" [] {
 }
 
 @test
+def "render-allowed-signers writes one wildcard line per pubkey" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let out = $"($tmp_dir)/allowed_signers"
+    mkdir $pubkeys_dir
+
+    ^ssh-keygen -t ed25519 -f $"($tmp_dir)/k1" -N "" -q -C "alice"
+    ^ssh-keygen -t ed25519 -f $"($tmp_dir)/k2" -N "" -q -C "bob"
+    cp $"($tmp_dir)/k1.pub" ($pubkeys_dir | path join "alice.pub")
+    cp $"($tmp_dir)/k2.pub" ($pubkeys_dir | path join "bob.pub")
+
+    git-proof render-allowed-signers --to $out --pubkeys-dir $pubkeys_dir
+
+    let lines = open --raw $out | lines
+    assert equal ($lines | length) 2
+    # Why wildcard principal: collective trust statement — keys are in the
+    # project's signer list without attaching personal identity.
+    for line in $lines {
+        assert ($line | str starts-with "* namespaces=\"git\" ") $"unexpected line: ($line)"
+    }
+
+    rm --recursive $tmp_dir
+}
+
+@test
+def "render-allowed-signers errors on empty pubkeys dir" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let out = $"($tmp_dir)/allowed_signers"
+    mkdir $pubkeys_dir
+
+    let outcome = (try {
+        git-proof render-allowed-signers --to $out --pubkeys-dir $pubkeys_dir
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+
+    rm --recursive $tmp_dir
+}
+
+@test
 def "blob hash matches git" [] {
     let proof_dir = (^mktemp -d | str trim)
 
