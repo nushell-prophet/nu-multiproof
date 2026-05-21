@@ -21,7 +21,6 @@ export def build-tree [
     let root = if $path != null { $path | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
-    let root_basename = $root | path basename
     let exclude_rel = ([$MULTIPROOFS_DIR $OUTPUT_FILE] | path join)
 
     # File set: git-tracked files only. Hidden tracked files (.woodpecker.yaml,
@@ -65,14 +64,30 @@ export def build-tree [
 
     # Content CIDs
     let content_cid_table = if $ipfs {
-        ^ipfs add --recursive ...$IPFS_FLAGS $root
-        | lines
-        | parse "added {cid} {path}"
-        | where { $in.path != $root_basename }
-        | reduce --fold {} {|row acc|
-            let rel = $row.path | str replace $"($root_basename)/" ""
-            $acc | insert $rel $row.cid
+        # Stage tracked files into a temp dir and ipfs-add that — so per-file and
+        # per-dir CIDs cover exactly the manifest file set. Not `ipfs add -r $root`
+        # because: it walks .git/ and ignored files, polluting directory CIDs.
+        let tmp = $nu.temp-dir | path join $"nu-multiproof-build-tree-ipfs-(random uuid)"
+        rm --recursive --force $tmp
+        mkdir $tmp
+        $tracked_files | each {|f|
+            let dest = $tmp | path join $f
+            mkdir ($dest | path dirname)
+            cp ($root | path join $f) $dest
         }
+        let tmp_basename = $tmp | path basename
+        let table = (
+            ^ipfs add --recursive ...$IPFS_FLAGS $tmp
+            | lines
+            | parse "added {cid} {path}"
+            | where { $in.path != $tmp_basename }
+            | reduce --fold {} {|row acc|
+                let rel = $row.path | str replace $"($tmp_basename)/" ""
+                $acc | insert $rel $row.cid
+            }
+        )
+        rm --recursive --force $tmp
+        $table
     } else {
         $file_entries
         | each {|e|
