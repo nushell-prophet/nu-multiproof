@@ -179,9 +179,9 @@ export def info [path: path] {
     $lines = $lines ++ [
         (
             match $att.type {
-                "pending" => (["  verify PendingAttestation(\"" $att.url "\")"] | str join)
-                "bitcoin" => (["  verify BitcoinBlockHeaderAttestation(" ($att.height | into string) ")"] | str join)
-                _ => (["  verify UnknownAttestation(" $att.tag ")"] | str join)
+                "pending" => $"  verify PendingAttestation\(\"($att.url)\"\)"
+                "bitcoin" => $"  verify BitcoinBlockHeaderAttestation\(($att.height)\)"
+                _ => $"  verify UnknownAttestation\(($att.tag)\)"
             }
         )
     ]
