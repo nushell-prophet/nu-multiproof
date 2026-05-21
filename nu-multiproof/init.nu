@@ -23,7 +23,7 @@ export def main [
 
     # Resolve pubkey to copy
     let key_file = if $pubkey != null {
-        $pubkey
+        resolve-pubkey-file $pubkey
     } else {
         # Try git config signing key
         let git_key = (do { ^git -C $root config user.signingKey } | complete)
@@ -44,24 +44,16 @@ export def main [
             } else {
                 # It's a file path
                 let expanded = $raw | path expand
-                # Why: prefer the .pub sibling when both exist, so a misconfigured
-                # signingKey pointing at the private key still resolves to the public one.
-                if ($"($expanded).pub" | path exists) {
-                    $"($expanded).pub"
-                } else if ($expanded | path exists) {
-                    # Validate it's actually a public key before copying — otherwise
-                    # a private-key path would be copied into pubkeys/ (and committed).
-                    let first_line = (open --raw $expanded | lines | first | default "")
-                    if ($first_line | str starts-with "ssh-") or ($first_line | str starts-with "sk-") or ($first_line | str starts-with "ecdsa-") {
-                        $expanded
-                    } else {
-                        error make {msg: $"($raw) does not look like an SSH public key — point user.signingKey at the .pub file"}
-                    }
-                } else {
+                # Why: keep soft-warning behavior for the git-config branch — a key
+                # configured on another machine shouldn't hard-error init; --pubkey
+                # can still recover. --pubkey itself has no such fallback (user
+                # explicitly named the path), so resolve-pubkey-file errors there.
+                if not (($expanded | path exists) or ($"($expanded).pub" | path exists)) {
                     print $"Warning: git signing key path not found: ($raw)"
                     print "Use --pubkey to specify a public key file"
                     return
                 }
+                resolve-pubkey-file $expanded
             }
         } else {
             print "No git signing key configured and no --pubkey given"
@@ -77,6 +69,27 @@ export def main [
     } else {
         cp $key_file $dest
         print $"Copied ($key_file | path basename) → ($dest | path relative-to $root)"
+    }
+}
+
+# Resolve an SSH key path to its public-key file.
+# Why: --pubkey and the user.signingKey file-path branch must never copy a
+# private key into pubkeys/. Prefer the `.pub` sibling when present (forgiving
+# misconfig); otherwise validate the file's first line looks like an SSH pubkey.
+def resolve-pubkey-file [raw: path]: nothing -> path {
+    let expanded = $raw | path expand
+    let pub_sibling = $"($expanded).pub"
+    if ($pub_sibling | path exists) {
+        return ($pub_sibling | into string | path expand)
+    }
+    if not ($expanded | path exists) {
+        error make {msg: $"pubkey file not found: ($raw)"}
+    }
+    let first_line = (open --raw $expanded | lines | first | default "")
+    if ($first_line | str starts-with "ssh-") or ($first_line | str starts-with "sk-") or ($first_line | str starts-with "ecdsa-") {
+        $expanded
+    } else {
+        error make {msg: $"($raw) does not look like an SSH public key — point at the .pub file"}
     }
 }
 

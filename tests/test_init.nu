@@ -50,6 +50,51 @@ def "init refuses to copy a private-key file as pubkey" [] {
     rm --recursive $tmp_dir
 }
 
+# --pubkey must apply the same private-key refusal as the git-config branch.
+# Otherwise an explicit `init --pubkey ~/.ssh/id_ed25519` would copy a private
+# key into multiproofs/pubkeys/ (and get committed).
+@test
+def "init --pubkey refuses a private-key file" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    rm $"($key_path).pub"
+
+    let outcome = (try { init --path $repo --pubkey $key_path; "ok" } catch { |e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+
+    let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
+    assert equal $copied 0
+
+    rm --recursive $tmp_dir
+}
+
+# --pubkey pointed at the private key with .pub sibling present should still
+# resolve to the .pub sibling (mirrors the git-config branch's forgiving lookup).
+@test
+def "init --pubkey prefers .pub sibling over private-key path" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+
+    init --path $repo --pubkey $key_path
+
+    let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
+    assert equal ($names | length) 1
+    let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
+    assert ($saved | str starts-with "ssh-")
+
+    rm --recursive $tmp_dir
+}
+
 # When both <path> and <path>.pub exist, init should prefer the .pub sibling
 # even if user.signingKey points at the private file (forgiving misconfig).
 @test
