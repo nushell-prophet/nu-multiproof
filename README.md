@@ -28,7 +28,7 @@ nu-multiproof git-proof extract src/main.nu README.md
 # Verify it (works without the original repo)
 nu-multiproof git-proof verify proof/
 # Render multiproofs/pubkeys/ into an allowed_signers file for `git verify-commit`
-nu-multiproof git-proof render-allowed-signers --to allowed_signers
+nu-multiproof git-proof render-allowed-signers allowed_signers
 
 # Timestamp a file via OpenTimestamps
 nu-multiproof ots stamp multiproofs/tree-hashes.csv
@@ -98,7 +98,7 @@ Commits in this repo are SSH-signed. Verifying an SSH-signed commit involves two
 
 Git conflates them: it refuses to verify SSH signatures unless `gpg.ssh.allowedSignersFile` is configured and points to an existing file. That file maps principals → keys → namespaces; it is your **local trust list**, not part of any commit. Setting it is a statement *you* make about which keys you trust — the repo cannot make it for you.
 
-`multiproofs/pubkeys/` is this project's source of truth for who can sign. `git-proof render-allowed-signers --to <path>` writes those keys into a correctly-formatted trust file. It does **not** mutate git config — wiring is the caller's choice.
+`multiproofs/pubkeys/` is this project's source of truth for who can sign. `git-proof render-allowed-signers <path>` writes those keys into a correctly-formatted trust file. It does **not** mutate git config — wiring is the caller's choice.
 
 ### One-shot inspection
 
@@ -106,7 +106,7 @@ Git conflates them: it refuses to verify SSH signatures unless `gpg.ssh.allowedS
 
 ```nushell
 use nu-multiproof/
-nu-multiproof git-proof render-allowed-signers --to /tmp/nu-multiproof-signers
+nu-multiproof git-proof render-allowed-signers /tmp/nu-multiproof-signers
 git -c gpg.ssh.allowedSignersFile=/tmp/nu-multiproof-signers log --show-signature -1
 ```
 
@@ -116,7 +116,7 @@ For repeated inspection, render once and point this clone's **local** git config
 
 ```nushell
 let signers = $"(git rev-parse --git-dir | str trim)/allowed_signers"
-nu-multiproof git-proof render-allowed-signers --to $signers
+nu-multiproof git-proof render-allowed-signers $signers
 git config gpg.ssh.allowedSignersFile $signers
 ```
 

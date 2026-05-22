@@ -191,7 +191,7 @@ def "render-allowed-signers writes one wildcard line per pubkey" [] {
     cp $"($tmp_dir)/k1.pub" ($pubkeys_dir | path join "alice.pub")
     cp $"($tmp_dir)/k2.pub" ($pubkeys_dir | path join "bob.pub")
 
-    git-proof render-allowed-signers --to $out --pubkeys-dir $pubkeys_dir
+    git-proof render-allowed-signers $out --pubkeys-dir $pubkeys_dir
 
     let lines = open --raw $out | lines
     assert equal ($lines | length) 2
@@ -212,7 +212,7 @@ def "render-allowed-signers errors on empty pubkeys dir" [] {
     mkdir $pubkeys_dir
 
     let outcome = (try {
-        git-proof render-allowed-signers --to $out --pubkeys-dir $pubkeys_dir
+        git-proof render-allowed-signers $out --pubkeys-dir $pubkeys_dir
         "ok"
     } catch {|e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"

@@ -273,13 +273,9 @@ def build-allowed-signers [pubkeys_dir: path]: nothing -> string {
 # `git -c gpg.ssh.allowedSignersFile=<path> verify-commit`.
 # Does not modify git config — the caller chooses how to wire it up.
 export def "render-allowed-signers" [
-    --to: path # Output path for the rendered file (required)
+    out: path # Output path for the rendered file
     --pubkeys-dir: path # Source directory of *.pub files (default: <git-root>/multiproofs/pubkeys)
 ] {
-    if $to == null {
-        error make {msg: "--to <path> is required"}
-    }
-
     let dir = if $pubkeys_dir != null { $pubkeys_dir | path expand } else {
         ^git rev-parse --show-toplevel | str trim | path join "multiproofs/pubkeys"
     }
@@ -289,10 +285,10 @@ export def "render-allowed-signers" [
         error make {msg: $"no *.pub files in ($dir)"}
     }
 
-    $signers | save --force $to
-    print $"Wrote ($to)"
+    $signers | save --force $out
+    print $"Wrote ($out)"
     print "Use it without persisting git config:"
-    print $"  git -c gpg.ssh.allowedSignersFile=($to) verify-commit HEAD"
+    print $"  git -c gpg.ssh.allowedSignersFile=($out) verify-commit HEAD"
 }
 
 # Verify commit signature against bundled pubkeys
