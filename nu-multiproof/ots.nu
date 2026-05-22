@@ -193,7 +193,7 @@ export def info [path: path] {
 # extensionless-input edge case is testable without a real stamp.
 # Why no trailing dot: extensionless input ("README") was producing "README."
 # because `($stem).($ext)` collapsed to "README." when `$ext` was empty.
-export def copy-path-for [path: path, bundle_dir: string]: nothing -> string {
+export def copy-path-for [path: path, bundle_dir: path]: nothing -> string {
     let parsed = $path | path parse
     if ($parsed.extension | is-empty) {
         $"($bundle_dir)/($parsed.stem)"
@@ -203,7 +203,7 @@ export def copy-path-for [path: path, bundle_dir: string]: nothing -> string {
 }
 
 # Create an OTS timestamp proof for a file
-export def stamp [path: path --out-dir: string] {
+export def stamp [path: path --out-dir: path] {
     let out_dir = if $out_dir != null { $out_dir } else {
         let git_root = ^git rev-parse --show-toplevel | str trim
         $git_root | path join "multiproofs/ots-timestamps"

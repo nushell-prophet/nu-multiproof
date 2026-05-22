@@ -13,7 +13,7 @@ export def 'main test' [--fail] {
 
 export def 'main stamp' [
     path: path
-    --out-dir: string # Default: multiproofs/ots-timestamps from git root
+    --out-dir: path # Default: multiproofs/ots-timestamps from git root
     --key: string # SSH private key path for signing (optional)
     --name: string # Signer name for .sig file (default: stem of matching pubkey in multiproofs/pubkeys/)
 ] {
@@ -159,7 +159,7 @@ export def 'main seal' [
 export def 'main proof-extract' [
     ...files: string # Target file paths to prove
     --commit: string = "HEAD" # Commit to prove against
-    --out-dir: string = "proof" # Output directory
+    --out-dir: path = "proof" # Output directory
 ] {
     use nu-multiproof/git-proof.nu
 
@@ -167,7 +167,7 @@ export def 'main proof-extract' [
 }
 
 export def 'main proof-verify' [
-    proof_dir: string = "proof" # Proof bundle directory
+    proof_dir: path = "proof" # Proof bundle directory
 ] {
     use nu-multiproof/git-proof.nu
 

@@ -111,7 +111,7 @@ def extract-loose-objects [
 export def extract [
     ...files: string # Target file paths to prove
     --commit: string = "HEAD" # Commit to prove against
-    --out-dir: string = "proof" # Output directory for proof bundle
+    --out-dir: path = "proof" # Output directory for proof bundle
     --repo: path # Target git repo root (default: git root of current directory)
 ] {
     if ($files | is-empty) {
@@ -293,9 +293,9 @@ export def "render-allowed-signers" [
 
 # Verify commit signature against bundled pubkeys
 def verify-signature [
-    proof_dir: string
+    proof_dir: path
     manifest: record
-    tmp_repo: string
+    tmp_repo: path
 ]: nothing -> record<valid: bool> {
     let signers = (build-allowed-signers ($proof_dir | path join "pubkeys"))
 
@@ -327,7 +327,7 @@ def verify-signature [
 
 # Verify a proof bundle autonomously (without access to original repo)
 export def verify [
-    proof_dir: string = "proof" # Proof bundle directory
+    proof_dir: path = "proof" # Proof bundle directory
 ] {
     let manifest_path = ($proof_dir | path join "manifest.json")
     if not ($manifest_path | path exists) {
