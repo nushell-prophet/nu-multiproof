@@ -1,6 +1,8 @@
 # Pure Nushell OpenTimestamps implementation — no `ots` CLI dependency.
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
+use _ots-helpers.nu copy-path-for
+
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 const OP_SHA256 = 0x08
 const OP_RIPEMD160 = 0x03
@@ -187,19 +189,6 @@ export def info [ots_file: path] {
     ]
 
     $lines | str join "\n"
-}
-
-# Bundle copy-path for an input file. Pure; extracted from `stamp` so the
-# extensionless-input edge case is testable without a real stamp.
-# Why no trailing dot: extensionless input ("README") was producing "README."
-# because `($stem).($ext)` collapsed to "README." when `$ext` was empty.
-export def copy-path-for [file: path, bundle_dir: path]: nothing -> string {
-    let parsed = $file | path parse
-    if ($parsed.extension | is-empty) {
-        $"($bundle_dir)/($parsed.stem)"
-    } else {
-        $"($bundle_dir)/($parsed.stem).($parsed.extension)"
-    }
 }
 
 # Create an OTS timestamp proof for a file

@@ -2,6 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/ots.nu
+use ../nu-multiproof/_ots-helpers.nu copy-path-for
 
 # --- Embedded test vectors ---
 
@@ -158,13 +159,13 @@ def "upgrade rejects malformed response and leaves original intact" [] {
 # network call — testing it directly removes the OTS_NETWORK_TEST gate.
 @test
 def "copy-path-for extensionless input has no trailing dot" [] {
-    let result = (ots copy-path-for "/tmp/x/README" "/tmp/x/README.deadbeef")
+    let result = (copy-path-for "/tmp/x/README" "/tmp/x/README.deadbeef")
     assert equal $result "/tmp/x/README.deadbeef/README"
 }
 
 @test
 def "copy-path-for preserves extension" [] {
-    let result = (ots copy-path-for "/tmp/x/data.csv" "/tmp/x/data.deadbeef")
+    let result = (copy-path-for "/tmp/x/data.csv" "/tmp/x/data.deadbeef")
     assert equal $result "/tmp/x/data.deadbeef/data.csv"
 }
 
