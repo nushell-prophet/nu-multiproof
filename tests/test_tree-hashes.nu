@@ -84,9 +84,9 @@ def "root-cid appends . row with cid v0" [] {
     ^git -C $repo add file.txt
     ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
 
-    tree-hashes --path $repo
+    tree-hashes --repo $repo
 
-    let cid = tree-hashes root-cid --path $repo
+    let cid = tree-hashes root-cid --repo $repo
     let manifest = open $"($repo)/multiproofs/tree-hashes.csv"
     let dot = $manifest | where filepath == "."
     assert equal ($dot | length) 1
@@ -110,12 +110,12 @@ def "root-cid refuses to clobber sibling sigs" [] {
     ^git -C $repo add file.txt
     ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
 
-    tree-hashes --path $repo
+    tree-hashes --repo $repo
     let manifest = $"($repo)/multiproofs/tree-hashes.csv"
     "stale-sig" | save --force $"($manifest).alice.sig"
 
     let outcome = (try {
-        tree-hashes root-cid --path $repo
+        tree-hashes root-cid --repo $repo
         "ok"
     } catch {|e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"

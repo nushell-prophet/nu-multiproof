@@ -15,9 +15,9 @@ const MULTIPROOFS_DIR = "multiproofs"
 
 export def build-tree [
     --ipfs # Compute CIDs using ipfs CLI (supports large files and directory CIDs)
-    --path: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> table {
-    let root = if $path != null { $path | path expand } else {
+    let root = if $repo != null { $repo | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
     let exclude_rel = ([$MULTIPROOFS_DIR $OUTPUT_FILE] | path join)
@@ -152,10 +152,10 @@ export def build-tree [
 # not whatever happens to be on disk. CID parameters match IPFS_CID_FLAGS
 # so individual file CIDs are consistent with the content_cid column.
 export def root-cid [
-    --path: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target git repo root (default: git root of current directory)
     --publish-to-ipfs # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
 ]: nothing -> string {
-    let root = if $path != null { $path | path expand } else {
+    let root = if $repo != null { $repo | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
     let manifest_path = $root | path join $MULTIPROOFS_DIR $OUTPUT_FILE
@@ -219,10 +219,10 @@ export def root-cid [
 export def main [
     --echo # Output as nushell table instead of saving to file
     --ipfs # Compute CIDs using ipfs CLI (supports large files and directory CIDs)
-    --path: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target git repo root (default: git root of current directory)
 ] {
-    let table = (build-tree --ipfs=$ipfs --path $path)
-    let target_root = if $path != null { $path | path expand } else {
+    let table = (build-tree --ipfs=$ipfs --repo $repo)
+    let target_root = if $repo != null { $repo | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
     let out_dir = $target_root | path join $MULTIPROOFS_DIR

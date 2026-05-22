@@ -45,7 +45,7 @@ def copy-loose-objects [src: path dest: path] {
 def find-path-objects [
     tree_hash: string
     file_path: string
-    --path: path # Target git repo root
+    --repo: path # Target git repo root
 ]: nothing -> list<record<hash: string, type: string>> {
     let parts = ($file_path | split row "/")
     let last_index = ($parts | length) - 1
@@ -56,7 +56,7 @@ def find-path-objects [
         let name = $it.item
         let is_last = $it.index == $last_index
 
-        let entries = (^git -C $path ls-tree $current_tree | parse-ls-tree)
+        let entries = (^git -C $repo ls-tree $current_tree | parse-ls-tree)
         let entry = ($entries | where name == $name)
 
         if ($entry | is-empty) {
@@ -91,7 +91,7 @@ def find-path-objects [
 def extract-loose-objects [
     hashes: list<string> # Object hashes to extract
     dest: path # Directory to receive loose objects
-    --path: path # Target git repo root
+    --repo: path # Target git repo root
 ] {
     let tmp_dir = (^mktemp -d | str trim)
     let hashes_file = ($tmp_dir | path join "hashes.txt")
@@ -100,7 +100,7 @@ def extract-loose-objects [
 
     $hashes | str join "\n" | save --force $hashes_file
     ^git init --bare --object-format=sha256 $bare_repo o+e>| ignore
-    open --raw $hashes_file | ^git -C $path pack-objects --stdout | save --raw --force $pack_file
+    open --raw $hashes_file | ^git -C $repo pack-objects --stdout | save --raw --force $pack_file
     open --raw $pack_file | ^git --git-dir $bare_repo unpack-objects
 
     copy-loose-objects ($bare_repo | path join "objects") $dest
@@ -112,13 +112,13 @@ export def extract [
     ...files: string # Target file paths to prove
     --commit: string = "HEAD" # Commit to prove against
     --out-dir: string = "proof" # Output directory for proof bundle
-    --path: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target git repo root (default: git root of current directory)
 ] {
     if ($files | is-empty) {
         error make {msg: "no files specified"}
     }
 
-    let root = if $path != null { $path | path expand } else {
+    let root = if $repo != null { $repo | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
     # Why: tree objects encode children as raw hash bytes; SHA-1 sources would
@@ -138,7 +138,7 @@ export def extract [
     mut target_files = []
 
     for file in $files {
-        let path_objects = (find-path-objects $tree_hash $file --path $root)
+        let path_objects = (find-path-objects $tree_hash $file --repo $root)
         $all_objects = ($all_objects | append $path_objects)
         $target_files = (
             $target_files | append {
@@ -155,7 +155,7 @@ export def extract [
     let objects_dir = ($out_dir | path join "objects")
     mkdir $objects_dir
 
-    extract-loose-objects ($unique_objects | get hash) $objects_dir --path $root
+    extract-loose-objects ($unique_objects | get hash) $objects_dir --repo $root
 
     # Copy pubkeys from target repo's multiproofs/pubkeys/
     let pubkeys_dir = ($out_dir | path join "pubkeys")

@@ -141,7 +141,7 @@ def "extract errors when path descends into a blob with sibling at root" [] {
     ^git -C $repo commit -m init o+e>| ignore
 
     let outcome = (try {
-        git-proof extract "a/b" --path $repo --out-dir $proof_dir
+        git-proof extract "a/b" --repo $repo --out-dir $proof_dir
         "ok"
     } catch {|e| $"err:($e.msg)" })
 
@@ -168,7 +168,7 @@ def "extract errors when path descends into a blob without sibling" [] {
     ^git -C $repo commit -m init o+e>| ignore
 
     let outcome = (try {
-        git-proof extract "a/b" --path $repo --out-dir $proof_dir
+        git-proof extract "a/b" --repo $repo --out-dir $proof_dir
         "ok"
     } catch {|e| $"err:($e.msg)" })
 

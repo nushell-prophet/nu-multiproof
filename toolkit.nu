@@ -33,20 +33,20 @@ export def 'main stamp' [
 
 export def 'main hash' [
     --echo
-    --path: path # Target directory (default: current directory)
+    --repo: path # Target git repo root (default: git root of current directory)
 ] {
     use nu-multiproof/tree-hashes.nu
 
-    tree-hashes --echo=$echo --path $path
+    tree-hashes --echo=$echo --repo $repo
 }
 
 export def 'main root-cid' [
-    --path: path # Target directory (default: current directory)
+    --repo: path # Target git repo root (default: git root of current directory)
     --publish-to-ipfs # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
 ] {
     use nu-multiproof/tree-hashes.nu
 
-    tree-hashes root-cid --path $path --publish-to-ipfs=$publish_to_ipfs
+    tree-hashes root-cid --repo $repo --publish-to-ipfs=$publish_to_ipfs
 }
 
 # Resolve SSH signing key from git config (file path or inline key::).
@@ -91,7 +91,7 @@ def resolve-signing-key [root: path]: nothing -> record<key: string> {
 # files existed in a signed commit, but seal artifacts would need to be in
 # that commit — keeping them separate sidesteps the chicken-and-egg.
 export def 'main seal' [
-    --path: path # Target directory (default: current directory)
+    --repo: path # Target git repo root (default: git root of current directory)
     --key: path # SSH private key (default: from git config user.signingKey)
     --no-root-cid # Skip IPFS root CID (on by default — opt out when ipfs CLI unavailable)
     --no-sign # Skip SSH signing (on by default — seal should be complete)
@@ -102,7 +102,7 @@ export def 'main seal' [
     use nu-multiproof/ots.nu
     use nu-multiproof/ssh-sign.nu
 
-    let root = if $path != null { $path | path expand } else {
+    let root = if $repo != null { $repo | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
     let manifest_path = $root | path join "multiproofs/tree-hashes.csv"
@@ -117,7 +117,7 @@ export def 'main seal' [
     }
 
     # 2. Regenerate manifest — must precede root-cid (provides the file list)
-    tree-hashes --path $root
+    tree-hashes --repo $root
     print $"Manifest: multiproofs/tree-hashes.csv"
 
     # Why: sigs from a previous seal sign the old manifest; root-cid refuses
@@ -129,7 +129,7 @@ export def 'main seal' [
 
     # 3. Compute root CID — single IPFS hash covering all manifest files
     if not $no_root_cid {
-        let root_cid = tree-hashes root-cid --path $root --publish-to-ipfs=$publish_to_ipfs
+        let root_cid = tree-hashes root-cid --repo $root --publish-to-ipfs=$publish_to_ipfs
         print $"Root CID: ($root_cid)"
         $result = ($result | insert root_cid $root_cid)
     }
@@ -142,7 +142,7 @@ export def 'main seal' [
             resolve-signing-key $root
         }
         # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
-        # git root, but seal may target a different repo via --path.
+        # git root, but seal may target a different repo via --repo.
         let sig = ssh-sign sign $manifest_path --key $resolved.key --pubkeys-dir ($root | path join "multiproofs/pubkeys")
         $result = ($result | insert sig $sig)
     }

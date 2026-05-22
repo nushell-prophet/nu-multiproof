@@ -18,7 +18,7 @@ def "init sanitizes all non-allowed chars in inline-key comment" [] {
     let pubkey_data = (open --raw $"($key_path).pub" | str trim)
     ^git -C $repo config user.signingKey $"key::($pubkey_data)"
 
-    init --path $repo
+    init --repo $repo
 
     let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert ($names | any { |n| $n == "alicebarcom.pub" }) $"expected alicebarcom.pub, got ($names)"
@@ -41,7 +41,7 @@ def "init refuses to copy a private-key file as pubkey" [] {
 
     ^git -C $repo config user.signingKey $key_path
 
-    let outcome = (try { init --path $repo; "ok" } catch { |e| $"err:($e.msg)" })
+    let outcome = (try { init --repo $repo; "ok" } catch { |e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
     let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
@@ -64,7 +64,7 @@ def "init --pubkey refuses a private-key file" [] {
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     rm $"($key_path).pub"
 
-    let outcome = (try { init --path $repo --pubkey $key_path; "ok" } catch { |e| $"err:($e.msg)" })
+    let outcome = (try { init --repo $repo --pubkey $key_path; "ok" } catch { |e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
     let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
@@ -85,7 +85,7 @@ def "init --pubkey prefers .pub sibling over private-key path" [] {
     let key_path = $"($tmp_dir)/sshkey"
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
 
-    init --path $repo --pubkey $key_path
+    init --repo $repo --pubkey $key_path
 
     let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert equal ($names | length) 1
@@ -109,7 +109,7 @@ def "init prefers .pub sibling when signingKey points to private key" [] {
 
     ^git -C $repo config user.signingKey $key_path
 
-    init --path $repo
+    init --repo $repo
 
     let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert equal ($names | length) 1
