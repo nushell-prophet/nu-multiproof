@@ -76,20 +76,20 @@ export def main [
 # Why: --pubkey and the user.signingKey file-path branch must never copy a
 # private key into pubkeys/. Prefer the `.pub` sibling when present (forgiving
 # misconfig); otherwise validate the file's first line looks like an SSH pubkey.
-def resolve-pubkey-file [raw: path]: nothing -> path {
-    let expanded = $raw | path expand
+def resolve-pubkey-file [key_path: path]: nothing -> path {
+    let expanded = $key_path | path expand
     let pub_sibling = $"($expanded).pub"
     if ($pub_sibling | path exists) {
         return ($pub_sibling | into string | path expand)
     }
     if not ($expanded | path exists) {
-        error make {msg: $"pubkey file not found: ($raw)"}
+        error make {msg: $"pubkey file not found: ($key_path)"}
     }
     let first_line = (open --raw $expanded | lines | first | default "")
     if ($first_line | str starts-with "ssh-") or ($first_line | str starts-with "sk-") or ($first_line | str starts-with "ecdsa-") {
         $expanded
     } else {
-        error make {msg: $"($raw) does not look like an SSH public key — point at the .pub file"}
+        error make {msg: $"($key_path) does not look like an SSH public key — point at the .pub file"}
     }
 }
 
