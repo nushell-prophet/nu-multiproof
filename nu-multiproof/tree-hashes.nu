@@ -13,7 +13,7 @@ const IPFS_CID_FLAGS = ["--progress=false" "--cid-version=0" "--raw-leaves=false
 const OUTPUT_FILE = "tree-hashes.csv"
 const MULTIPROOFS_DIR = "multiproofs"
 
-export def build-tree [
+def build-tree [
     --ipfs # Compute CIDs using ipfs CLI (supports large files and directory CIDs)
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> table {
