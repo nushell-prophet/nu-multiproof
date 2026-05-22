@@ -154,8 +154,8 @@ def replay-ops [ops: list]: binary -> binary {
 }
 
 # Display info about an .ots proof file
-export def info [path: path] {
-    let parsed = open --raw $path | parse-ots
+export def info [ots_file: path] {
+    let parsed = open --raw $ots_file | parse-ots
 
     mut lines = [
         $"File sha256 hash: ($parsed.hash | encode hex)"
@@ -193,8 +193,8 @@ export def info [path: path] {
 # extensionless-input edge case is testable without a real stamp.
 # Why no trailing dot: extensionless input ("README") was producing "README."
 # because `($stem).($ext)` collapsed to "README." when `$ext` was empty.
-export def copy-path-for [path: path, bundle_dir: path]: nothing -> string {
-    let parsed = $path | path parse
+export def copy-path-for [file: path, bundle_dir: path]: nothing -> string {
+    let parsed = $file | path parse
     if ($parsed.extension | is-empty) {
         $"($bundle_dir)/($parsed.stem)"
     } else {
@@ -203,12 +203,12 @@ export def copy-path-for [path: path, bundle_dir: path]: nothing -> string {
 }
 
 # Create an OTS timestamp proof for a file
-export def stamp [path: path --out-dir: path] {
+export def stamp [file: path --out-dir: path] {
     let out_dir = if $out_dir != null { $out_dir } else {
         let git_root = ^git rev-parse --show-toplevel | str trim
         $git_root | path join "multiproofs/ots-timestamps"
     }
-    let file_hash = open --raw $path | hash sha256 | decode hex
+    let file_hash = open --raw $file | hash sha256 | decode hex
     let nonce = random binary 16
     let merkle_tip = $file_hash | bytes add --end $nonce | hash sha256 | decode hex
 
@@ -246,11 +246,11 @@ export def stamp [path: path --out-dir: path] {
     )
 
     let hash_prefix = $file_hash | encode hex | str substring 0..<8
-    let stem = ($path | path parse | get stem)
+    let stem = ($file | path parse | get stem)
 
     let bundle_dir = $"($out_dir)/($stem).($hash_prefix)"
     mkdir $bundle_dir
-    let copy_path = (copy-path-for $path $bundle_dir)
+    let copy_path = (copy-path-for $file $bundle_dir)
     let ots_path = $"($bundle_dir)/($stem).ots"
 
     # Why: bundle dir is keyed by file hash, so re-stamping unchanged content
@@ -264,16 +264,16 @@ export def stamp [path: path --out-dir: path] {
         print $"Archived previous: ($archived)"
     }
 
-    cp $path $copy_path
+    cp $file $copy_path
     $ots | save --raw --force $ots_path
     print $"Frozen copy: ($copy_path)"
     print $"Timestamped: ($ots_path)"
 
     # Why: a self-contained bundle must answer "signer X endorsed content C at
     # time T, anchored to Bitcoin block B" using only files in the bundle dir.
-    # Snapshot any sibling `<path>.<signer>.sig` next to the frozen copy so
+    # Snapshot any sibling `<file>.<signer>.sig` next to the frozen copy so
     # the binding survives the next `seal` (which overwrites the live sig).
-    let sigs = glob $"($path).*.sig"
+    let sigs = glob $"($file).*.sig"
     let bundled_sigs = $sigs | each {|sig|
         let sig_name = $sig | path basename
         let dest = $"($bundle_dir)/($sig_name)"
@@ -289,8 +289,8 @@ export def stamp [path: path --out-dir: path] {
 # --response-file: read the calendar response from a local file instead of
 # fetching it. Why: enables offline tests of the splice/validate/write logic
 # without a real calendar; also lets callers pre-fetch responses.
-export def upgrade [path: path --response-file: path] {
-    let buf = open --raw $path
+export def upgrade [ots_file: path --response-file: path] {
+    let buf = open --raw $ots_file
     let parsed = $buf | parse-ots
 
     if $parsed.attestation.type != "pending" {
@@ -346,8 +346,8 @@ export def upgrade [path: path --response-file: path] {
         error make {msg: $"upgrade aborted, original untouched: ($validation.reason)"}
     }
 
-    let tmp_out = $"($path).new"
+    let tmp_out = $"($ots_file).new"
     $upgraded | save --raw --force $tmp_out
-    mv $tmp_out $path
-    print $"Upgraded: ($path)"
+    mv $tmp_out $ots_file
+    print $"Upgraded: ($ots_file)"
 }

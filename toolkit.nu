@@ -12,7 +12,7 @@ export def 'main test' [--fail] {
 }
 
 export def 'main stamp' [
-    path: path
+    file: path
     --out-dir: path # Default: multiproofs/ots-timestamps from git root
     --key: string # SSH private key path for signing (optional)
     --name: string # Signer name for .sig file (default: stem of matching pubkey in multiproofs/pubkeys/)
@@ -20,7 +20,7 @@ export def 'main stamp' [
     use nu-multiproof/ots.nu
     use nu-multiproof/ssh-sign.nu
 
-    let result = ots stamp $path --out-dir $out_dir
+    let result = ots stamp $file --out-dir $out_dir
     if $key != null {
         if $name != null {
             ssh-sign sign $result.copy --key $key --name $name
