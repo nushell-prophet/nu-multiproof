@@ -1,7 +1,7 @@
 use std/assert
 use std/testing *
 
-use ../toolkit.nu *
+use ../nu-multiproof/seal.nu
 
 # seal happy path with --no-stamp --no-root-cid:
 # avoids the OTS calendar network call and the ipfs CLI, but still
@@ -29,7 +29,7 @@ def "seal produces manifest and signature" [] {
     ^git -C $repo add README.md
     ^git -C $repo commit -q -m "init"
 
-    let result = main seal --repo $repo --no-stamp --no-root-cid
+    let result = seal --repo $repo --no-stamp --no-root-cid
 
     let manifest = $"($repo)/multiproofs/tree-hashes.csv"
     assert ($manifest | path exists) "manifest not created"
@@ -63,9 +63,9 @@ def "seal re-runs without root-cid sig conflict" [] {
     ^git -C $repo add file.txt
     ^git -C $repo commit -q -m "init"
 
-    main seal --repo $repo --no-stamp --no-root-cid
+    seal --repo $repo --no-stamp --no-root-cid
     # Second invocation must not error: stale sig from first run gets cleared
-    main seal --repo $repo --no-stamp --no-root-cid
+    seal --repo $repo --no-stamp --no-root-cid
 
     let manifest = $"($repo)/multiproofs/tree-hashes.csv"
     let sigs = (glob $"($manifest).*.sig")
