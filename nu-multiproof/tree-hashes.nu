@@ -20,7 +20,12 @@ def build-tree [
     let root = if $repo != null { $repo | path expand } else {
         ^git rev-parse --show-toplevel | str trim
     }
-    let exclude_rel = ([$MULTIPROOFS_DIR $OUTPUT_FILE] | path join)
+    # Why: multiproofs/ is the proof-output dir, derived from the source it
+    # describes. Hashing it would make the manifest mutate every seal (new .ots
+    # nonce, new .sig) and entangle proof-of-content with proof-of-proof. The
+    # folder rule also subsumes the self-reference — the manifest can't hash
+    # itself — so no separate single-file exclude is needed.
+    let exclude_prefix = $MULTIPROOFS_DIR + "/"
 
     # File set: git-tracked files only. Hidden tracked files (.woodpecker.yaml,
     # .gitignore) are included; .git/ is excluded by ls-files semantics.
@@ -29,7 +34,7 @@ def build-tree [
     let tracked_files = (
         ^git -C $root ls-files
         | lines
-        | where { $in != $exclude_rel }
+        | where { not ($in | str starts-with $exclude_prefix) }
         | sort
     )
 
