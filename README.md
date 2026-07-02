@@ -14,7 +14,7 @@ Each proof type is independent. Use one, two, or all three.
 
 ## Quick start
 
-```nushell
+```nushell no-run
 use nu-multiproof/
 
 # Bootstrap multiproofs/ directory in your repo
@@ -58,7 +58,7 @@ Tests use [nutest](https://github.com/vyadh/nutest). Clone it as a sibling direc
 git clone https://github.com/vyadh/nutest ../nutest
 ```
 
-```nushell
+```nushell no-run
 use toolkit.nu *; main test
 ```
 
@@ -84,7 +84,7 @@ An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is 
 
 Verify the git proof:
 
-```nushell
+```nushell no-run
 use nu-multiproof/
 nu-multiproof git-proof verify multiproofs/origin-proofs/git-proof
 ```
@@ -104,7 +104,7 @@ Git conflates them: it refuses to verify SSH signatures unless `gpg.ssh.allowedS
 
 `git -c key=value` overrides config for a single invocation, no persisted state:
 
-```nushell
+```nushell no-run
 use nu-multiproof/
 nu-multiproof git-proof render-allowed-signers /tmp/nu-multiproof-signers
 git -c gpg.ssh.allowedSignersFile=/tmp/nu-multiproof-signers log --show-signature -1
@@ -114,7 +114,7 @@ git -c gpg.ssh.allowedSignersFile=/tmp/nu-multiproof-signers log --show-signatur
 
 For repeated inspection, render once and point this clone's **local** git config at the file:
 
-```nushell
+```nushell no-run
 let signers = $"(git rev-parse --git-dir | str trim)/allowed_signers"
 nu-multiproof git-proof render-allowed-signers $signers
 git config gpg.ssh.allowedSignersFile $signers
