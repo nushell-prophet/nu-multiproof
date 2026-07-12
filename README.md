@@ -1,6 +1,8 @@
 # nu-multiproof
 
-Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git`, `ssh-keygen`, and `curl`.
+Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git`, `ssh-keygen`, and `curl`.
+
+🚧 The code in this repo was generated via `claude code` by the latest Anthropic model available at the time, is barely tested, and is not secure.
 
 ## What you can prove
 
