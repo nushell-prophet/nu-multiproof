@@ -1,6 +1,6 @@
 # nu-multiproof
 
-Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git`, `ssh-keygen`, and `curl`.
+Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git` and `ssh-keygen` — network calls use Nushell's built-in `http`.
 
 🚧 The code in this repo was generated via `claude code` by the latest Anthropic model available at the time, is barely tested, and is not secure.
 
@@ -52,7 +52,6 @@ nu-multiproof ssh-sign verify tree-hashes.csv
 - [Nushell](https://www.nushell.sh/) 0.101+
 - `git` (SHA-256 repos supported)
 - `ssh-keygen` (for SSH signing)
-- `curl` (for OpenTimestamps calendar servers)
 
 ### Testing
 
