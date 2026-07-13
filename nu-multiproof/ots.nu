@@ -24,6 +24,12 @@ def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
     mut shift = 1
     mut pos = $offset
     loop {
+        # Why: an out-of-range `bytes at` yields empty and `into int` reads it
+        # as 0, so a truncated file would silently misparse. Fail with a clear
+        # message instead.
+        if $pos >= ($buf | bytes length) {
+            error make {msg: "truncated OTS file: varint runs past end of buffer"}
+        }
         let b = $buf | bytes at $pos..($pos) | into int
         $value = $value + ($b mod 128) * $shift
         $pos = $pos + 1
@@ -40,6 +46,9 @@ def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
     if $len.value == 0 { return {bytes: 0x[] offset: $len.offset} }
     let start = $len.offset
     let end = $start + $len.value - 1
+    if $end >= ($buf | bytes length) {
+        error make {msg: "truncated OTS file: length-prefixed field runs past end of buffer"}
+    }
     {bytes: ($buf | bytes at $start..($end)) offset: ($end + 1)}
 }
 
@@ -68,6 +77,9 @@ def parse-timestamp [offset: int] {
     mut ops = []
 
     loop {
+        if $pos >= ($buf | bytes length) {
+            error make {msg: "truncated OTS file: expected an op or attestation tag"}
+        }
         let tag = $buf | bytes at $pos..($pos) | into int
         $pos = $pos + 1
 
@@ -231,6 +243,18 @@ export def stamp [file: path --out-dir: path] {
     mkdir $bundle_dir
     let copy_path = (copy-path-for $file $bundle_dir)
     let ots_path = $"($bundle_dir)/($stem).ots"
+
+    # Why: the bundle dir is keyed by stem + an 8-hex hash prefix, so different
+    # content sharing that prefix would map to the same dir — silently
+    # overwriting the frozen copy while archiving the wrong .ots, breaking
+    # bundle self-consistency. Guard: an existing frozen copy must be the same
+    # content (full-hash compare, not just the prefix). ~2^-32, one comparison.
+    if ($copy_path | path exists) {
+        let existing_hash = open --raw $copy_path | hash sha256 | decode hex
+        if $existing_hash != $file_hash {
+            error make {msg: $"hash-prefix collision in ($bundle_dir): the frozen copy there is different content that shares the 8-hex prefix ($hash_prefix)"}
+        }
+    }
 
     # Why: bundle dir is keyed by file hash, so re-stamping unchanged content
     # reuses the directory. The new .ots has a different nonce + calendar
