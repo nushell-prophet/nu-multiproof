@@ -36,7 +36,15 @@ export def main [
     #    so there's no need for a separate upgrade command
     if ($ots_dir | path exists) {
         glob ($ots_dir | path join "**/*.ots") | each {|ots_file|
-            try { ots upgrade $ots_file } catch { }
+            try { ots upgrade $ots_file } catch {|e|
+                # Why: "not yet confirmed" is the normal case — Bitcoin
+                # confirmation takes hours/days, so skip it quietly. Anything
+                # else (corrupt proof, network misconfig, parse bug) is a real
+                # problem; surface it instead of swallowing (fail-fast).
+                if not ($e.msg | str contains "not yet confirmed") {
+                    print $"upgrade failed for ($ots_file): ($e.msg)"
+                }
+            }
         }
     }
 
