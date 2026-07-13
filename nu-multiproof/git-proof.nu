@@ -151,8 +151,18 @@ export def extract [
 
     let unique_objects = ($all_objects | uniq-by hash)
 
-    # Build proof directory
-    if ($out_dir | path exists) { rm --recursive $out_dir }
+    # Build proof directory. Refuse to recursively delete a dir we didn't
+    # create: `extract --out-dir .` (or any dir holding unrelated content)
+    # would otherwise be wiped silently. Absent or empty is fine to (re)create;
+    # a prior proof bundle (has manifest.json) is ours to overwrite.
+    if ($out_dir | path exists) {
+        let is_proof = ($out_dir | path join "manifest.json" | path exists)
+        let is_empty = (ls --all $out_dir | is-empty)
+        if not ($is_proof or $is_empty) {
+            error make {msg: $"refusing to overwrite ($out_dir): not empty and not a proof bundle \(no manifest.json\). Remove it or choose another --out-dir."}
+        }
+        rm --recursive $out_dir
+    }
     let objects_dir = ($out_dir | path join "objects")
     mkdir $objects_dir
 
