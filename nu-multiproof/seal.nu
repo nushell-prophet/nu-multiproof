@@ -14,6 +14,8 @@
 # context (message, scope, timing). Also avoids circularity: git-proof proves
 # files existed in a signed commit, but seal artifacts would need to be in
 # that commit — keeping them separate sidesteps the chicken-and-egg.
+@example "full seal of the current repo" { seal }
+@example "seal without IPFS or timestamping" { seal --no-root-cid --no-stamp }
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --key: path # SSH private key (default: from git config user.signingKey)

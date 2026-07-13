@@ -119,10 +119,11 @@ def extract-loose-objects [
 }
 
 # Extract a merkle proof bundle for given files at a given commit
+@example "prove a file existed in HEAD" { git-proof extract src/main.rs }
 export def extract [
     ...files: string # Target file paths to prove
     --commit: string = "HEAD" # Commit to prove against
-    --out-dir: path = "proof" # Output directory for proof bundle
+    --out-dir: path = "proof" # Bundle output dir, relative to the CWD (not --repo): it's a portable artifact to ship, not part of the repo
     --repo: path # Target git repo root (default: git root of current directory)
 ] {
     if ($files | is-empty) {
@@ -267,6 +268,7 @@ def verify-merkle-paths [
 # Render the repo's pubkeys/ into an allowed_signers file usable by
 # `git -c gpg.ssh.allowedSignersFile=<path> verify-commit`.
 # Does not modify git config — the caller chooses how to wire it up.
+@example "render pubkeys into an allowed_signers file" { git-proof render-allowed-signers /tmp/allowed_signers }
 export def "render-allowed-signers" [
     out: path # Output path for the rendered file
     --pubkeys-dir: path # Source directory of *.pub files (default: <git-root>/multiproofs/pubkeys)
@@ -324,6 +326,7 @@ def verify-signature [
 # Returns a uniform record {valid, structure_valid, commit, files, signature,
 # error}. --fail turns an invalid proof into a non-zero exit (for CI), instead
 # of returning {valid: false} with exit 0 that a caller might not inspect.
+@example "verify a bundle, failing on invalid (for CI)" { git-proof verify proof --fail }
 export def verify [
     proof_dir: path = "proof" # Proof bundle directory
     --fail # Exit non-zero on an invalid proof (for CI)

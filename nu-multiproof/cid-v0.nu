@@ -54,6 +54,7 @@ def base58-encode []: binary -> string {
 }
 
 # Compute CID v0 from raw binary content in pure Nushell (must be ≤ 256 KB)
+@example "CID v0 of in-memory bytes" { "hello" | into binary | cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
 export def main []: binary -> string {
     let hash_bytes = $in | unixfs-dag-pb | hash sha256 | decode hex
     0x[1220] | bytes add --end $hash_bytes | base58-encode

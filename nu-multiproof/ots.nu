@@ -162,6 +162,7 @@ def replay-ops [ops: list]: binary -> binary {
 # `ots info x.ots | get attestation.height`. ops is a table ({type, data?} with
 # hex-encoded data); the default table rendering is already human-readable, so
 # no string-building is needed.
+@example "read the attestation from a proof" { ots info proof.ots | get attestation }
 export def info [ots_file: path] {
     let parsed = open --raw $ots_file | parse-ots
     {
@@ -180,6 +181,7 @@ export def info [ots_file: path] {
 }
 
 # Create an OTS timestamp proof for a file
+@example "timestamp the manifest against the OTS calendar" { ots stamp multiproofs/tree-hashes.csv }
 export def stamp [file: path --out-dir: path] {
     let out_dir = if $out_dir != null { $out_dir } else {
         ots-dir (repo-root)
@@ -272,6 +274,7 @@ export def stamp [file: path --out-dir: path] {
 # --response-file: read the calendar response from a local file instead of
 # fetching it. Why: enables offline tests of the splice/validate/write logic
 # without a real calendar; also lets callers pre-fetch responses.
+@example "upgrade a pending proof once Bitcoin confirms it" { ots upgrade proof.ots }
 export def upgrade [ots_file: path --response-file: path] {
     let buf = open --raw $ots_file
     let parsed = $buf | parse-ots

@@ -5,6 +5,7 @@ use _layout.nu [multiproofs-dir pubkeys-dir]
 
 # Initialize multiproofs/ structure in a git repo.
 # Creates the directory, copies public keys from ssh-agent or a given path.
+@example "bootstrap multiproofs/ in the current repo" { init }
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --pubkey: path # SSH public key file to copy (default: signing key from git config)
