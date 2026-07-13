@@ -6,6 +6,7 @@
 use cid-v0.nu
 use _repo.nu repo-root
 use _layout.nu [MULTIPROOFS_DIR multiproofs-dir manifest-path]
+use _sig.nu sig-files-for
 
 # Hashes name strings as-is (no trailing newline). To reproduce: printf '%s' 'name' | ipfs add ...
 # --only-hash is baked in here on purpose: per-file content_cid is a column in the manifest,
@@ -168,9 +169,7 @@ export def root-cid [
     # removes the sig itself before calling root-cid so it can proceed.
     # Both `<manifest>.<signer>.sig` and bare `<manifest>.sig` are checked —
     # mirrors what `ssh-sign verify` itself accepts.
-    let named_sigs = glob $"($manifest_path).*.sig"
-    let bare_sig = $"($manifest_path).sig"
-    let stale_sigs = if ($bare_sig | path exists) { $named_sigs ++ [$bare_sig] } else { $named_sigs }
+    let stale_sigs = sig-files-for $manifest_path
     if not ($stale_sigs | is-empty) {
         let names = $stale_sigs | each { path basename } | str join ", "
         error make {msg: $"manifest has signatures \(($names)\) — root-cid would invalidate them. Delete them or run `main seal` which handles this."}

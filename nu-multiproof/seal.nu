@@ -52,6 +52,7 @@ export def main [
     use ssh-sign.nu
     use _repo.nu repo-root
     use _layout.nu [manifest-path ots-dir pubkeys-dir]
+    use _sig.nu sig-files-for
 
     let root = repo-root $repo
     let manifest_path = manifest-path $root
@@ -71,8 +72,10 @@ export def main [
 
     # Why: sigs from a previous seal sign the old manifest; root-cid refuses
     # to clobber them. seal owns the regeneration flow — clear stale sigs so
-    # step 4 (sign) can produce fresh ones against the new manifest.
-    glob $"($manifest_path).*.sig" | each {|sig| rm $sig }
+    # step 4 (sign) can produce fresh ones against the new manifest. Uses the
+    # shared discovery so the bare `<manifest>.sig` form is cleared too — a
+    # glob of only `.*.sig` left it behind and root-cid then hard-errored.
+    sig-files-for $manifest_path | each {|sig| rm $sig }
 
     mut result = {manifest: $manifest_path}
 

@@ -2,6 +2,7 @@
 
 use _repo.nu repo-root
 use _layout.nu pubkeys-dir
+use _sig.nu [sig-files-for signer-from-sig]
 
 # Extract algorithm + base64 blob from a public key line, dropping the trailing comment.
 def pubkey-material []: string -> string {
@@ -111,23 +112,15 @@ export def verify [
     let sig_files = if $sig != null {
         [$sig]
     } else {
-        let named = glob $"($path).*.sig"
-        let bare = $"($path).sig"
-        if ($bare | path exists) { $named ++ [$bare] } else { $named }
+        sig-files-for $path
     }
 
     if ($sig_files | is-empty) {
         error make {msg: $"no signature files found for ($path)"}
     }
 
-    let base = $path | path basename
     let results = $sig_files | each {|sig_path|
-            let sig_basename = $sig_path | path basename
-            let current_name = if $sig_basename == $"($base).sig" {
-                null
-            } else {
-                $sig_basename | str replace $"($base)." "" | str replace ".sig" ""
-            }
+            let current_name = signer-from-sig $path $sig_path
 
             # Try each pubkey individually to identify the signer
             let matched = $pubkeys | each {|pk|
