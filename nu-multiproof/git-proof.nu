@@ -41,33 +41,38 @@ def copy-loose-objects [src: path dest: path] {
     }
 }
 
-# --- Extraction ---
-
-# Walk git tree collecting merkle path objects from root to target file.
-# Returns intermediate tree nodes + the final blob/tree for the target.
-def find-path-objects [
+# Walk file_path's segments from tree_hash down through the git trees, returning
+# the hash chain [{name, hash, type}] from the first segment to the target
+# blob/tree. Shared by extract (collects the objects) and verify (compares the
+# final hash), so both get the same errors. `git_args` addresses the repo:
+# ["-C" $root] for a working repo, ["--git-dir" $bare] for a bare one.
+def walk-tree-path [
+    git_args: list<string>
     tree_hash: string
     file_path: string
-    --repo: path # Target git repo root
-]: nothing -> list<record<hash: string, type: string>> {
+]: nothing -> list<record<name: string, hash: string, type: string>> {
     let parts = ($file_path | split row "/")
     let last_index = ($parts | length) - 1
-    mut objects = []
+    mut chain = []
     mut current_tree = $tree_hash
 
     for it in ($parts | enumerate) {
         let name = $it.item
         let is_last = $it.index == $last_index
 
-        let entries = (^git -C $repo ls-tree $current_tree | parse-ls-tree)
-        let entry = ($entries | where name == $name)
+        let tree = $current_tree # immutable copy — mut vars can't be captured in the do closure
+        let result = (do { ^git ...$git_args ls-tree $tree } | complete)
+        if $result.exit_code != 0 {
+            error make {msg: $"cannot read tree ($tree | str substring 0..12)... for ($file_path): ($result.stderr | str trim)"}
+        }
+        let entry = ($result.stdout | parse-ls-tree | where name == $name)
 
         if ($entry | is-empty) {
-            error make {msg: $"'($name)' not found in tree ($current_tree | str substring 0..12)... \(path: ($file_path)\)"}
+            error make {msg: $"'($name)' not found in tree ($tree | str substring 0..12)... \(path: ($file_path)\)"}
         }
 
         let entry = ($entry | first)
-        $objects = ($objects | append {hash: $entry.hash type: $entry.type})
+        $chain = ($chain | append {name: $name hash: $entry.hash type: $entry.type})
 
         if $entry.type == "tree" {
             $current_tree = $entry.hash
@@ -81,8 +86,10 @@ def find-path-objects [
         }
     }
 
-    $objects
+    $chain
 }
+
+# --- Extraction ---
 
 # Extract loose objects from the source repo into a fresh bare repo
 # of the same object format, then copy them out.
@@ -139,12 +146,12 @@ export def extract [
     mut target_files = []
 
     for file in $files {
-        let path_objects = (find-path-objects $tree_hash $file --repo $root)
-        $all_objects = ($all_objects | append $path_objects)
+        let chain = (walk-tree-path ["-C" $root] $tree_hash $file)
+        $all_objects = ($all_objects | append ($chain | select hash type))
         $target_files = (
             $target_files | append {
                 path: $file
-                hash: ($path_objects | last | get hash)
+                hash: ($chain | last | get hash)
             }
         )
     }
@@ -221,28 +228,16 @@ def verify-file-path [
     tree_hash: string
     file_entry: record<path: string, hash: string>
 ]: nothing -> record<step: string, valid: bool> {
-    let parts = ($file_entry.path | split row "/")
-    mut current_hash = $tree_hash
-
-    for part in $parts {
-        let h = $current_hash # immutable copy — mut vars can't be captured in closures
-        let result = (do { ^git --git-dir $repo ls-tree $h } | complete)
-        if $result.exit_code != 0 {
-            return {step: $"file ($file_entry.path)" valid: false error: ($result.stderr | str trim)}
+    let step = $"file ($file_entry.path)"
+    try {
+        let final = (walk-tree-path ["--git-dir" $repo] $tree_hash $file_entry.path | last | get hash)
+        if $final == $file_entry.hash {
+            {step: $step valid: true hash: $final}
+        } else {
+            {step: $step valid: false error: $"expected ($file_entry.hash), got ($final)"}
         }
-
-        let matching = ($result.stdout | parse-ls-tree | where name == $part)
-        if ($matching | is-empty) {
-            return {step: $"file ($file_entry.path)" valid: false error: $"'($part)' not found in tree ($h | str substring 0..12)..."}
-        }
-
-        $current_hash = ($matching | first | get hash)
-    }
-
-    if $current_hash == $file_entry.hash {
-        {step: $"file ($file_entry.path)" valid: true hash: $current_hash}
-    } else {
-        {step: $"file ($file_entry.path)" valid: false error: $"expected ($file_entry.hash), got ($current_hash)"}
+    } catch {|e|
+        {step: $step valid: false error: $e.msg}
     }
 }
 
