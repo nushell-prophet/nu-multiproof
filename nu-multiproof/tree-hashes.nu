@@ -4,6 +4,7 @@
 # for all git-tracked files and their parent directories.
 
 use cid-v0.nu
+use _repo.nu repo-root
 
 # Hashes name strings as-is (no trailing newline). To reproduce: printf '%s' 'name' | ipfs add ...
 # --only-hash is baked in here on purpose: per-file content_cid is a column in the manifest,
@@ -17,9 +18,7 @@ def build-tree [
     --ipfs # Compute CIDs using ipfs CLI (supports large files and directory CIDs)
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> table {
-    let root = if $repo != null { $repo | path expand } else {
-        ^git rev-parse --show-toplevel | str trim
-    }
+    let root = repo-root $repo
     # Why: multiproofs/ is the proof-output dir, derived from the source it
     # describes. Hashing it would make the manifest mutate every seal (new .ots
     # nonce, new .sig) and entangle proof-of-content with proof-of-proof. The
@@ -160,9 +159,7 @@ export def root-cid [
     --repo: path # Target git repo root (default: git root of current directory)
     --publish-to-ipfs # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
 ]: nothing -> string {
-    let root = if $repo != null { $repo | path expand } else {
-        ^git rev-parse --show-toplevel | str trim
-    }
+    let root = repo-root $repo
     let manifest_path = $root | path join $MULTIPROOFS_DIR $OUTPUT_FILE
 
     # Why: root-cid rewrites the manifest by appending/replacing the "." row.
@@ -227,9 +224,7 @@ export def main [
     --repo: path # Target git repo root (default: git root of current directory)
 ] {
     let table = (build-tree --ipfs=$ipfs --repo $repo)
-    let target_root = if $repo != null { $repo | path expand } else {
-        ^git rev-parse --show-toplevel | str trim
-    }
+    let target_root = repo-root $repo
     let out_dir = $target_root | path join $MULTIPROOFS_DIR
     mkdir $out_dir
     $table

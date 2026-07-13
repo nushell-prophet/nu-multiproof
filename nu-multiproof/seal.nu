@@ -50,10 +50,9 @@ export def main [
     use tree-hashes.nu
     use ots.nu
     use ssh-sign.nu
+    use _repo.nu repo-root
 
-    let root = if $repo != null { $repo | path expand } else {
-        ^git rev-parse --show-toplevel | str trim
-    }
+    let root = repo-root $repo
     let manifest_path = $root | path join "multiproofs/tree-hashes.csv"
     let ots_dir = $root | path join "multiproofs/ots-timestamps"
 

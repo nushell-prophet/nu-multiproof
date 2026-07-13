@@ -1,14 +1,14 @@
 # Bootstrap multiproofs/ directory in a git repository.
 
+use _repo.nu repo-root
+
 # Initialize multiproofs/ structure in a git repo.
 # Creates the directory, copies public keys from ssh-agent or a given path.
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --pubkey: path # SSH public key file to copy (default: signing key from git config)
 ] {
-    let root = if $repo != null { $repo | path expand } else {
-        ^git rev-parse --show-toplevel | str trim
-    }
+    let root = repo-root $repo
     let multiproofs = $root | path join "multiproofs"
     let pubkeys_dir = $multiproofs | path join "pubkeys"
 

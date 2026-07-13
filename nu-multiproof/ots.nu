@@ -3,6 +3,7 @@
 
 use _ots-helpers.nu copy-path-for
 use _varint.nu encode-varint
+use _repo.nu repo-root
 
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 const OP_SHA256 = 0x08
@@ -183,8 +184,7 @@ export def info [ots_file: path] {
 # Create an OTS timestamp proof for a file
 export def stamp [file: path --out-dir: path] {
     let out_dir = if $out_dir != null { $out_dir } else {
-        let git_root = ^git rev-parse --show-toplevel | str trim
-        $git_root | path join "multiproofs/ots-timestamps"
+        repo-root | path join "multiproofs/ots-timestamps"
     }
     let file_hash = open --raw $file | hash sha256 | decode hex
     let nonce = random binary 16

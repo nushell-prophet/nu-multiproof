@@ -9,6 +9,8 @@
 #     objects/XX/YYY...    — git loose objects (commit, trees, blobs)
 #     pubkeys/*.pub        — signer's public keys
 
+use _repo.nu repo-root
+
 # --- Shared helpers ---
 
 # Parse `git ls-tree` output into a table
@@ -118,9 +120,7 @@ export def extract [
         error make {msg: "no files specified"}
     }
 
-    let root = if $repo != null { $repo | path expand } else {
-        ^git rev-parse --show-toplevel | str trim
-    }
+    let root = repo-root $repo
     # Why: tree objects encode children as raw hash bytes; SHA-1 sources would
     # need tree rewriting to produce a self-consistent SHA-256 bundle.
     let src_format = (^git -C $root config extensions.objectFormat | complete | get stdout | str trim)
@@ -277,7 +277,7 @@ export def "render-allowed-signers" [
     --pubkeys-dir: path # Source directory of *.pub files (default: <git-root>/multiproofs/pubkeys)
 ] {
     let dir = if $pubkeys_dir != null { $pubkeys_dir | path expand } else {
-        ^git rev-parse --show-toplevel | str trim | path join "multiproofs/pubkeys"
+        repo-root | path join "multiproofs/pubkeys"
     }
 
     let signers = (build-allowed-signers $dir)
