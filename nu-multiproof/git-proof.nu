@@ -351,62 +351,69 @@ export def verify [
     print $"  Commit: ($manifest.commit | str substring 0..12)..."
     print $"  Files: ($manifest.files | length)"
 
-    # Set up isolated SHA-256 repo with proof objects
+    # Set up isolated SHA-256 repo with proof objects. Why one cleanup point:
+    # a thrown error inside the checks (e.g. cat-file on a malformed object)
+    # used to leak this temp dir and skip the remaining legs. Run the checks
+    # in a try, remove the dir once, then rethrow.
     let tmp_dir = (^mktemp -d | str trim)
-    let tmp_repo = ($tmp_dir | path join "repo")
-    ^git init --bare --object-format=sha256 $tmp_repo o+e>| ignore
-    copy-loose-objects $objects_dir ($tmp_repo | path join "objects")
+    let outcome = try {
+        let tmp_repo = ($tmp_dir | path join "repo")
+        ^git init --bare --object-format=sha256 $tmp_repo o+e>| ignore
+        copy-loose-objects $objects_dir ($tmp_repo | path join "objects")
 
-    # Step 1: Object integrity — git rejects any object whose content doesn't match its SHA-256 name
-    print "\n1. Verifying object integrity..."
-    let hash_results = (verify-object-hashes $tmp_repo $manifest.objects)
-    let invalid = ($hash_results | where valid == false)
+        # Step 1: Object integrity — git rejects any object whose content doesn't match its SHA-256 name
+        print "\n1. Verifying object integrity..."
+        let hash_results = (verify-object-hashes $tmp_repo $manifest.objects)
+        let invalid = ($hash_results | where valid == false)
 
-    if ($invalid | length) > 0 {
-        print $"   FAIL: ($invalid | length) objects have invalid hashes"
-        $invalid | each {|r| print $"     ($r.hash | str substring 0..12)...: ($r.error)" }
-        rm --recursive $tmp_dir
-        return {valid: false structure_valid: false error: "object hash verification failed"}
+        if ($invalid | length) > 0 {
+            print $"   FAIL: ($invalid | length) objects have invalid hashes"
+            $invalid | each {|r| print $"     ($r.hash | str substring 0..12)...: ($r.error)" }
+            {valid: false structure_valid: false error: "object hash verification failed"}
+        } else {
+            print $"   OK: all ($hash_results | length) objects verified"
+
+            # Step 2: Merkle paths — the commit→tree→blob chain is unbroken for each target file
+            print "\n2. Verifying merkle paths..."
+            let path_results = (verify-merkle-paths $tmp_repo $manifest)
+            let path_invalid = ($path_results | where valid == false)
+
+            if ($path_invalid | length) > 0 {
+                print "   FAIL: merkle path verification failed"
+                $path_invalid | each {|r| print $"     ($r.step): ($r.error)" }
+                {valid: false structure_valid: false error: "merkle path verification failed"}
+            } else {
+                $path_results | each {|r| print $"   OK: ($r.step)" }
+
+                # Step 3: Signature — commit was signed by one of the bundled pubkeys
+                print "\n3. Verifying commit signature..."
+                let sig_result = (verify-signature $proof_dir $manifest $tmp_repo)
+                if $sig_result.valid {
+                    print $"   OK: ($sig_result.detail)"
+                } else {
+                    print $"   FAIL: ($sig_result.error)"
+                }
+                {
+                    valid: $sig_result.valid
+                    structure_valid: true
+                    commit: $manifest.commit
+                    files: $manifest.files
+                    signature: $sig_result
+                }
+            }
+        }
+    } catch {|e|
+        rm --recursive --force $tmp_dir
+        error make {msg: $e.msg}
     }
-    print $"   OK: all ($hash_results | length) objects verified"
-
-    # Step 2: Merkle paths — the commit→tree→blob chain is unbroken for each target file
-    print "\n2. Verifying merkle paths..."
-    let path_results = (verify-merkle-paths $tmp_repo $manifest)
-    let path_invalid = ($path_results | where valid == false)
-
-    if ($path_invalid | length) > 0 {
-        print "   FAIL: merkle path verification failed"
-        $path_invalid | each {|r| print $"     ($r.step): ($r.error)" }
-        rm --recursive $tmp_dir
-        return {valid: false structure_valid: false error: "merkle path verification failed"}
-    }
-    $path_results | each {|r| print $"   OK: ($r.step)" }
-
-    # Step 3: Signature — commit was signed by one of the bundled pubkeys
-    print "\n3. Verifying commit signature..."
-    let sig_result = (verify-signature $proof_dir $manifest $tmp_repo)
-    rm --recursive $tmp_dir
-
-    if $sig_result.valid {
-        print $"   OK: ($sig_result.detail)"
-    } else {
-        print $"   FAIL: ($sig_result.error)"
-    }
+    rm --recursive --force $tmp_dir
 
     # Why: callers checking only `.valid` must reject unsigned/wrongly-signed
     # bundles. `structure_valid` is exposed for callers that want each leg.
-    let overall = $sig_result.valid
-    if $overall {
+    if $outcome.valid {
         print "\nProof is VALID."
-    } else {
+    } else if $outcome.structure_valid {
         print "\nProof is INVALID (structure ok, signature failed)."
     }
-    {
-        valid: $overall
-        structure_valid: true
-        commit: $manifest.commit
-        files: $manifest.files
-        signature: $sig_result
-    }
+    $outcome
 }
