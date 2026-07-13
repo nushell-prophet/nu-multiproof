@@ -51,9 +51,9 @@ def "info pending without ops" [] {
     let ots_bytes = build-pending-ots
     $ots_bytes | save --raw --force /tmp/test_ots_pending.ots
     let result = ots info "/tmp/test_ots_pending.ots"
-    assert ($result | str contains "PendingAttestation")
-    assert ($result | str contains "https://a.pool.opentimestamps.org")
-    assert ($result | str contains "0000000000000000000000000000000000000000000000000000000000000000")
+    assert equal $result.attestation.type "pending"
+    assert equal $result.attestation.url "https://a.pool.opentimestamps.org"
+    assert equal ($result.hash | str downcase) "0000000000000000000000000000000000000000000000000000000000000000"
 }
 
 @test
@@ -61,9 +61,9 @@ def "info pending with ops" [] {
     let ots_bytes = build-pending-ots --with-ops
     $ots_bytes | save --raw --force /tmp/test_ots_ops.ots
     let result = ots info "/tmp/test_ots_ops.ots"
-    assert ($result | str contains "append DEADBEEF")
-    assert ($result | str contains "sha256")
-    assert ($result | str contains "PendingAttestation")
+    assert equal ($result.ops | where type == "append" | get data.0 | str upcase) "DEADBEEF"
+    assert ($result.ops | any {|o| $o.type == "sha256"})
+    assert equal $result.attestation.type "pending"
 }
 
 @test
@@ -71,9 +71,10 @@ def "info bitcoin attestation" [] {
     let ots_bytes = build-bitcoin-ots
     $ots_bytes | save --raw --force /tmp/test_ots_btc.ots
     let result = ots info "/tmp/test_ots_btc.ots"
-    assert ($result | str contains "prepend AABB")
-    assert ($result | str contains "sha256")
-    assert ($result | str contains "BitcoinBlockHeaderAttestation(123456)")
+    assert equal ($result.ops | where type == "prepend" | get data.0 | str upcase) "AABB"
+    assert ($result.ops | any {|o| $o.type == "sha256"})
+    assert equal $result.attestation.type "bitcoin"
+    assert equal $result.attestation.height 123456
 }
 
 @test
@@ -125,7 +126,8 @@ def "upgrade splices valid response and writes atomically" [] {
     let upgraded = open --raw $ots_path
     assert ($upgraded != $original) "ots not modified"
     let info = ots info $ots_path
-    assert ($info | str contains "BitcoinBlockHeaderAttestation(123456)")
+    assert equal $info.attestation.type "bitcoin"
+    assert equal $info.attestation.height 123456
 
     rm --recursive $tmp_dir
 }
@@ -181,6 +183,6 @@ def "stamp and info round-trip" [] {
 
     let result = ots info $"($test_file).ots"
     let expected_hash = open --raw $test_file | hash sha256
-    assert ($result | str contains $expected_hash)
-    assert ($result | str contains "PendingAttestation")
+    assert equal ($result.hash | str downcase) $expected_hash
+    assert equal $result.attestation.type "pending"
 }

@@ -158,40 +158,25 @@ def replay-ops [ops: list]: binary -> binary {
     $hash
 }
 
-# Display info about an .ots proof file
+# Parsed contents of an .ots proof file, as structured data so it composes:
+# `ots info x.ots | get attestation.height`. ops is a table ({type, data?} with
+# hex-encoded data); the default table rendering is already human-readable, so
+# no string-building is needed.
 export def info [ots_file: path] {
     let parsed = open --raw $ots_file | parse-ots
-
-    mut lines = [
-        $"File sha256 hash: ($parsed.hash | encode hex)"
-        "Timestamp:"
-    ]
-
-    for op in $parsed.ops {
-        $lines = $lines ++ [
-            (
+    {
+        hash: ($parsed.hash | encode hex)
+        ops: (
+            $parsed.ops | each {|op|
                 match $op.type {
-                    "sha256" => "  sha256"
-                    "append" => $"  append ($op.data | encode hex)"
-                    "prepend" => $"  prepend ($op.data | encode hex)"
-                    _ => $"  ($op.type)"
+                    "append" => {type: "append" data: ($op.data | encode hex)}
+                    "prepend" => {type: "prepend" data: ($op.data | encode hex)}
+                    _ => {type: $op.type}
                 }
-            )
-        ]
-    }
-
-    let att = $parsed.attestation
-    $lines = $lines ++ [
-        (
-            match $att.type {
-                "pending" => $"  verify PendingAttestation\(\"($att.url)\"\)"
-                "bitcoin" => $"  verify BitcoinBlockHeaderAttestation\(($att.height)\)"
-                _ => $"  verify UnknownAttestation\(($att.tag)\)"
             }
         )
-    ]
-
-    $lines | str join "\n"
+        attestation: $parsed.attestation
+    }
 }
 
 # Create an OTS timestamp proof for a file
