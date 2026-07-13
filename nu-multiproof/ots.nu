@@ -106,7 +106,7 @@ def parse-timestamp [offset: int] {
                 let height = $vb.bytes | parse-varuint 0
                 {type: "bitcoin" height: $height.value}
             } else {
-                {type: "unknown" tag: ($att_tag | encode hex)}
+                {type: "unknown" tag: ($att_tag | encode hex | str lowercase)}
             }
 
             return {ops: $ops attestation: $attestation att_offset: $att_start offset: $pos}
@@ -173,12 +173,15 @@ def replay-ops [ops: list]: binary -> binary {
 export def info [ots_file: path] {
     let parsed = open --raw $ots_file | parse-ots
     {
-        hash: ($parsed.hash | encode hex)
+        # Why str lowercase: `encode hex` emits uppercase, but every persisted
+        # hash in this project (tree-hashes.csv, git-proof manifests) is
+        # lowercase — it comes from `hash sha256`/git. Lowercase is canonical.
+        hash: ($parsed.hash | encode hex | str lowercase)
         ops: (
             $parsed.ops | each {|op|
                 match $op.type {
-                    "append" => {type: "append" data: ($op.data | encode hex)}
-                    "prepend" => {type: "prepend" data: ($op.data | encode hex)}
+                    "append" => {type: "append" data: ($op.data | encode hex | str lowercase)}
+                    "prepend" => {type: "prepend" data: ($op.data | encode hex | str lowercase)}
                     _ => {type: $op.type}
                 }
             }
