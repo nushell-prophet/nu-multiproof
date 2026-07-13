@@ -97,8 +97,12 @@ export def main [
     }
 
     # 5. OTS timestamp — anchors the manifest (with root CID) to Bitcoin
+    # Why pass out-dir explicitly: ots stamp defaults it to the CWD's git root,
+    # but seal may target a different repo via --repo (same fix as pubkeys-dir
+    # in step 4). Without it, `seal --repo /other` writes the bundle into the
+    # CWD's repo, or fails when CWD is not a repo.
     if not $no_stamp {
-        let stamp_result = ots stamp $manifest_path
+        let stamp_result = ots stamp $manifest_path --out-dir $ots_dir
         $result = ($result | insert ots $stamp_result.ots)
     }
 
