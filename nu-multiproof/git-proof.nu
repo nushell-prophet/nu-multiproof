@@ -11,6 +11,7 @@
 
 use _repo.nu repo-root
 use _layout.nu pubkeys-dir
+use _allowed-signers.nu allowed-signers-body
 
 # --- Shared helpers ---
 
@@ -263,18 +264,6 @@ def verify-merkle-paths [
     [{step: "commit->tree" valid: true hash: $tree_hash}] ++ $file_results
 }
 
-# Build an OpenSSH allowed_signers body from every *.pub in a directory.
-# Wildcard principal + namespaces="git" so each key is trusted for commit
-# signatures only (not ssh logins).
-def build-allowed-signers [pubkeys_dir: path]: nothing -> string {
-    glob ($pubkeys_dir | path join "*.pub")
-    | each {|file|
-        let key = (open --raw $file | str trim)
-        $"* namespaces=\"git\" ($key)"
-    }
-    | str join "\n"
-}
-
 # Render the repo's pubkeys/ into an allowed_signers file usable by
 # `git -c gpg.ssh.allowedSignersFile=<path> verify-commit`.
 # Does not modify git config — the caller chooses how to wire it up.
@@ -286,7 +275,7 @@ export def "render-allowed-signers" [
         pubkeys-dir (repo-root)
     }
 
-    let signers = (build-allowed-signers $dir)
+    let signers = (allowed-signers-body $dir --namespace "git" --wildcard)
     if ($signers | str trim | is-empty) {
         error make {msg: $"no *.pub files in ($dir)"}
     }
@@ -303,7 +292,7 @@ def verify-signature [
     manifest: record
     tmp_repo: path
 ]: nothing -> record<valid: bool> {
-    let signers = (build-allowed-signers ($proof_dir | path join "pubkeys"))
+    let signers = (allowed-signers-body ($proof_dir | path join "pubkeys") --namespace "git" --wildcard)
 
     if ($signers | str trim | is-empty) {
         return {valid: false error: "no public keys in proof bundle"}

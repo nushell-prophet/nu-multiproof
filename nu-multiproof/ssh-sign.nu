@@ -4,6 +4,7 @@ use _repo.nu repo-root
 use _layout.nu pubkeys-dir
 use _sig.nu [sig-files-for signer-from-sig]
 use _key-helpers.nu resolve-signing-key
+use _allowed-signers.nu allowed-signers-body
 
 # Extract algorithm + base64 blob from a public key line, dropping the trailing comment.
 def pubkey-material []: string -> string {
@@ -101,18 +102,14 @@ export def verify [
     let pubkeys_dir = if $pubkeys_dir != null { $pubkeys_dir } else {
         pubkeys-dir (repo-root)
     }
-    let pubkeys = (
-        glob ($pubkeys_dir | path join "*.pub")
-        | each {|file|
-            let key = (open --raw $file | str trim)
-            let name = ($file | path parse | get stem)
-            {name: $name key: $key}
-        }
-    )
-
-    if ($pubkeys | is-empty) {
+    let signers = (allowed-signers-body $pubkeys_dir --namespace $namespace)
+    if ($signers | str trim | is-empty) {
         error make {msg: $"no public keys found in ($pubkeys_dir)/"}
     }
+    # One allowed_signers file with every registered key (principal = stem), so
+    # find-principals identifies the signer in a single call per sig.
+    let signers_file = mktemp
+    $signers | save --force $signers_file
 
     let sig_files = if $sig != null {
         [$sig]
@@ -121,36 +118,36 @@ export def verify [
     }
 
     if ($sig_files | is-empty) {
+        rm $signers_file
         error make {msg: $"no signature files found for ($path)"}
     }
 
     let results = $sig_files | each {|sig_path|
-            let current_name = signer-from-sig $path $sig_path
+            # find-principals matches by public key alone (not the signature),
+            # so exit 0 means "this sig's key is registered" — its stem is the
+            # signer. It does not prove the content matches; verify does that.
+            let fp = (do { ^ssh-keygen -Y find-principals -s $sig_path -f $signers_file } | complete)
 
-            # Try each pubkey individually to identify the signer
-            let matched = $pubkeys | each {|pk|
-                    let tmp = mktemp
-                    $"($pk.name) namespaces=\"($namespace)\" ($pk.key)" | save --force $tmp
-                    let result = (
-                        do {
-                            open --raw $path | ^ssh-keygen -Y verify -f $tmp -I $pk.name -n $namespace -s $sig_path
-                        } | complete
-                    )
-                    rm $tmp
-                    if $result.exit_code == 0 { $pk.name } else { null }
-                } | where $it != null
-
-            if ($matched | is-empty) {
-                # Why: distinguish "sig is good but signer not in our bundle"
-                # from "sig itself is broken". `-Y check-novalidate` verifies
-                # the signature against its embedded public key without
-                # consulting allowed_signers.
-                let cn = (
-                    do {
-                        open --raw $path | ^ssh-keygen -Y check-novalidate -n $namespace -s $sig_path
-                    } | complete
-                )
-                let label = $current_name | default "unknown"
+            if $fp.exit_code == 0 {
+                let signer = ($fp.stdout | lines | first)
+                let v = (do {
+                    open --raw $path | ^ssh-keygen -Y verify -f $signers_file -I $signer -n $namespace -s $sig_path
+                } | complete)
+                if $v.exit_code == 0 {
+                    print $"($signer): valid"
+                    {signer: $signer valid: true}
+                } else {
+                    # Registered key, but the content no longer matches the sig.
+                    print $"($signer): invalid signature"
+                    {signer: $signer valid: false error: "invalid_signature"}
+                }
+            } else {
+                # Signer's key isn't registered. Why check-novalidate: distinguish
+                # "sig is good but signer not in our bundle" from "sig is broken".
+                let cn = (do {
+                    open --raw $path | ^ssh-keygen -Y check-novalidate -n $namespace -s $sig_path
+                } | complete)
+                let label = (signer-from-sig $path $sig_path | default "unknown")
                 if $cn.exit_code == 0 {
                     print $"($label): unrecognized signer \(sig cryptographically valid but key not in pubkeys_dir\)"
                     {signer: $label valid: false error: "unrecognized_signer"}
@@ -158,12 +155,9 @@ export def verify [
                     print $"($label): invalid signature"
                     {signer: $label valid: false error: "invalid_signature"}
                 }
-            } else {
-                let signer = $matched | first
-                print $"($signer): valid"
-                {signer: $signer valid: true}
             }
         }
 
+    rm $signers_file
     $results
 }
