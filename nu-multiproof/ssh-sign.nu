@@ -3,6 +3,7 @@
 use _repo.nu repo-root
 use _layout.nu pubkeys-dir
 use _sig.nu [sig-files-for signer-from-sig]
+use _key-helpers.nu resolve-signing-key
 
 # Extract algorithm + base64 blob from a public key line, dropping the trailing comment.
 def pubkey-material []: string -> string {
@@ -41,11 +42,15 @@ def lookup-signer-name [key: path pubkeys_dir: path]: nothing -> string {
 # Creates {path}.{name}.sig alongside the input file.
 export def sign [
     path: path # File to sign
-    --key: path # SSH private key path (or public key if agent has the private key)
+    --key: path # SSH private key (default: from git config user.signingKey)
     --name: string # Signer name for the .sig file (default: stem of matching pubkey in --pubkeys-dir)
     --pubkeys-dir: path # Directory of registered *.pub files (default: multiproofs/pubkeys from git root)
     --namespace: string = "file"
 ] {
+    # Why default from git config: makes `ssh-sign sign <file>` usable with no
+    # flags; without it, a missing --key blew up with a null-conversion error.
+    let key = if $key != null { $key } else { resolve-signing-key }
+
     let signer_name = if $name != null { $name } else {
         let dir = if $pubkeys_dir != null { $pubkeys_dir } else {
             pubkeys-dir (repo-root)

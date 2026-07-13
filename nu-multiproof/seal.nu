@@ -1,30 +1,3 @@
-# Resolve SSH signing key from git config (file path or inline key::).
-# Why: `ssh-sign sign` derives the signer name from multiproofs/pubkeys/ when
-# --name is omitted, so we return just the key path here.
-def resolve-signing-key [root: path]: nothing -> record<key: string> {
-    let git_key = (do { ^git -C $root config user.signingKey } | complete)
-    if $git_key.exit_code != 0 {
-        error make {msg: "no git signing key configured — use --no-sign or set user.signingKey"}
-    }
-    let raw = $git_key.stdout | str trim
-    if ($raw | str starts-with "key::") {
-        let key_data = $raw | str replace "key::" ""
-        let tmp = $nu.temp-dir | path join "seal-signing-key.pub"
-        $key_data | save --raw --force $tmp
-        {key: $tmp}
-    } else {
-        let expanded = $raw | path expand
-        let key_path = if ($expanded | path exists) {
-            $expanded
-        } else if ($"($expanded).pub" | path exists) {
-            $"($expanded).pub"
-        } else {
-            error make {msg: $"signing key not found: ($raw)"}
-        }
-        {key: ($key_path | into string)}
-    }
-}
-
 # Full seal pipeline: hash → root-cid → sign → stamp.
 #
 # Operations order:
@@ -53,6 +26,7 @@ export def main [
     use _repo.nu repo-root
     use _layout.nu [manifest-path ots-dir pubkeys-dir]
     use _sig.nu sig-files-for
+    use _key-helpers.nu resolve-signing-key
 
     let root = repo-root $repo
     let manifest_path = manifest-path $root
@@ -88,14 +62,10 @@ export def main [
 
     # 4. Sign the manifest — covers root CID via the "." row
     if not $no_sign {
-        let resolved = if $key != null {
-            {key: ($key | into string)}
-        } else {
-            resolve-signing-key $root
-        }
+        let signing_key = if $key != null { $key | into string } else { resolve-signing-key --root $root }
         # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
         # git root, but seal may target a different repo via --repo.
-        let sig = ssh-sign sign $manifest_path --key $resolved.key --pubkeys-dir (pubkeys-dir $root)
+        let sig = ssh-sign sign $manifest_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
         $result = ($result | insert sig $sig)
     }
 
