@@ -268,6 +268,7 @@ export def stamp [file: path --out-dir: path] {
 }
 
 # Upgrade a pending OTS attestation to a Bitcoin block header attestation.
+# Returns {status: "upgraded" | "already-verified", path}.
 # --response-file: read the calendar response from a local file instead of
 # fetching it. Why: enables offline tests of the splice/validate/write logic
 # without a real calendar; also lets callers pre-fetch responses.
@@ -276,8 +277,7 @@ export def upgrade [ots_file: path --response-file: path] {
     let parsed = $buf | parse-ots
 
     if $parsed.attestation.type != "pending" {
-        print $"Already verified: ($parsed.attestation.type)"
-        return
+        return {status: "already-verified" path: $ots_file}
     }
 
     let new_bytes = if $response_file != null {
@@ -324,5 +324,5 @@ export def upgrade [ots_file: path --response-file: path] {
     let tmp_out = $"($ots_file).new"
     $upgraded | save --raw --force $tmp_out
     mv $tmp_out $ots_file
-    print $"Upgraded: ($ots_file)"
+    {status: "upgraded" path: $ots_file}
 }

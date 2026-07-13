@@ -184,7 +184,8 @@ export def root-cid [
     open (manifest-path $root) | where filepath == "." | get content_cid.0
 }
 
-# Generate tree hashes and save to multiproofs/tree-hashes.csv
+# Generate tree hashes. Saves to multiproofs/tree-hashes.csv and returns its
+# path; --echo instead returns the table (and does not save).
 export def main [
     --echo # Output as nushell table instead of saving to file
     --ipfs # Compute CIDs using ipfs CLI (records per-file, per-dir and the root "." CID)
@@ -193,10 +194,11 @@ export def main [
 ] {
     let table = (build-tree --ipfs=$ipfs --publish-to-ipfs=$publish_to_ipfs --repo $repo)
     let target_root = repo-root $repo
-    mkdir (multiproofs-dir $target_root)
-    $table
-    | if $echo { } else {
-        to csv
-        | save --raw --force (manifest-path $target_root)
+    if $echo {
+        $table
+    } else {
+        mkdir (multiproofs-dir $target_root)
+        $table | to csv | save --raw --force (manifest-path $target_root)
+        manifest-path $target_root
     }
 }
