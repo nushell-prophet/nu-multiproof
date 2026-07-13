@@ -52,13 +52,25 @@ def build-tree [
         | each {|d| {rel: $d is_dir: true content_sha256: ""} }
     )
 
+    # Read each file once and derive both the sha256 and (in default mode) the
+    # CID from that single read — not one read per hash.
     let file_entries = (
         $tracked_files
         | each {|f|
+            let content = open --raw ($root | path join $f) | into binary
+            let size = $content | bytes length
             {
                 rel: $f
                 is_dir: false
-                content_sha256: (open --raw ($root | path join $f) | hash sha256)
+                content_sha256: ($content | hash sha256)
+                # Empty in --ipfs mode (the add pass fills CIDs) and for files
+                # over the single-chunk limit; otherwise the pure-nu CID.
+                content_cid: (
+                    if $ipfs { "" } else if $size > 262144 {
+                        print $"skip: ($f) \(($size) bytes\) exceeds 256 KB single-chunk limit"
+                        ""
+                    } else { $content | cid-v0 }
+                )
             }
         }
     )
@@ -66,8 +78,8 @@ def build-tree [
     let entries = $dir_entries ++ $file_entries | sort-by rel
 
     # Content CIDs. In --ipfs mode a single `ipfs add -r` pass yields per-file,
-    # per-dir AND the root "." CID together; default mode computes per-file CIDs
-    # in pure Nushell (no daemon) and has no directory/root CID.
+    # per-dir AND the root "." CID together; default mode already computed
+    # per-file CIDs above (pure Nushell, no daemon) and has no directory/root CID.
     let cid_result = if $ipfs {
         # Stage tracked files into a temp dir and ipfs-add that — so the CIDs
         # cover exactly the manifest file set. Not `ipfs add -r $root` because:
@@ -101,21 +113,7 @@ def build-tree [
             }
         {table: $table root_cid: $root_cid}
     } else {
-        let table = (
-            $file_entries
-            | each {|e|
-                let content = open --raw ($root | path join $e.rel) | into binary
-                let size = $content | bytes length
-                if $size > 262144 {
-                    print $"skip: ($e.rel) \(($size) bytes\) exceeds 256 KB single-chunk limit"
-                    {key: $e.rel val: ""}
-                } else {
-                    {key: $e.rel val: ($content | cid-v0)}
-                }
-            }
-            | reduce --fold {} {|row acc| $acc | insert $row.key $row.val }
-        )
-        {table: $table root_cid: null}
+        {table: {} root_cid: null}
     }
     let content_cid_table = $cid_result.table
     let root_cid = $cid_result.root_cid
@@ -142,16 +140,23 @@ def build-tree [
         | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
     }
 
-    # Join lookup tables into final CSV structure. In --ipfs mode dir rows carry
-    # their CID too (A3); default mode leaves them empty. get --optional guards
-    # a file the ipfs pass somehow missed — shows empty, not a cryptic crash.
+    # Join lookup tables into final CSV structure. In --ipfs mode CIDs (files and
+    # dirs — A3) come from the add pass's table; default mode uses the per-file
+    # CID computed during the single read (dirs stay empty). get --optional guards
+    # a missing entry — shows empty, not a cryptic crash.
     let rows = $entries
         | each {|e|
             {
                 filepath: $e.rel
                 content_sha256: $e.content_sha256
                 content_git: ($git_hashes | get --optional $e.rel | default "")
-                content_cid: ($content_cid_table | get --optional $e.rel | default "")
+                content_cid: (
+                    if $ipfs {
+                        $content_cid_table | get --optional $e.rel | default ""
+                    } else {
+                        $e | get --optional content_cid | default ""
+                    }
+                )
             }
         }
 

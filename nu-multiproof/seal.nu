@@ -1,3 +1,11 @@
+use tree-hashes.nu
+use ots.nu
+use ssh-sign.nu
+use _repo.nu repo-root
+use _layout.nu [manifest-path ots-dir pubkeys-dir]
+use _sig.nu sig-files-for
+use _key-helpers.nu resolve-signing-key
+
 # Full seal pipeline: hash+root-cid → sign → stamp.
 #
 # Operations order:
@@ -24,14 +32,6 @@ export def main [
     --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
     --publish-to-ipfs # Publish root CID to local IPFS daemon (default: only-hash, no daemon needed)
 ] {
-    use tree-hashes.nu
-    use ots.nu
-    use ssh-sign.nu
-    use _repo.nu repo-root
-    use _layout.nu [manifest-path ots-dir pubkeys-dir]
-    use _sig.nu sig-files-for
-    use _key-helpers.nu resolve-signing-key
-
     let root = repo-root $repo
     let manifest_path = manifest-path $root
     let ots_dir = ots-dir $root
