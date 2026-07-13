@@ -203,25 +203,19 @@ export def stamp [file: path --out-dir: path] {
     let nonce = random binary 16
     let merkle_tip = $file_hash | bytes add --end $nonce | hash sha256 | decode hex
 
-    let tmp = mktemp
-    $merkle_tip | save --raw --force $tmp
-    # Why: /digest expects raw bytes; application/x-www-form-urlencoded was
-    # misleading and could break with stricter calendar servers.
-    let status = (
-        ^curl --silent --show-error
-        --write-out "%{http_code}"
-        --output $"($tmp).resp"
-        --data-binary $"@($tmp)"
-        --header "Content-Type: application/octet-stream"
+    # Why http builtin (not curl): no external dep and no temp files. --full
+    # exposes the status, --allow-errors returns a non-200 instead of throwing
+    # raw, and /digest expects raw bytes (application/octet-stream).
+    let response = (
+        http post --full --allow-errors
+        --content-type "application/octet-stream"
         $"($DEFAULT_CALENDAR)/digest"
+        $merkle_tip
     )
-    rm $tmp
-    if $status != "200" {
-        rm --force $"($tmp).resp"
-        error make {msg: $"calendar returned status ($status)"}
+    if $response.status != 200 {
+        error make {msg: $"calendar returned status ($response.status)"}
     }
-    let calendar_bytes = open --raw $"($tmp).resp"
-    rm $"($tmp).resp"
+    let calendar_bytes = $response.body
 
     let nonce_len = ($nonce | bytes length) | encode-varint
     let ots = (
@@ -307,25 +301,18 @@ export def upgrade [ots_file: path --response-file: path] {
         let current_hash = $parsed.hash | replay-ops $parsed.ops
         let hash_hex = $current_hash | encode hex
         let url = $"($parsed.attestation.url)/timestamp/($hash_hex)"
-        let tmp = mktemp
-        let status = (
-            ^curl --silent --show-error
-            --write-out "%{http_code}"
-            --output $tmp
-            --header "Accept: application/vnd.opentimestamps.v1"
+        let response = (
+            http get --full --allow-errors
+            --headers {Accept: "application/vnd.opentimestamps.v1"}
             $url
         )
-        if $status == "404" {
-            rm $tmp
+        if $response.status == 404 {
             error make {msg: "timestamp not yet confirmed by Bitcoin — try again later"}
         }
-        if $status != "200" {
-            rm $tmp
-            error make {msg: $"calendar returned status ($status)"}
+        if $response.status != 200 {
+            error make {msg: $"calendar returned status ($response.status)"}
         }
-        let bytes = open --raw $tmp
-        rm $tmp
-        $bytes
+        $response.body
     }
 
     let prefix = $buf | bytes at 0..($parsed.att_offset - 1)
