@@ -1,20 +1,10 @@
 # Pure Nushell CID v0 computation for single-chunk data (< 256 KB).
 # Reproduces: ipfs add --only-hash --quieter --cid-version=0 --raw-leaves=false --hash=sha2-256
 
+use _varint.nu encode-varint
+
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 const MAX_SINGLE_CHUNK = 262144
-
-# Protobuf varint encoding
-def varint []: int -> binary {
-    mut n = $in
-    mut out = 0x[]
-    while $n >= 128 {
-        let byte = ($n mod 128) | bits or 128
-        $out = ($out | bytes add --end ($byte | into binary | bytes at 0..0))
-        $n = $n // 128
-    }
-    $out | bytes add --end ($n | into binary | bytes at 0..0)
-}
 
 # Wrap content in UnixFS dag-pb protobuf (single-chunk leaf node, no links)
 def unixfs-dag-pb []: binary -> binary {
@@ -23,12 +13,12 @@ def unixfs-dag-pb []: binary -> binary {
     if $n > $MAX_SINGLE_CHUNK {
         error make {msg: $"content exceeds single chunk: ($n) > ($MAX_SINGLE_CHUNK)"}
     }
-    let nv = $n | varint
+    let nv = $n | encode-varint
     # UnixFS Data: type=File(2), data=content (omitted when empty), filesize=n
     let data_field = if $n > 0 { 0x[12] | bytes add --end $nv | bytes add --end $content } else { 0x[] }
     let unixfs = (0x[08 02] | bytes add --end $data_field | bytes add --end 0x[18] | bytes add --end $nv)
     # dag-pb PBNode: data=unixfs
-    let ulen = ($unixfs | bytes length) | varint
+    let ulen = ($unixfs | bytes length) | encode-varint
     0x[0a] | bytes add --end $ulen | bytes add --end $unixfs
 }
 

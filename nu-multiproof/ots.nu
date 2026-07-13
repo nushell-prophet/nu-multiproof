@@ -2,6 +2,7 @@
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
 use _ots-helpers.nu copy-path-for
+use _varint.nu encode-varint
 
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 const OP_SHA256 = 0x08
@@ -13,18 +14,6 @@ const TAG_FORK = 0xff
 const ATT_PENDING = 0x[83dfe30d2ef90c8e]
 const ATT_BITCOIN = 0x[0588960d73d71901]
 const DEFAULT_CALENDAR = "https://a.pool.opentimestamps.org"
-
-# LEB128 varuint encode
-def encode-varuint []: int -> binary {
-    mut n = $in
-    mut out = 0x[]
-    while $n >= 128 {
-        let byte = ($n mod 128) | bits or 128
-        $out = ($out | bytes add --end ($byte | into binary | bytes at 0..0))
-        $n = $n // 128
-    }
-    $out | bytes add --end ($n | into binary | bytes at 0..0)
-}
 
 # LEB128 varuint decode at offset
 def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
@@ -221,7 +210,7 @@ export def stamp [file: path --out-dir: path] {
     let calendar_bytes = open --raw $"($tmp).resp"
     rm $"($tmp).resp"
 
-    let nonce_len = ($nonce | bytes length) | encode-varuint
+    let nonce_len = ($nonce | bytes length) | encode-varint
     let ots = (
         $HEADER_MAGIC
         | bytes add --end 0x[01]
