@@ -61,8 +61,9 @@ export def 'main proof-extract' [
 
 export def 'main proof-verify' [
     proof_dir: path = "proof" # Proof bundle directory
+    --fail # Exit non-zero on an invalid proof (for CI)
 ] {
     use nu-multiproof/git-proof.nu
 
-    git-proof verify $proof_dir
+    git-proof verify $proof_dir --fail=$fail
 }

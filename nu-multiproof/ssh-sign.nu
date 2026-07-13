@@ -74,11 +74,14 @@ export def sign [
 
 # Verify a file's SSH signatures against public keys in a directory.
 # If --sig is given, verifies that single file. Otherwise finds all {path}.*.sig files.
+# Returns a table of {signer, valid, error?}. --fail exits non-zero if any
+# signature is invalid (for CI), instead of a silent pass the caller must inspect.
 export def verify [
     path: path # File to verify (or a .sig file — original is inferred)
     --sig: path # Specific signature file (default: all .sig files)
     --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
     --namespace: string = "file"
+    --fail # Exit non-zero if any signature is invalid (for CI)
 ] {
     # If a .sig file was passed, infer the original file
     let path = if ($path | str ends-with ".sig") {
@@ -159,5 +162,12 @@ export def verify [
         }
 
     rm $signers_file
+
+    if $fail {
+        let bad = $results | where not valid
+        if not ($bad | is-empty) {
+            error make {msg: $"($bad | length) invalid signature\(s\) for ($path)"}
+        }
+    }
     $results
 }

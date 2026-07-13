@@ -95,6 +95,32 @@ def "verify fails when signer key not in bundle" [] {
 }
 
 @test
+def "verify --fail errors on an invalid proof" [] {
+    let proof_dir = (^mktemp -d | str trim)
+
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    let signer_fp = (^git log -1 --format='%GK' $signed | str trim)
+
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    # Remove the matching pubkey → signature can't verify → invalid proof.
+    glob ($proof_dir | path join "pubkeys/*.pub") | each {|f|
+        let fp = (^ssh-keygen -lf $f | split row " " | get 1)
+        if $fp == $signer_fp { rm $f }
+    }
+
+    # Why --fail: without it verify returns {valid: false} with exit 0 and a
+    # CI step silently passes. --fail must throw on the invalid bundle.
+    let outcome = (try {
+        git-proof verify $proof_dir --fail | ignore
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+
+    rm --recursive $proof_dir
+}
+
+@test
 def "verify fails when bundled pubkey tampered" [] {
     let proof_dir = (^mktemp -d | str trim)
 

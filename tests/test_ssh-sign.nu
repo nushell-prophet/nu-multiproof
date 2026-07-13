@@ -166,6 +166,36 @@ def "verify infers original from .sig path with hyphenated signer" [] {
 }
 
 @test
+def "verify --fail errors on invalid signature" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let key_path = $"($tmp_dir)/test_key"
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $pubkeys_dir
+    cp $"($key_path).pub" ($pubkeys_dir | path join "test.pub")
+
+    "original content" | save --force $test_file
+    ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
+    "tampered content" | save --force $test_file
+
+    # Why --fail: a silent {valid: false} pass lets a CI step succeed on a bad
+    # sig. --fail must turn that into a non-zero exit (a thrown error here).
+    let outcome = (try {
+        ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir --fail | ignore
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+
+    # Without --fail the same bad sig returns a record (no throw)
+    let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
+    assert equal ($results | first | get valid) false
+
+    rm --recursive $tmp_dir
+}
+
+@test
 def "verify with explicit --sig" [] {
     let tmp_dir = (^mktemp -d | str trim)
     let key_path = $"($tmp_dir)/test_key"

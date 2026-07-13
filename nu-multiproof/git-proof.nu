@@ -320,9 +320,13 @@ def verify-signature [
     }
 }
 
-# Verify a proof bundle autonomously (without access to original repo)
+# Verify a proof bundle autonomously (without access to original repo).
+# Returns a uniform record {valid, structure_valid, commit, files, signature,
+# error}. --fail turns an invalid proof into a non-zero exit (for CI), instead
+# of returning {valid: false} with exit 0 that a caller might not inspect.
 export def verify [
     proof_dir: path = "proof" # Proof bundle directory
+    --fail # Exit non-zero on an invalid proof (for CI)
 ] {
     let manifest_path = ($proof_dir | path join "manifest.json")
     if not ($manifest_path | path exists) {
@@ -350,10 +354,13 @@ export def verify [
         let hash_results = (verify-object-hashes $tmp_repo $manifest.objects)
         let invalid = ($hash_results | where valid == false)
 
+        # Uniform record shape across every exit (kinder to scripts than the old
+        # structure-fail returns that lacked commit/files/signature).
+        let base = {commit: $manifest.commit files: $manifest.files signature: null error: null}
         if ($invalid | length) > 0 {
             print $"   FAIL: ($invalid | length) objects have invalid hashes"
             $invalid | each {|r| print $"     ($r.hash | str substring 0..12)...: ($r.error)" }
-            {valid: false structure_valid: false error: "object hash verification failed"}
+            $base | merge {valid: false structure_valid: false error: "object hash verification failed"}
         } else {
             print $"   OK: all ($hash_results | length) objects verified"
 
@@ -365,7 +372,7 @@ export def verify [
             if ($path_invalid | length) > 0 {
                 print "   FAIL: merkle path verification failed"
                 $path_invalid | each {|r| print $"     ($r.step): ($r.error)" }
-                {valid: false structure_valid: false error: "merkle path verification failed"}
+                $base | merge {valid: false structure_valid: false error: "merkle path verification failed"}
             } else {
                 $path_results | each {|r| print $"   OK: ($r.step)" }
 
@@ -377,13 +384,7 @@ export def verify [
                 } else {
                     print $"   FAIL: ($sig_result.error)"
                 }
-                {
-                    valid: $sig_result.valid
-                    structure_valid: true
-                    commit: $manifest.commit
-                    files: $manifest.files
-                    signature: $sig_result
-                }
+                $base | merge {valid: $sig_result.valid structure_valid: true signature: $sig_result}
             }
         }
     } catch {|e|
@@ -398,6 +399,12 @@ export def verify [
         print "\nProof is VALID."
     } else if $outcome.structure_valid {
         print "\nProof is INVALID (structure ok, signature failed)."
+    } else {
+        print "\nProof is INVALID (structure verification failed)."
+    }
+
+    if $fail and not $outcome.valid {
+        error make {msg: $"proof invalid: ($outcome.error | default 'signature verification failed')"}
     }
     $outcome
 }
