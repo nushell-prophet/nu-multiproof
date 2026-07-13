@@ -69,56 +69,48 @@ def "hidden tracked files are included" [] {
     }
 }
 
+# B2: one `ipfs add -r` pass yields per-file, per-dir AND the root "." CID, so
+# `tree-hashes --ipfs` writes a complete manifest in a single pass and `root-cid`
+# is a thin wrapper returning that "." CID.
+#
+# Why one combined test (not several): `ipfs add` takes a lock on the shared
+# ~/.ipfs repo, so two ipfs-gated tests running in parallel (nutest's default)
+# collide. Keeping all ipfs assertions in a single test means the suite only
+# ever runs one `ipfs add` at a time. See todo note on lock contention.
 @test
-def "root-cid appends . row with cid v0" [] {
-    # Why gated on ipfs binary: root-cid shells out to `ipfs add`. Skip
-    # silently when not installed (mirror OTS_NETWORK_TEST pattern in spirit:
-    # don't fail on missing optional deps).
+def "ipfs pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
+    # Gated on the ipfs binary (mirrors OTS_NETWORK_TEST in spirit — don't fail
+    # on a missing optional dep).
     if (which ipfs | is-empty) { return }
 
     let tmp_dir = (^mktemp -d | str trim)
     let repo = $"($tmp_dir)/repo"
-    mkdir $repo
+    mkdir $"($repo)/sub"
     ^git -C $repo init -q
     "hello\n" | save --force $"($repo)/file.txt"
-    ^git -C $repo add file.txt
+    "world\n" | save --force $"($repo)/sub/inner.txt"
+    ^git -C $repo add . o+e>| ignore
     ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
 
-    tree-hashes --repo $repo
+    let table = tree-hashes --echo --ipfs --repo $repo
 
-    let cid = tree-hashes root-cid --repo $repo
-    let manifest = open $"($repo)/multiproofs/tree-hashes.csv"
-    let dot = $manifest | where filepath == "."
+    # Root "." row present and a CID v0
+    let dot = $table | where filepath == "."
     assert equal ($dot | length) 1
-    assert equal $dot.0.content_cid $cid
-    assert ($cid | str starts-with "Qm") $"expected CIDv0 \(Qm…\), got ($cid)"
+    assert ($dot.0.content_cid | str starts-with "Qm") $"expected CIDv0 for . row, got ($dot.0.content_cid)"
 
-    rm --recursive $tmp_dir
-}
+    # Directory rows now carry their CID (A3), not an empty string
+    let dirs = $table | where content_sha256 == "" and filepath != "."
+    assert (($dirs | length) > 0)
+    for d in $dirs {
+        assert ($d.content_cid | str starts-with "Qm") $"dir ($d.filepath) has no CID: ($d.content_cid)"
+    }
 
-# root-cid must refuse to clobber sigs sitting next to the manifest —
-# the sig signs the pre-rewrite content and would silently go stale.
-@test
-def "root-cid refuses to clobber sibling sigs" [] {
-    if (which ipfs | is-empty) { return }
-
-    let tmp_dir = (^mktemp -d | str trim)
-    let repo = $"($tmp_dir)/repo"
-    mkdir $repo
-    ^git -C $repo init -q
-    "hello\n" | save --force $"($repo)/file.txt"
-    ^git -C $repo add file.txt
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
-
-    tree-hashes --repo $repo
-    let manifest = $"($repo)/multiproofs/tree-hashes.csv"
-    "stale-sig" | save --force $"($manifest).alice.sig"
-
-    let outcome = (try {
-        tree-hashes root-cid --repo $repo
-        "ok"
-    } catch {|e| $"err:($e.msg)" })
-    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    # root-cid regenerates the manifest and returns the "." CID matching it
+    let cid = tree-hashes root-cid --repo $repo
+    let saved_dot = open $"($repo)/multiproofs/tree-hashes.csv" | where filepath == "."
+    assert equal ($saved_dot | length) 1
+    assert equal $saved_dot.0.content_cid $cid
 
     rm --recursive $tmp_dir
 }

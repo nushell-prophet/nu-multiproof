@@ -1,12 +1,14 @@
-# Full seal pipeline: hash → root-cid → sign → stamp.
+# Full seal pipeline: hash+root-cid → sign → stamp.
 #
 # Operations order:
 #   1. Upgrade pending OTS — opportunistic; tries all .ots files, silent on failure
 #      (Bitcoin confirmation takes hours/days, so this progresses previous seals)
-#   2. tree-hashes — regenerate manifest from current worktree files
-#   3. root-cid — compute IPFS root CID, append "." row to manifest
-#   4. ssh-sign — sign the manifest (on by default; --no-sign to skip)
-#   5. ots stamp — timestamp the manifest (on by default; --no-stamp to skip)
+#   2. tree-hashes — regenerate the manifest from current worktree files. With a
+#      root CID, one `ipfs add -r` pass emits per-file, per-dir and the root "."
+#      row together, so the manifest is written once, complete (--no-root-cid
+#      uses the pure-nu path with no root row)
+#   3. ssh-sign — sign the manifest (on by default; --no-sign to skip)
+#   4. ots stamp — timestamp the manifest (on by default; --no-stamp to skip)
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
 # context (message, scope, timing). Also avoids circularity: git-proof proves
@@ -48,27 +50,26 @@ export def main [
         }
     }
 
-    # 2. Regenerate manifest — must precede root-cid (provides the file list)
-    tree-hashes --repo $root
-    print $"Manifest: ($manifest_path)"
-
-    # Why: sigs from a previous seal sign the old manifest; root-cid refuses
-    # to clobber them. seal owns the regeneration flow — clear stale sigs so
-    # step 4 (sign) can produce fresh ones against the new manifest. Uses the
-    # shared discovery so the bare `<manifest>.sig` form is cleared too — a
-    # glob of only `.*.sig` left it behind and root-cid then hard-errored.
-    sig-files-for $manifest_path | each {|sig| rm $sig }
-
+    # 2. Regenerate the manifest in one pass. With a root CID, --ipfs computes
+    #    per-file, per-dir AND the root "." row together (build-tree/B2); the
+    #    manifest is written once, complete, before any signature exists.
+    #    --no-root-cid falls back to the pure-nu path (no daemon).
     mut result = {manifest: $manifest_path}
-
-    # 3. Compute root CID — single IPFS hash covering all manifest files
-    if not $no_root_cid {
+    if $no_root_cid {
+        tree-hashes --repo $root
+    } else {
         let root_cid = tree-hashes root-cid --repo $root --publish-to-ipfs=$publish_to_ipfs
         print $"Root CID: ($root_cid)"
         $result = ($result | insert root_cid $root_cid)
     }
+    print $"Manifest: ($manifest_path)"
 
-    # 4. Sign the manifest — covers root CID via the "." row
+    # Why: a sig from a previous seal signs the now-regenerated (stale) manifest.
+    # Clear it before step 4 signs fresh. Uses the shared discovery so the bare
+    # `<manifest>.sig` form is cleared too, not just `<manifest>.<signer>.sig`.
+    sig-files-for $manifest_path | each {|sig| rm $sig }
+
+    # 3. Sign the manifest — covers root CID via the "." row
     if not $no_sign {
         let signing_key = if $key != null { $key | into string } else { resolve-signing-key --root $root }
         # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
@@ -77,7 +78,7 @@ export def main [
         $result = ($result | insert sig $sig)
     }
 
-    # 5. OTS timestamp — anchors the manifest (with root CID) to Bitcoin
+    # 4. OTS timestamp — anchors the manifest (with root CID) to Bitcoin
     # Why pass out-dir explicitly: ots stamp defaults it to the CWD's git root,
     # but seal may target a different repo via --repo (same fix as pubkeys-dir
     # in step 4). Without it, `seal --repo /other` writes the bundle into the
