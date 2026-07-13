@@ -2,7 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/ots.nu
-use ../nu-multiproof/_ots-helpers.nu copy-path-for
+use ../nu-multiproof/_ots-helpers.nu [copy-path-for check-block-header bits-to-target]
 
 # --- Embedded test vectors ---
 
@@ -171,7 +171,76 @@ def "copy-path-for preserves extension" [] {
     assert equal $result "/tmp/x/data.deadbeef/data.csv"
 }
 
+# --- verify: pure block-header checks (offline, real mainnet fixture) ---
+
+# Bitcoin block 939896, the origin-proof anchor. Raw 80-byte header, its merkle
+# root (bytes 36..67, internal order), and its block hash (display order).
+const BLOCK_939896_HEADER = 0x[00000022ce95f1d363fc8ea1ecaab1cc89eeeb68af8a40a0a01500000000000000000000928035a9331c9588353ae1358ab431fd70aa9c45bf23c8bf3d6e6681ec3c142082e4ad69ccf00117fe66cc33]
+const BLOCK_939896_ROOT = 0x[928035a9331c9588353ae1358ab431fd70aa9c45bf23c8bf3d6e6681ec3c1420]
+const BLOCK_939896_HASH = "00000000000000000000f6eaadba82c65955a8f09dfc09aaa9b41738e721479d"
+
+@test
+def "check-block-header accepts a valid header" [] {
+    let r = check-block-header $BLOCK_939896_HEADER $BLOCK_939896_ROOT $BLOCK_939896_HASH
+    assert equal $r.block_hash $BLOCK_939896_HASH
+    assert equal $r.merkle_root ($BLOCK_939896_ROOT | encode hex | str downcase)
+    # Header timestamp is 1773003906 -> 2026-03-08 21:05:06 UTC.
+    assert equal ($r.time | format date "%Y-%m-%d %H:%M:%S") "2026-03-08 21:05:06"
+}
+
+@test
+def "check-block-header rejects a merkle root the block does not commit to" [] {
+    let wrong_root = 0x[0000000000000000000000000000000000000000000000000000000000000000]
+    let result = try { check-block-header $BLOCK_939896_HEADER $wrong_root $BLOCK_939896_HASH; null } catch { $in.msg }
+    assert ($result != null)
+    assert ($result | str contains "merkle root mismatch")
+}
+
+@test
+def "check-block-header rejects a header that hashes to a different block" [] {
+    let wrong_hash = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    let result = try { check-block-header $BLOCK_939896_HEADER $BLOCK_939896_ROOT $wrong_hash; null } catch { $in.msg }
+    assert ($result != null)
+    assert ($result | str contains "not the looked-up")
+}
+
+@test
+def "check-block-header rejects a wrong-length header" [] {
+    let result = try { check-block-header 0x[0011 2233] $BLOCK_939896_ROOT $BLOCK_939896_HASH; null } catch { $in.msg }
+    assert ($result != null)
+    assert ($result | str contains "80-byte")
+}
+
+@test
+def "bits-to-target decodes the compact difficulty field" [] {
+    # bits 0x1701f0cc (exp 0x17, coeff 0x01f0cc) -> 32-byte big-endian target.
+    let target = bits-to-target 0x1701f0cc
+    assert equal ($target | bytes length) 32
+    assert equal ($target | encode hex | str downcase) "00000000000000000001f0cc0000000000000000000000000000000000000000"
+}
+
 # --- Network-dependent tests ---
+
+@test
+def "verify confirms a real Bitcoin-anchored bundle" [] {
+    if ($env.OTS_NETWORK_TEST? | default "false") != "true" { return }
+
+    let bundle = "tests/../multiproofs/origin-proofs/tree-hashes.CCA016A8"
+    let result = ots verify $"($bundle)/tree-hashes.ots" --file $"($bundle)/tree-hashes.csv"
+    assert $result.valid
+    assert equal $result.height 939896
+    assert $result.content_verified
+    assert (($result.sources_confirmed | length) >= 1)
+}
+
+@test
+def "verify rejects a pending proof" [] {
+    let ots_bytes = build-pending-ots
+    $ots_bytes | save --raw --force /tmp/test_ots_verify_pending.ots
+    let result = try { ots verify /tmp/test_ots_verify_pending.ots; null } catch { $in.msg }
+    assert ($result != null)
+    assert ($result | str contains "pending")
+}
 
 @test
 def "stamp and info round-trip" [] {

@@ -38,6 +38,8 @@ nu-multiproof ots stamp multiproofs/tree-hashes.csv
 nu-multiproof ots upgrade multiproofs/ots-timestamps/tree-hashes.ABCD1234/tree-hashes.ots
 # Inspect a timestamp
 nu-multiproof ots info tree-hashes.ots
+# Independently verify the Bitcoin anchor against real block headers
+nu-multiproof ots verify multiproofs/ots-timestamps/tree-hashes.ABCD1234/tree-hashes.ots
 
 # Sign a file with your SSH key
 nu-multiproof ssh-sign sign tree-hashes.csv --key ~/.ssh/id_ed25519
@@ -90,6 +92,21 @@ Verify the git proof:
 use nu-multiproof/
 nu-multiproof git-proof verify multiproofs/origin-proofs/git-proof
 ```
+
+## Verifying a timestamp
+
+`ots info` and `ots upgrade` only echo the block height the calendar server reported — nothing checks it against Bitcoin. `ots verify` does. It does not trust the calendar at all:
+
+1. **Looks the block height up on independent explorers** (`mempool.space` and `blockstream.info` by default) and requires them to agree on the block hash. This is the one thing it trusts a third party for: the height → hash mapping.
+2. **Fetches the raw 80-byte block header** and recomputes everything locally — the double-SHA256 block hash, the merkle-root binding (the header must commit to the exact value the proof's operations replay to), and the proof-of-work (the block hash must meet the target in the header's `bits` field). A forged or low-work header fails these checks even if an explorer served it.
+
+```nushell no-run
+use nu-multiproof/
+# verify the anchor; --file also confirms the proof commits to that content
+nu-multiproof ots verify multiproofs/origin-proofs/tree-hashes.CCA016A8/tree-hashes.ots --file multiproofs/origin-proofs/tree-hashes.CCA016A8/tree-hashes.csv
+```
+
+Pass `--sources` to cross-check against different or additional explorers. A pending (not-yet-confirmed) proof is rejected with a pointer to `ots upgrade`.
 
 ## Verifying commit signatures
 

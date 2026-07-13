@@ -1,7 +1,7 @@
 # Pure Nushell OpenTimestamps implementation — no `ots` CLI dependency.
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
-use _ots-helpers.nu copy-path-for
+use _ots-helpers.nu [copy-path-for check-block-header]
 use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
@@ -16,6 +16,13 @@ const TAG_FORK = 0xff
 const ATT_PENDING = 0x[83dfe30d2ef90c8e]
 const ATT_BITCOIN = 0x[0588960d73d71901]
 const DEFAULT_CALENDAR = "https://a.pool.opentimestamps.org"
+# Esplora-compatible block explorers, queried independently and cross-checked
+# so verification never rests on a single source. Both expose the same routes:
+#   /block-height/<h> -> block hash   and   /block/<hash>/header -> raw 80 bytes.
+const DEFAULT_EXPLORERS = [
+    "https://mempool.space/api"
+    "https://blockstream.info/api"
+]
 
 # LEB128 varuint decode at offset
 def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
@@ -328,4 +335,123 @@ export def upgrade [ots_file: path --response-file: path] {
     $upgraded | save --raw --force $tmp_out
     mv $tmp_out $ots_file
     {status: "upgraded" path: $ots_file}
+}
+
+# Print a human summary of a verify result and, under --fail, turn an invalid
+# proof into a non-zero exit (matching git-proof/ssh-sign verify).
+def emit-verify [result: record, fail: bool]: nothing -> record {
+    if $result.valid {
+        print $"✓ Bitcoin block ($result.height) verified independently"
+        print $"  block hash:    ($result.block_hash)"
+        print $"  block time:    ($result.block_time | format date '%Y-%m-%d %H:%M:%S UTC')"
+        print $"  merkle root:   ($result.merkle_root)"
+        print $"  cross-checked: ($result.sources_confirmed | str join ', ')"
+        if $result.content_verified == true { print "  content:       matches the proof commitment" }
+    } else {
+        print $"✗ verification failed: ($result.error)"
+    }
+    if $fail and (not $result.valid) {
+        error make {msg: $"proof invalid: ($result.error)"}
+    }
+    $result
+}
+
+# GET an Esplora endpoint, returning its trimmed text body or null on any
+# non-200 / transport error (so a single flaky mirror doesn't abort the run).
+def esplora-get [url: string]: nothing -> any {
+    let r = try { http get --full --allow-errors $url } catch { return null }
+    if $r.status != 200 { return null }
+    $r.body | into string | str trim
+}
+
+# Independently verify a Bitcoin-anchored OTS proof against real block headers.
+# Why: `info`/`upgrade` only echo the block height the calendar reported —
+# nothing checks it against Bitcoin. This does. It looks the height up on
+# independent explorers, requires them to agree on the block hash, then fetches
+# the raw 80-byte header and self-verifies the merkle-root binding, the block
+# hash, and the proof-of-work. The explorers are trusted only for the
+# height->hash mapping; every cryptographic claim is recomputed locally.
+#
+# Returns a uniform record {valid, height, block_hash, block_time, merkle_root,
+# file_hash, content_verified, sources_confirmed, error}. A well-formed proof
+# that does not match Bitcoin (or a --file that the proof does not commit to)
+# is a `valid: false` result, not an error. Operational failures — a pending
+# proof, no reachable explorer, explorers disagreeing — throw, since validity
+# cannot be asserted. --fail turns a `valid: false` into a non-zero exit (CI).
+#   --file:    also confirm the proof commits to this content (closes the loop)
+#   --sources: Esplora-compatible API bases to cross-check
+@example "verify an anchor, failing on invalid (for CI)" { ots verify proof.ots --fail }
+export def verify [
+    ots_file: path
+    --file: path
+    --sources: list<string> = $DEFAULT_EXPLORERS
+    --fail # Exit non-zero on an invalid proof (for CI)
+] {
+    let parsed = open --raw $ots_file | parse-ots
+
+    match $parsed.attestation.type {
+        "pending" => { error make {msg: $"proof is still pending on calendar ($parsed.attestation.url) — run `ots upgrade` after Bitcoin confirms it, then verify"} }
+        "bitcoin" => {}
+        $other => { error make {msg: $"unsupported attestation type: ($other)"} }
+    }
+
+    let height = $parsed.attestation.height
+    # Replaying the ops yields the value the attestation binds to: the block's
+    # merkle root (internal byte order).
+    let expected_root = $parsed.hash | replay-ops $parsed.ops
+    let base = {
+        valid: false height: $height file_hash: ($parsed.hash | encode hex | str lowercase)
+        block_hash: null block_time: null merkle_root: null
+        content_verified: null sources_confirmed: [] error: null
+    }
+
+    # Content binding (if requested): a mismatch means the proof does not cover
+    # this file — an invalid result, not an error.
+    let content_verified = if $file != null {
+        (open --raw $file | hash sha256 | decode hex) == $parsed.hash
+    } else { null }
+    if $content_verified == false {
+        return (emit-verify ($base | merge {content_verified: false error: $"content mismatch: ($file) is not what the proof commits to"}) $fail)
+    }
+
+    # Cross-check height -> block hash across independent explorers.
+    # Why a for loop, not `each`: a `try`/`catch` wrapping `http get` inside an
+    # `each` closure trips a Nushell runtime error across iterations; the plain
+    # loop is unaffected. See todo/ note.
+    mut lookups = []
+    for src in $sources {
+        $lookups = ($lookups | append {source: $src hash: (esplora-get $"($src)/block-height/($height)")})
+    }
+    let ok_lookups = $lookups | where hash != null
+    if ($ok_lookups | is-empty) {
+        error make {msg: $"no explorer returned block ($height) — cannot verify"}
+    }
+    let distinct = $ok_lookups | get hash | each { str lowercase } | uniq
+    if ($distinct | length) > 1 {
+        error make {msg: $"explorers disagree on block ($height): ($distinct | str join ', ')"}
+    }
+    let block_hash = $distinct | first
+
+    let src = $ok_lookups | first | get source
+    let header_hex = esplora-get $"($src)/block/($block_hash)/header"
+    if $header_hex == null {
+        error make {msg: $"could not fetch the header for block ($block_hash)"}
+    }
+
+    # Self-verify the header. A failure here means the proof does not match the
+    # real block -> invalid proof, not an operational error.
+    let checked = try { check-block-header ($header_hex | decode hex) $expected_root $block_hash } catch {|e| {error: $e.msg} }
+    let confirmed = $ok_lookups | get source
+    if ($checked.error? != null) {
+        return (emit-verify ($base | merge {block_hash: $block_hash sources_confirmed: $confirmed error: $checked.error}) $fail)
+    }
+
+    emit-verify ($base | merge {
+        valid: true
+        block_hash: $checked.block_hash
+        block_time: $checked.time
+        merkle_root: $checked.merkle_root
+        content_verified: $content_verified
+        sources_confirmed: $confirmed
+    }) $fail
 }
