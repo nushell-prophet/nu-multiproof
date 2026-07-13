@@ -51,10 +51,11 @@ export def main [
     use ots.nu
     use ssh-sign.nu
     use _repo.nu repo-root
+    use _layout.nu [manifest-path ots-dir pubkeys-dir]
 
     let root = repo-root $repo
-    let manifest_path = $root | path join "multiproofs/tree-hashes.csv"
-    let ots_dir = $root | path join "multiproofs/ots-timestamps"
+    let manifest_path = manifest-path $root
+    let ots_dir = ots-dir $root
 
     # 1. Upgrade pending OTS — every seal progresses previous seals automatically,
     #    so there's no need for a separate upgrade command
@@ -66,7 +67,7 @@ export def main [
 
     # 2. Regenerate manifest — must precede root-cid (provides the file list)
     tree-hashes --repo $root
-    print $"Manifest: multiproofs/tree-hashes.csv"
+    print $"Manifest: ($manifest_path)"
 
     # Why: sigs from a previous seal sign the old manifest; root-cid refuses
     # to clobber them. seal owns the regeneration flow — clear stale sigs so
@@ -91,7 +92,7 @@ export def main [
         }
         # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
         # git root, but seal may target a different repo via --repo.
-        let sig = ssh-sign sign $manifest_path --key $resolved.key --pubkeys-dir ($root | path join "multiproofs/pubkeys")
+        let sig = ssh-sign sign $manifest_path --key $resolved.key --pubkeys-dir (pubkeys-dir $root)
         $result = ($result | insert sig $sig)
     }
 

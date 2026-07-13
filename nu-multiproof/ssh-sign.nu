@@ -1,6 +1,7 @@
 # SSH file signing and verification via ssh-keygen.
 
 use _repo.nu repo-root
+use _layout.nu pubkeys-dir
 
 # Extract algorithm + base64 blob from a public key line, dropping the trailing comment.
 def pubkey-material []: string -> string {
@@ -46,7 +47,7 @@ export def sign [
 ] {
     let signer_name = if $name != null { $name } else {
         let dir = if $pubkeys_dir != null { $pubkeys_dir } else {
-            repo-root | path join "multiproofs/pubkeys"
+            pubkeys-dir (repo-root)
         }
         lookup-signer-name $key $dir
     }
@@ -92,7 +93,7 @@ export def verify [
     }
 
     let pubkeys_dir = if $pubkeys_dir != null { $pubkeys_dir } else {
-        repo-root | path join "multiproofs/pubkeys"
+        pubkeys-dir (repo-root)
     }
     let pubkeys = (
         glob ($pubkeys_dir | path join "*.pub")

@@ -10,6 +10,7 @@
 #     pubkeys/*.pub        — signer's public keys
 
 use _repo.nu repo-root
+use _layout.nu pubkeys-dir
 
 # --- Shared helpers ---
 
@@ -160,7 +161,7 @@ export def extract [
     # Copy pubkeys from target repo's multiproofs/pubkeys/
     let pubkeys_dir = ($out_dir | path join "pubkeys")
     mkdir $pubkeys_dir
-    let repo_pubkeys = $root | path join "multiproofs/pubkeys"
+    let repo_pubkeys = pubkeys-dir $root
     if ($repo_pubkeys | path exists) {
         glob ($repo_pubkeys | path join "*.pub") | each {|file| cp $file $pubkeys_dir }
     }
@@ -277,7 +278,7 @@ export def "render-allowed-signers" [
     --pubkeys-dir: path # Source directory of *.pub files (default: <git-root>/multiproofs/pubkeys)
 ] {
     let dir = if $pubkeys_dir != null { $pubkeys_dir | path expand } else {
-        repo-root | path join "multiproofs/pubkeys"
+        pubkeys-dir (repo-root)
     }
 
     let signers = (build-allowed-signers $dir)
