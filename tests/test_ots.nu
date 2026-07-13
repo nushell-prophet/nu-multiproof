@@ -234,6 +234,20 @@ def "verify confirms a real Bitcoin-anchored bundle" [] {
 }
 
 @test
+def "verify reports content mismatch without touching the network" [] {
+    # A wrong --file is caught before any explorer lookup: verify computes the
+    # file hash, sees it differs from the proof commitment, and returns
+    # valid:false early. So this exercises the real command's parse ->
+    # content-check -> early-return path against a committed bitcoin bundle
+    # with zero network dependence — no OTS_NETWORK_TEST gate.
+    let bundle = "tests/../multiproofs/origin-proofs/tree-hashes.CCA016A8"
+    let result = ots verify $"($bundle)/tree-hashes.ots" --file "tests/test_ots.nu"
+    assert equal $result.valid false
+    assert equal $result.content_verified false
+    assert ($result.error | str contains "content mismatch")
+}
+
+@test
 def "verify rejects a pending proof" [] {
     let ots_bytes = build-pending-ots
     $ots_bytes | save --raw --force /tmp/test_ots_verify_pending.ots
