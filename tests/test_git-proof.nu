@@ -147,6 +147,47 @@ def "verify fails when bundled pubkey tampered" [] {
     rm --recursive $proof_dir
 }
 
+# A bundle whose object bytes were swapped under the same oid name must fail
+# the object-integrity step. Why: `git cat-file` does NOT re-hash loose objects,
+# so a tampered object reads back with exit 0 — verify must re-hash to catch it.
+# Without a real check, an attacker who controls the bundle can substitute
+# arbitrary blob/tree content while the proof still verifies.
+@test
+def "verify rejects a bundle with tampered object content" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    let proof = $"($tmp_dir)/proof"
+    mkdir $repo
+    ^git -C $repo init --object-format=sha256 -q
+    ^git -C $repo config user.email "test@example.com"
+    ^git -C $repo config user.name "test"
+
+    # Binary content, to prove the re-hash round-trips raw bytes exactly.
+    0x[5245414c00010203ff20434f4e54454e540a] | save --raw --force $"($repo)/secret.bin"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo commit -m init o+e>| ignore
+
+    # An unrelated blob whose compressed object file we can graft in.
+    let evil_oid = ("EVIL FORGED CONTENT\n" | ^git -C $repo hash-object -w --stdin | str trim)
+
+    git-proof extract secret.bin --repo $repo --out-dir $proof
+
+    # Overwrite the bundle's blob object with the evil object's bytes, keeping
+    # the authentic oid filename — the exact substitution attack.
+    let blob_oid = (open ($proof | path join "manifest.json") | get files.0.hash)
+    let dst = ($proof | path join "objects" ($blob_oid | str substring 0..<2) ($blob_oid | str substring 2..))
+    let src = ($repo | path join ".git/objects" ($evil_oid | str substring 0..<2) ($evil_oid | str substring 2..))
+    ^chmod u+w $dst
+    cp $src $dst
+
+    let result = (git-proof verify $proof)
+    assert equal $result.structure_valid false
+    assert equal $result.valid false
+    assert ($result.error | str contains "object hash") $"expected object-hash failure, got ($result.error)"
+
+    rm --recursive $tmp_dir
+}
+
 # A path like `a/b` where `a` is a blob must fail-fast inside `extract`.
 # Previously, the cursor only advanced on trees, so `b` was searched in the
 # root tree — silently succeeding (when `b` was a sibling) or erroring with

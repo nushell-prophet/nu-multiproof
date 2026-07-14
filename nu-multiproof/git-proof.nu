@@ -207,18 +207,35 @@ export def extract [
 
 # --- Verification ---
 
-# Verify object integrity: git validates the SHA-256 hash on read,
-# so any tampered object will fail cat-file.
+# Verify object integrity by re-hashing each object and comparing to its oid.
+# Why not trust `git cat-file`: it does NOT re-hash loose objects — a file
+# swapped under the same oid name reads back as the wrong content with exit 0,
+# so `cat-file -t` alone would pass a tampered bundle. Why not `git fsck`: it
+# rejects a legitimate partial bundle, reporting the unbundled sibling objects
+# a merkle proof deliberately omits as broken links. Re-hashing each bundled
+# object with `git hash-object` is the one check that catches altered content
+# without flagging those intentionally-absent siblings.
 def verify-object-hashes [
     repo: path
     objects: list<record<hash: string, type: string>>
 ]: nothing -> table<hash: string, valid: bool> {
     $objects | each {|obj|
-        let result = (do { ^git --git-dir $repo cat-file -t $obj.hash } | complete)
-        if $result.exit_code == 0 {
-            {hash: $obj.hash valid: true type: ($result.stdout | str trim)}
+        let type_result = (do { ^git --git-dir $repo cat-file -t $obj.hash } | complete)
+        if $type_result.exit_code != 0 {
+            {hash: $obj.hash valid: false error: ($type_result.stderr | str trim)}
         } else {
-            {hash: $obj.hash valid: false error: ($result.stderr | str trim)}
+            # Recompute the oid from the stored bytes. git derives it from scratch,
+            # so a mismatch means the object's content was altered under its name.
+            let type = ($type_result.stdout | str trim)
+            let recomputed = (do {
+                ^git --git-dir $repo cat-file $type $obj.hash | ^git --git-dir $repo hash-object -t $type --stdin
+            } | complete)
+            let oid = ($recomputed.stdout | str trim)
+            if $recomputed.exit_code == 0 and $oid == $obj.hash {
+                {hash: $obj.hash valid: true type: $type}
+            } else {
+                {hash: $obj.hash valid: false error: $"content does not hash to its name \(recomputed ($oid | str substring 0..12)...\)"}
+            }
         }
     }
 }
