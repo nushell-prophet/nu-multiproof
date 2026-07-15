@@ -86,7 +86,11 @@ export def main [
     }
 
     # 3. Sign. Transition: both artifacts — the CSV for whole-file consumers,
-    # the root statement for compact inclusion-proof consumers.
+    # the root statement for compact inclusion-proof consumers. The root is
+    # derived from every row, so it already authenticates the full CSV data
+    # indirectly (rebuild the tree, compare roots); the CSV sig exists only
+    # for legacy whole-file verification and can be dropped after the
+    # transition.
     if not $no_sign {
         let signing_key = if $key != null { $key | into string } else { resolve-signing-key --root $root }
         # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
