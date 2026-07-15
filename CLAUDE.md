@@ -14,11 +14,12 @@
 
 ### Where to put a helper
 
-- **Used only inside its own file** → private `def` (not `export def`).
+- **Used only inside its own non-`_` file** → private `def` (not `export def`).
 - **Used by tests or another impl file, but should not be public** → extract
   to a sibling `_<topic>-helpers.nu` and import it explicitly. The `_`
   prefix is the only signal of "not public" — mod.nu does the actual hiding
   by not re-exporting `_*.nu` files.
+- **Inside `_*.nu` files, everything stays `export def`** — even helpers nothing imports yet. Tests reach internals with `use` + explicit named imports (never `source`), and a private `def` is invisible to `use`. Non-public status comes from the `_` prefix + mod.nu, not from withholding `export`.
 - **User-facing** → `export def` in the relevant non-`_` submodule file.
 
 ### Why not selective re-export in mod.nu

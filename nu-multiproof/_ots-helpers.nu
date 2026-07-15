@@ -16,7 +16,7 @@ export def copy-path-for [file: path, bundle_dir: path]: nothing -> string {
 }
 
 # Big-endian binary of `n` zero bytes (0x[] when n <= 0).
-def zero-bytes [n: int]: nothing -> binary {
+export def zero-bytes [n: int]: nothing -> binary {
     if $n <= 0 { 0x[] } else { 0..<$n | each { 0x[00] } | bytes collect }
 }
 
