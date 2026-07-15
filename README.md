@@ -126,7 +126,7 @@ nu-multiproof git-proof verify multiproofs/origin-proofs/git-proof
 
 `ots info` and `ots upgrade` only echo the block height the calendar server reported — nothing checks it against Bitcoin. `ots verify` does. It does not trust the calendar at all:
 
-1. **Looks the block height up on independent explorers** (`mempool.space` and `blockstream.info` by default) and requires them to agree on the block hash. This is the one thing it trusts a third party for: the height → hash mapping.
+1. **Looks the block height up on independent explorers** (`mempool.space` and `blockstream.info` by default) and requires every explorer that answers to agree on the block hash. This is the one thing it trusts a third party for: the height → hash mapping. If only one explorer answers, verification proceeds on that single source — no cross-check happened, and the output says so instead of reporting "cross-checked".
 2. **Fetches the raw 80-byte block header** and recomputes everything locally — the double-SHA256 block hash, the merkle-root binding (the header must commit to the exact value the proof's operations replay to), and the proof-of-work (the block hash must meet the target in the header's `bits` field). A forged or low-work header fails these checks even if an explorer served it.
 
 ```nushell no-run

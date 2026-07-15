@@ -350,7 +350,14 @@ def emit-verify [result: record, fail: bool]: nothing -> record {
         print $"  block hash:    ($result.block_hash)"
         print $"  block time:    ($result.block_time | format date '%Y-%m-%d %H:%M:%S UTC')"
         print $"  merkle root:   ($result.merkle_root)"
-        print $"  cross-checked: ($result.sources_confirmed | str join ', ')"
+        # Why the label branches: one responder means no cross-check happened —
+        # the height->hash mapping rests on that single explorer. Printing
+        # "cross-checked" there would claim agreement that was never tested.
+        if ($result.sources_confirmed | length) > 1 {
+            print $"  cross-checked: ($result.sources_confirmed | str join ', ')"
+        } else {
+            print $"  single source: ($result.sources_confirmed | str join ', ') \(no cross-check — only one explorer answered\)"
+        }
         if $result.content_verified == true { print "  content:       matches the proof commitment" }
     } else {
         print $"✗ verification failed: ($result.error)"
@@ -372,10 +379,13 @@ def esplora-get [url: string]: nothing -> any {
 # Independently verify a Bitcoin-anchored OTS proof against real block headers.
 # Why: `info`/`upgrade` only echo the block height the calendar reported —
 # nothing checks it against Bitcoin. This does. It looks the height up on
-# independent explorers, requires them to agree on the block hash, then fetches
-# the raw 80-byte header and self-verifies the merkle-root binding, the block
-# hash, and the proof-of-work. The explorers are trusted only for the
-# height->hash mapping; every cryptographic claim is recomputed locally.
+# independent explorers, requires every explorer that answers to agree on the
+# block hash, then fetches the raw 80-byte header and self-verifies the
+# merkle-root binding, the block hash, and the proof-of-work. The explorers are
+# trusted only for the height->hash mapping; every cryptographic claim is
+# recomputed locally. If only one explorer answers there is no cross-check at
+# all — `sources_confirmed` names the single source relied on, and the printed
+# output labels it as such rather than claiming agreement.
 #
 # Returns a uniform record {valid, height, block_hash, block_time, merkle_root,
 # file_hash, content_verified, sources_confirmed, error}. A well-formed proof
