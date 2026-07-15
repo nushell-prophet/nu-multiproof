@@ -212,3 +212,32 @@ def "verify with explicit --sig" [] {
     assert equal ($results | first | get valid) true
     assert equal ($results | first | get signer) "test"
 }
+
+# `verify foo.txt.alice.sig` names one signature, so it must report on alice's
+# sig alone. Discovery from the inferred original would also pull in bob's —
+# answering a question the caller never asked.
+@test
+def "verify with a positional sig file checks only that signature" [] {
+    let tmp_dir = $in.tmp_dir
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let alice_key = $"($tmp_dir)/alice_key"
+    let bob_key = $"($tmp_dir)/bob_key"
+
+    mkdir $pubkeys_dir
+    "hello world" | save --force $test_file
+    ^ssh-keygen -t ed25519 -f $alice_key -N "" -q
+    ^ssh-keygen -t ed25519 -f $bob_key -N "" -q
+    cp $"($alice_key).pub" ($pubkeys_dir | path join "alice.pub")
+    cp $"($bob_key).pub" ($pubkeys_dir | path join "bob.pub")
+
+    ssh-sign sign $test_file --key $alice_key --name alice --pubkeys-dir $pubkeys_dir
+    ssh-sign sign $test_file --key $bob_key --name bob --pubkeys-dir $pubkeys_dir
+
+    let one = (ssh-sign verify $"($test_file).alice.sig" --pubkeys-dir $pubkeys_dir)
+    assert equal ($one | get signer) ["alice"]
+
+    # The original still fans out to every sig — the two forms stay distinct.
+    let all = (ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir)
+    assert equal ($all | get signer | sort) ["alice" "bob"]
+}

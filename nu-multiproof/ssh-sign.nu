@@ -74,19 +74,21 @@ export def sign [
 }
 
 # Verify a file's SSH signatures against public keys in a directory.
-# If --sig is given, verifies that single file. Otherwise finds all {path}.*.sig files.
+# Naming a .sig file (positionally or via --sig) verifies that one signature;
+# naming the original verifies every {path}.*.sig found beside it.
 # Returns a table of {signer, valid, error?}. --fail exits non-zero if any
 # signature is invalid (for CI), instead of a silent pass the caller must inspect.
 @example "verify all signatures on the manifest" { ssh-sign verify multiproofs/tree-hashes.csv }
 export def verify [
-    path: path # File to verify (or a .sig file — original is inferred)
+    path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
     --sig: path # Specific signature file (default: all .sig files)
     --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
     --namespace: string = "file"
     --fail # Exit non-zero if any signature is invalid (for CI)
 ] {
-    # If a .sig file was passed, infer the original file
-    let path = if ($path | str ends-with ".sig") {
+    # A positional .sig names both the signature to check and, by inference, the
+    # original it covers.
+    let target = if ($path | str ends-with ".sig") {
         # Strip .{name}.sig or .sig suffix to find original
         let p = $path | into string
         # Why: signer names can contain `-` (e.g. `maxim-uvarov2`), which `\w` excludes.
@@ -99,10 +101,11 @@ export def verify [
         if not ($original | path exists) {
             error make {msg: $"cannot find original file for ($path) — tried ($original)"}
         }
-        $original
+        {file: $original sig: $p}
     } else {
-        $path
+        {file: $path sig: null}
     }
+    let path = $target.file
 
     let pubkeys_dir = if $pubkeys_dir != null { $pubkeys_dir } else {
         pubkeys-dir (repo-root)
@@ -116,8 +119,13 @@ export def verify [
     let signers_file = mktemp
     $signers | save --force $signers_file
 
+    # Why the positional sig wins over discovery: `verify foo.csv.alice.sig`
+    # reads as "check alice's signature", but discovery would also pull in
+    # bob's — reporting on sigs the caller never named.
     let sig_files = if $sig != null {
         [$sig]
+    } else if $target.sig != null {
+        [$target.sig]
     } else {
         sig-files-for $path
     }
