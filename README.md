@@ -2,7 +2,7 @@
 
 Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git` and `ssh-keygen` — network calls use Nushell's built-in `http`.
 
-🚧 The code in this repo was generated via `claude code` by the latest Anthropic model available at the time, is barely tested, and is not secure.
+🚧 The code in this repo was generated via `claude code`, is barely tested, and should not be considered secure.
 
 ## What you can prove
 
