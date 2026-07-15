@@ -3,11 +3,23 @@ use std/testing *
 
 use ../nu-multiproof/init.nu
 
+# Why a fixture, not rm at the end of test bodies: after-each runs even when
+# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
 # Comment like "alice@bar.com" must be sanitized to "alicebarcom"
 # (all non-[a-zA-Z0-9_-] chars stripped, not just the first).
 @test
 def "init sanitizes all non-allowed chars in inline-key comment" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
     ^git -C $repo init -q
@@ -22,15 +34,13 @@ def "init sanitizes all non-allowed chars in inline-key comment" [] {
 
     let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert ($names | any { |n| $n == "alicebarcom.pub" }) $"expected alicebarcom.pub, got ($names)"
-
-    rm --recursive $tmp_dir
 }
 
 # A user.signingKey pointing at a private-key file (no .pub sibling) must NOT
 # be copied into pubkeys/ — init must refuse with a clear error.
 @test
 def "init refuses to copy a private-key file as pubkey" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
     ^git -C $repo init -q
@@ -46,8 +56,6 @@ def "init refuses to copy a private-key file as pubkey" [] {
 
     let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
     assert equal $copied 0
-
-    rm --recursive $tmp_dir
 }
 
 # --pubkey must apply the same private-key refusal as the git-config branch.
@@ -55,7 +63,7 @@ def "init refuses to copy a private-key file as pubkey" [] {
 # key into multiproofs/pubkeys/ (and get committed).
 @test
 def "init --pubkey refuses a private-key file" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
     ^git -C $repo init -q
@@ -69,15 +77,13 @@ def "init --pubkey refuses a private-key file" [] {
 
     let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
     assert equal $copied 0
-
-    rm --recursive $tmp_dir
 }
 
 # --pubkey pointed at the private key with .pub sibling present should still
 # resolve to the .pub sibling (mirrors the git-config branch's forgiving lookup).
 @test
 def "init --pubkey prefers .pub sibling over private-key path" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
     ^git -C $repo init -q
@@ -91,15 +97,13 @@ def "init --pubkey prefers .pub sibling over private-key path" [] {
     assert equal ($names | length) 1
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
     assert ($saved | str starts-with "ssh-")
-
-    rm --recursive $tmp_dir
 }
 
 # When both <path> and <path>.pub exist, init should prefer the .pub sibling
 # even if user.signingKey points at the private file (forgiving misconfig).
 @test
 def "init prefers .pub sibling when signingKey points to private key" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
     ^git -C $repo init -q
@@ -115,6 +119,4 @@ def "init prefers .pub sibling when signingKey points to private key" [] {
     assert equal ($names | length) 1
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
     assert ($saved | str starts-with "ssh-")
-
-    rm --recursive $tmp_dir
 }

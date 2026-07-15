@@ -3,6 +3,18 @@ use std/testing *
 
 use ../nu-multiproof/tree-hashes.nu
 
+# Why a fixture, not rm at the end of test bodies: after-each runs even when
+# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
 const EXPECTED_COLUMNS = [
     filepath
     content_sha256
@@ -83,7 +95,7 @@ def "ipfs pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     # on a missing optional dep).
     if (which ipfs | is-empty) { return }
 
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $"($repo)/sub"
     ^git -C $repo init -q
@@ -116,13 +128,11 @@ def "ipfs pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     let saved_dot = open $"($repo)/multiproofs/tree-hashes.csv" | where filepath == "."
     assert equal ($saved_dot | length) 1
     assert equal $saved_dot.0.content_cid $cid
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "non-ascii filenames come through raw, not C-quoted" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
     ^git -C $repo init -q
@@ -140,13 +150,11 @@ def "non-ascii filenames come through raw, not C-quoted" [] {
     # content_git exercises the update-index/ls-tree -z path: a quoted path
     # would silently miss the git_hashes lookup and land empty
     assert ($row.0.content_git | is-not-empty)
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "control-byte filename is rejected at generation, before any write" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
     ^git -C $repo init -q
@@ -158,8 +166,6 @@ def "control-byte filename is rejected at generation, before any write" [] {
     let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
     assert ($err != null) "control-byte filename was accepted"
     assert ($err | str contains "control bytes")
-
-    rm --recursive $tmp_dir
 }
 
 @test

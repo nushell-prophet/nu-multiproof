@@ -3,9 +3,21 @@ use std/testing *
 
 use ../nu-multiproof/git-proof.nu
 
+# Why a fixture, not rm at the end of test bodies: after-each runs even when
+# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
 @test
 def "extract single file" [] {
-    let proof_dir = (^mktemp -d | str trim)
+    let proof_dir = $in.tmp_dir
 
     let result = (git-proof extract nu-multiproof/mod.nu --out-dir $proof_dir)
 
@@ -16,26 +28,22 @@ def "extract single file" [] {
     assert (($proof_dir | path join "manifest.json") | path exists)
     assert (($proof_dir | path join "objects") | path exists)
     assert (($proof_dir | path join "pubkeys") | path exists)
-
-    rm --recursive $proof_dir
 }
 
 @test
 def "extract multiple files with deduplication" [] {
-    let proof_dir = (^mktemp -d | str trim)
+    let proof_dir = $in.tmp_dir
 
     let result = (git-proof extract nu-multiproof/mod.nu toolkit.nu --out-dir $proof_dir)
 
     assert equal ($result.files | length) 2
     # commit + root tree + nu-multiproof subtree + 2 blobs = 5 unique objects
     assert equal ($result.objects | length) 5
-
-    rm --recursive $proof_dir
 }
 
 @test
 def "verify valid proof" [] {
-    let proof_dir = (^mktemp -d | str trim)
+    let proof_dir = $in.tmp_dir
 
     # Why signed commit: top-level `valid` requires both structure AND signature.
     # HEAD may not be signed, so pick any commit with a signature attached.
@@ -47,13 +55,11 @@ def "verify valid proof" [] {
     assert equal $result.structure_valid true
     assert equal ($result.files | length) 1
     assert equal ($result.files | first | get path) "nu-multiproof/mod.nu"
-
-    rm --recursive $proof_dir
 }
 
 @test
 def "verify checks signature" [] {
-    let proof_dir = (^mktemp -d | str trim)
+    let proof_dir = $in.tmp_dir
 
     # Use any signed commit — HEAD may not be signed.
     # Not status == "G" because: %G? reflects *local* trust (allowedSignersFile),
@@ -65,13 +71,11 @@ def "verify checks signature" [] {
 
     assert equal $result.valid true
     assert equal $result.signature.valid true
-
-    rm --recursive $proof_dir
 }
 
 @test
 def "verify fails when signer key not in bundle" [] {
-    let proof_dir = (^mktemp -d | str trim)
+    let proof_dir = $in.tmp_dir
 
     let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
     let signer_fp = (^git log -1 --format='%GK' $signed | str trim)
@@ -90,13 +94,11 @@ def "verify fails when signer key not in bundle" [] {
     # Why: callers checking only `.valid` must reject this bundle.
     assert equal $result.valid false
     assert equal $result.structure_valid true
-
-    rm --recursive $proof_dir
 }
 
 @test
 def "verify --fail errors on an invalid proof" [] {
-    let proof_dir = (^mktemp -d | str trim)
+    let proof_dir = $in.tmp_dir
 
     let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
     let signer_fp = (^git log -1 --format='%GK' $signed | str trim)
@@ -116,13 +118,11 @@ def "verify --fail errors on an invalid proof" [] {
         "ok"
     } catch {|e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
-
-    rm --recursive $proof_dir
 }
 
 @test
 def "verify fails when bundled pubkey tampered" [] {
-    let proof_dir = (^mktemp -d | str trim)
+    let proof_dir = $in.tmp_dir
 
     let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
     let signer_fp = (^git log -1 --format='%GK' $signed | str trim)
@@ -143,8 +143,6 @@ def "verify fails when bundled pubkey tampered" [] {
     assert equal $result.signature.valid false
     assert equal $result.valid false
     assert equal $result.structure_valid true
-
-    rm --recursive $proof_dir
 }
 
 # A bundle whose object bytes were swapped under the same oid name must fail
@@ -154,7 +152,7 @@ def "verify fails when bundled pubkey tampered" [] {
 # arbitrary blob/tree content while the proof still verifies.
 @test
 def "verify rejects a bundle with tampered object content" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     let proof = $"($tmp_dir)/proof"
     mkdir $repo
@@ -184,8 +182,6 @@ def "verify rejects a bundle with tampered object content" [] {
     assert equal $result.structure_valid false
     assert equal $result.valid false
     assert ($result.error | str contains "object hash") $"expected object-hash failure, got ($result.error)"
-
-    rm --recursive $tmp_dir
 }
 
 # A path like `a/b` where `a` is a blob must fail-fast inside `extract`.
@@ -194,7 +190,7 @@ def "verify rejects a bundle with tampered object content" [] {
 # a misleading "not found in tree <root>" message (when it wasn't).
 @test
 def "extract errors when path descends into a blob with sibling at root" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     let proof_dir = $"($tmp_dir)/proof"
     mkdir $repo
@@ -216,13 +212,11 @@ def "extract errors when path descends into a blob with sibling at root" [] {
     assert ($outcome | str contains "is a blob") $"expected blob-descend error, got ($outcome)"
     # Why: error must fire before any objects are extracted.
     assert (not ($proof_dir | path exists)) "proof dir created despite error"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "extract errors when path descends into a blob without sibling" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     let proof_dir = $"($tmp_dir)/proof"
     mkdir $repo
@@ -242,13 +236,11 @@ def "extract errors when path descends into a blob without sibling" [] {
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
     assert ($outcome | str contains "is a blob") $"expected blob-descend error, got ($outcome)"
     assert (not ($proof_dir | path exists)) "proof dir created despite error"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "render-allowed-signers writes one wildcard line per pubkey" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
     let out = $"($tmp_dir)/allowed_signers"
     mkdir $pubkeys_dir
@@ -267,13 +259,11 @@ def "render-allowed-signers writes one wildcard line per pubkey" [] {
     for line in $lines {
         assert ($line | str starts-with "* namespaces=\"git\" ") $"unexpected line: ($line)"
     }
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "render-allowed-signers errors on empty pubkeys dir" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
     let out = $"($tmp_dir)/allowed_signers"
     mkdir $pubkeys_dir
@@ -283,13 +273,11 @@ def "render-allowed-signers errors on empty pubkeys dir" [] {
         "ok"
     } catch {|e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "blob hash matches git" [] {
-    let proof_dir = (^mktemp -d | str trim)
+    let proof_dir = $in.tmp_dir
 
     let git_hash = (
         ^git ls-tree HEAD toolkit.nu
@@ -303,6 +291,4 @@ def "blob hash matches git" [] {
     let proof_hash = ($result.files | first | get hash)
 
     assert equal $proof_hash $git_hash
-
-    rm --recursive $proof_dir
 }

@@ -3,9 +3,21 @@ use std/testing *
 
 use ../nu-multiproof/ssh-sign.nu
 
+# Why a fixture, not rm at the end of test bodies: after-each runs even when
+# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
 @test
 def "sign creates named sig file" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/somekey"
     let test_file = $"($tmp_dir)/test.txt"
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
@@ -18,13 +30,11 @@ def "sign creates named sig file" [] {
     ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
     assert ($"($test_file).alice.sig" | path exists)
     assert (not ($"($test_file).sig" | path exists))
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "sign with custom name" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/mykey"
     let test_file = $"($tmp_dir)/test.txt"
 
@@ -33,13 +43,11 @@ def "sign with custom name" [] {
 
     ssh-sign sign $test_file --key $key_path --name bob
     assert ($"($test_file).bob.sig" | path exists)
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "sign and verify round-trip" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/test_key"
     let test_file = $"($tmp_dir)/test.txt"
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
@@ -55,13 +63,11 @@ def "sign and verify round-trip" [] {
     assert equal ($results | length) 1
     assert equal ($results | first | get valid) true
     assert equal ($results | first | get signer) "test"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "multiple signers" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let key_alice = $"($tmp_dir)/alice"
     let key_bob = $"($tmp_dir)/bob"
     let test_file = $"($tmp_dir)/test.txt"
@@ -83,13 +89,11 @@ def "multiple signers" [] {
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | length) 2
     assert equal ($results | where valid == true | length) 2
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "verify fails with wrong key" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let sign_key = $"($tmp_dir)/sign_key"
     let wrong_key = $"($tmp_dir)/wrong_key"
     let test_file = $"($tmp_dir)/test.txt"
@@ -110,13 +114,11 @@ def "verify fails with wrong key" [] {
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | first | get valid) false
     assert equal ($results | first | get error) "unrecognized_signer"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "verify fails with tampered content" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/test_key"
     let test_file = $"($tmp_dir)/test.txt"
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
@@ -135,13 +137,11 @@ def "verify fails with tampered content" [] {
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | first | get valid) false
     assert equal ($results | first | get error) "invalid_signature"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "verify infers original from .sig path with hyphenated signer" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/test_key"
     let test_file = $"($tmp_dir)/test.txt"
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
@@ -161,13 +161,11 @@ def "verify infers original from .sig path with hyphenated signer" [] {
     assert equal ($results | length) 1
     assert equal ($results | first | get valid) true
     assert equal ($results | first | get signer) "maxim-uvarov2"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "verify --fail errors on invalid signature" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/test_key"
     let test_file = $"($tmp_dir)/test.txt"
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
@@ -191,13 +189,11 @@ def "verify --fail errors on invalid signature" [] {
     # Without --fail the same bad sig returns a record (no throw)
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | first | get valid) false
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "verify with explicit --sig" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/test_key"
     let test_file = $"($tmp_dir)/test.txt"
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
@@ -215,6 +211,4 @@ def "verify with explicit --sig" [] {
     assert equal ($results | length) 1
     assert equal ($results | first | get valid) true
     assert equal ($results | first | get signer) "test"
-
-    rm --recursive $tmp_dir
 }

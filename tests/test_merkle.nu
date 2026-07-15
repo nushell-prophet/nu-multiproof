@@ -10,6 +10,18 @@ use ../nu-multiproof/_merkle-helpers.nu [
 ]
 use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots]
 
+# Why a fixture, not rm at the end of test bodies: after-each runs even when
+# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
 # Leaf inputs from the RFC 6962 / Certificate Transparency test suite,
 # hashed per spec: sha256(0x00 ++ input).
 def vector-leaf-hashes []: nothing -> list<binary> {
@@ -90,7 +102,7 @@ def "single-leaf tree: empty path, root is the leaf hash" [] {
 
 @test
 def "golden root for the fixed mini-manifest, statement byte-exact" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     write-mini-manifest $tmp_dir
 
     let result = merkle root --repo $tmp_dir
@@ -100,13 +112,11 @@ def "golden root for the fixed mini-manifest, statement byte-exact" [] {
     let statement = open --raw $"($tmp_dir)/multiproofs/tree-root.txt" | into string
     assert equal $statement $"multiproof-merkle-v1 ($GOLDEN_MINI_ROOT)\n"
     assert equal (parse-root-statement $"($tmp_dir)/multiproofs/tree-root.txt") $GOLDEN_MINI_ROOT
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "duplicate filepaths are a hard error - equivocation guard" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     mkdir $"($tmp_dir)/multiproofs"
     let row = {filepath: "a.txt" content_sha256: ("one" | hash sha256) content_git: "" content_cid: ""}
     [$row $row] | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
@@ -116,13 +126,11 @@ def "duplicate filepaths are a hard error - equivocation guard" [] {
     let err = try { merkle root --repo $tmp_dir; null } catch {|e| $e.msg }
     assert ($err != null) "duplicate filepaths were accepted"
     assert ($err | str contains "duplicate filepaths")
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "newline in filepath is rejected - leaf forgery guard" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     mkdir $"($tmp_dir)/multiproofs"
     # A tracked file named like a serialized record would otherwise inject
     # attacker-chosen hash fields into the leaf bytes
@@ -134,8 +142,6 @@ def "newline in filepath is rejected - leaf forgery guard" [] {
     let err = try { merkle root --repo $tmp_dir; null } catch {|e| $e.msg }
     assert ($err != null) "forged filepath was accepted"
     assert ($err | str contains "control bytes")
-
-    rm --recursive $tmp_dir
 }
 
 @test
@@ -152,7 +158,7 @@ def "uppercase hex in a leaf is rejected, not normalized" [] {
 
 @test
 def "malformed root statements are rejected" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/tree-root.txt"
     let root = "one" | hash sha256
 
@@ -165,15 +171,13 @@ def "malformed root statements are rejected" [] {
         $bad | save --raw --force $file
         assert error {|| parse-root-statement $file } $"accepted: ($bad | to json)"
     }
-
-    rm --recursive $tmp_dir
 }
 
 # --- prove/verify end-to-end ---
 
 @test
 def "signed roundtrip: file and directory proofs verify as valid" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
@@ -199,13 +203,11 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
     let dir_result = merkle verify (merkle prove sub --repo $repo) --repo $repo
     assert $dir_result.valid
     assert equal $dir_result.content_verified null
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "tampered leaf, changed content, and unsigned root are each caught" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     merkle root --repo $repo
     let proof = merkle prove README.md --repo $repo
@@ -241,13 +243,11 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
     let tampered = merkle verify $tampered_file --repo $repo
     assert not $tampered.structure_valid
     assert not $tampered.valid
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "ots status: discovery by content commitment, pending and anchored pinned" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     merkle root --repo $repo
     let proof = merkle prove README.md --repo $repo
@@ -270,13 +270,11 @@ def "ots status: discovery by content commitment, pending and anchored pinned" [
 
     build-bitcoin-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.ots"
     assert equal (merkle verify $proof --repo $repo).ots.status "anchored"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "ots discovery: corrupt archival stamps skipped, anchored preferred" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     merkle root --repo $repo
     let proof = merkle prove README.md --repo $repo
@@ -297,13 +295,11 @@ def "ots discovery: corrupt archival stamps skipped, anchored preferred" [] {
     let result = merkle verify $proof --repo $repo
     assert equal $result.ots.status "anchored"
     assert equal $result.ots.ots $"($bundle)/tree-root.ots"
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "proof against a different seal root throws loudly" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     merkle root --repo $repo
     let proof = merkle prove README.md --repo $repo
@@ -312,6 +308,4 @@ def "proof against a different seal root throws loudly" [] {
     # seal mismatch, not report a quiet invalid
     root-statement ("other" | hash sha256) | save --raw --force $"($repo)/multiproofs/tree-root.txt"
     assert error {|| merkle verify $proof --repo $repo }
-
-    rm --recursive $tmp_dir
 }

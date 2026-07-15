@@ -5,6 +5,18 @@ use ../nu-multiproof/ots.nu
 use ../nu-multiproof/_ots-helpers.nu [copy-path-for check-block-header bits-to-target]
 use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG]
 
+# Why a fixture, not rm at the end of test bodies: after-each runs even when
+# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
 # --- parse-ots / info tests ---
 
 @test
@@ -74,7 +86,7 @@ def build-bitcoin-attestation-bytes [] {
 
 @test
 def "upgrade splices valid response and writes atomically" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let ots_path = $"($tmp_dir)/pending.ots"
     build-pending-ots | save --raw --force $ots_path
     let original = open --raw $ots_path
@@ -89,13 +101,11 @@ def "upgrade splices valid response and writes atomically" [] {
     let info = ots info $ots_path
     assert equal $info.attestation.type "bitcoin"
     assert equal $info.attestation.height 123456
-
-    rm --recursive $tmp_dir
 }
 
 @test
 def "upgrade rejects malformed response and leaves original intact" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let ots_path = $"($tmp_dir)/pending.ots"
     build-pending-ots | save --raw --force $ots_path
     let original = open --raw $ots_path
@@ -113,8 +123,6 @@ def "upgrade rejects malformed response and leaves original intact" [] {
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
     let after = open --raw $ots_path
     assert equal $after $original "original ots was modified despite validation failure"
-
-    rm --recursive $tmp_dir
 }
 
 # Pure-function regression checks on the copy-path construction. Why split

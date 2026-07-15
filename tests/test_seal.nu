@@ -3,12 +3,24 @@ use std/testing *
 
 use ../nu-multiproof/seal.nu
 
+# Why a fixture, not rm at the end of test bodies: after-each runs even when
+# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
 # seal happy path with --no-stamp --no-root-cid:
 # avoids the OTS calendar network call and the ipfs CLI, but still
 # exercises tree-hashes regen + signing-key resolution + sig clearing.
 @test
 def "seal produces manifest and signature" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
 
@@ -42,8 +54,6 @@ def "seal produces manifest and signature" [] {
     assert ($root_file | path exists) "root statement not created"
     assert equal (open --raw $root_file | into string) $"multiproof-merkle-v1 ($result.merkle_root)\n"
     assert ($result.root_sig | str ends-with ".sshkey.sig")
-
-    rm --recursive $tmp_dir
 }
 
 # Second seal must succeed even though previous seal left a sig next to the
@@ -51,7 +61,7 @@ def "seal produces manifest and signature" [] {
 # itself before regen so its own flow keeps working.
 @test
 def "seal re-runs without root-cid sig conflict" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
 
@@ -80,8 +90,6 @@ def "seal re-runs without root-cid sig conflict" [] {
     # Stale root-statement sig from the first run must be cleared the same way
     let root_sigs = (glob $"($repo)/multiproofs/tree-root.txt.*.sig")
     assert equal ($root_sigs | length) 1
-
-    rm --recursive $tmp_dir
 }
 
 # --no-sign means "skip signing", not "remove signatures": an unchanged
@@ -89,7 +97,7 @@ def "seal re-runs without root-cid sig conflict" [] {
 # valid and must survive; once content changes they're stale and go.
 @test
 def "seal --no-sign keeps still-valid sigs, clears stale ones" [] {
-    let tmp_dir = (^mktemp -d | str trim)
+    let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
 
@@ -121,6 +129,4 @@ def "seal --no-sign keeps still-valid sigs, clears stale ones" [] {
     seal --repo $repo --no-stamp --no-root-cid --no-sign
     assert equal (glob $"($manifest).*.sig" | length) 0
     assert equal (glob $"($root_file).*.sig" | length) 0
-
-    rm --recursive $tmp_dir
 }
