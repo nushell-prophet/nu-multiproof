@@ -121,6 +121,30 @@ def "ipfs pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
 }
 
 @test
+def "non-ascii filenames come through raw, not C-quoted" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+    "привет\n" | save --force $"($repo)/文件.md"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+
+    let table = tree-hashes --echo --repo $repo
+
+    # core.quotePath would render the name as "\346\226\207\344\273\266.md";
+    # -z plumbing must yield the raw path bytes as stored in git
+    let row = $table | where filepath == "文件.md"
+    assert equal ($row | length) 1 $"raw non-ascii filepath missing; got ($table.filepath)"
+    assert ($row.0.content_sha256 | is-not-empty)
+    # content_git exercises the update-index/ls-tree -z path: a quoted path
+    # would silently miss the git_hashes lookup and land empty
+    assert ($row.0.content_git | is-not-empty)
+
+    rm --recursive $tmp_dir
+}
+
+@test
 def "directory content_git matches working-tree blob hashes of its files" [] {
     let result = tree-hashes --echo
     let dirs = $result | where content_sha256 == "" and filepath != "."
@@ -133,14 +157,15 @@ def "directory content_git matches working-tree blob hashes of its files" [] {
     let tmp_index = $nu.temp-dir | path join $"nutest-tree-(random uuid)"
     rm --force $tmp_index
     let ls_tree = with-env {GIT_INDEX_FILE: $tmp_index} {
-        $files.filepath | str join (char nl) | ^git update-index --add --stdin
+        $files.filepath | str join (char -i 0) | ^git update-index --add -z --stdin
         let tree = ^git write-tree | str trim
-        ^git ls-tree -r -t $tree
+        ^git ls-tree -r -t -z $tree
     }
     rm --force $tmp_index
     let expected = (
         $ls_tree
-        | lines
+        | split row (char -i 0)
+        | where { $in != "" }
         | parse "{mode} {type} {hash}\t{path}"
         | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
     )

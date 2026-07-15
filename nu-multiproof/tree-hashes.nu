@@ -30,10 +30,13 @@ def build-tree [
     # .gitignore) are included; .git/ is excluded by ls-files semantics.
     # Not glob+filter because: it dropped hidden tracked files and mixed
     # working-tree with VCS noise.
+    # Why -z: without it core.quotePath C-quotes non-ASCII names
+    # ("\346\226\207.md"), poisoning the filepath as an open path and as
+    # future merkle leaf bytes. Filepath = the raw path bytes as stored in git.
     let tracked_files = (
-        ^git -C $root ls-files
-        | lines
-        | where { not ($in | str starts-with $exclude_prefix) }
+        ^git -C $root ls-files -z
+        | split row (char -i 0)
+        | where { $in != "" and not ($in | str starts-with $exclude_prefix) }
         | sort
     )
 
@@ -127,14 +130,18 @@ def build-tree [
     } else {
         let tmp_index = $nu.temp-dir | path join $"nu-multiproof-build-tree-index-(random uuid)"
         rm --force $tmp_index
+        # Why -z on all three: same core.quotePath issue as ls-files above —
+        # ls-tree C-quotes non-ASCII paths, so the git_hashes lookup by raw
+        # path would silently miss them.
         let ls_tree = with-env {GIT_INDEX_FILE: $tmp_index} {
-            $tracked_files | str join (char nl) | ^git -C $root update-index --add --stdin
+            $tracked_files | str join (char -i 0) | ^git -C $root update-index --add -z --stdin
             let tree = ^git -C $root write-tree | str trim
-            ^git -C $root ls-tree -r -t $tree
+            ^git -C $root ls-tree -r -t -z $tree
         }
         rm --force $tmp_index
         $ls_tree
-        | lines
+        | split row (char -i 0)
+        | where { $in != "" }
         | parse "{mode} {type} {hash}\t{path}"
         | select path hash
         | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
