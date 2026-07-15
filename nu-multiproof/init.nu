@@ -34,6 +34,9 @@ export def main [
             if ($raw | str starts-with "key::") {
                 # Inline key — save it directly
                 let key_data = $raw | str replace "key::" ""
+                if not (looks-like-ssh-pubkey ($key_data | str trim)) {
+                    error make {msg: "user.signingKey inline `key::` value is not an SSH public key — pubkeys/ must hold public keys only"}
+                }
                 let name = resolve-key-name $key_data
                 let dest = $pubkeys_dir | path join $"($name).pub"
                 if ($dest | path exists) {
@@ -74,6 +77,13 @@ export def main [
     }
 }
 
+# The one shape check behind init's rule that nothing but a public key lands in
+# pubkeys/. Every branch that writes there goes through here — the file-path
+# branch via resolve-pubkey-file, the inline `key::` branch directly.
+def looks-like-ssh-pubkey [line: string]: nothing -> bool {
+    ["ssh-" "sk-" "ecdsa-"] | any {|prefix| $line | str starts-with $prefix }
+}
+
 # Resolve an SSH key path to its public-key file.
 # Why: --pubkey and the user.signingKey file-path branch must never copy a
 # private key into pubkeys/. Prefer the `.pub` sibling when present (forgiving
@@ -88,7 +98,7 @@ def resolve-pubkey-file [key_path: path]: nothing -> path {
         error make {msg: $"pubkey file not found: ($key_path)"}
     }
     let first_line = (open --raw $expanded | lines | first | default "")
-    if ($first_line | str starts-with "ssh-") or ($first_line | str starts-with "sk-") or ($first_line | str starts-with "ecdsa-") {
+    if (looks-like-ssh-pubkey $first_line) {
         $expanded
     } else {
         error make {msg: $"($key_path) does not look like an SSH public key — point at the .pub file"}

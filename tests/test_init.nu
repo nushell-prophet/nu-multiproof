@@ -120,3 +120,26 @@ def "init prefers .pub sibling when signingKey points to private key" [] {
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
     assert ($saved | str starts-with "ssh-")
 }
+
+# The inline `key::` branch must apply the same shape check as the file-path
+# branch. Without it, `key::<private key material>` lands a private key in
+# pubkeys/ under a .pub name — the exact outcome the other branches refuse.
+@test
+def "init refuses inline key:: material that is not a public key" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    let private_data = (open --raw $key_path | str trim)
+    ^git -C $repo config user.signingKey $"key::($private_data)"
+
+    let outcome = (try { init --repo $repo; "ok" } catch { |e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert ($outcome | str contains "public key") $"expected a public-key message, got ($outcome)"
+
+    let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
+    assert equal $copied 0
+}
