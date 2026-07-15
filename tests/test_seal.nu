@@ -37,6 +37,12 @@ def "seal produces manifest and signature" [] {
     assert equal ($sigs | length) 1 $"expected exactly one sig, got ($sigs)"
     assert ($result.sig | str ends-with ".sshkey.sig")
 
+    # Merkle root statement derived from the fresh manifest and signed too
+    let root_file = $"($repo)/multiproofs/tree-root.txt"
+    assert ($root_file | path exists) "root statement not created"
+    assert equal (open --raw $root_file | into string) $"multiproof-merkle-v1 ($result.merkle_root)\n"
+    assert ($result.root_sig | str ends-with ".sshkey.sig")
+
     rm --recursive $tmp_dir
 }
 
@@ -70,6 +76,10 @@ def "seal re-runs without root-cid sig conflict" [] {
     let manifest = $"($repo)/multiproofs/tree-hashes.csv"
     let sigs = (glob $"($manifest).*.sig")
     assert equal ($sigs | length) 1
+
+    # Stale root-statement sig from the first run must be cleared the same way
+    let root_sigs = (glob $"($repo)/multiproofs/tree-root.txt.*.sig")
+    assert equal ($root_sigs | length) 1
 
     rm --recursive $tmp_dir
 }

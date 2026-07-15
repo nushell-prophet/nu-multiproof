@@ -1,8 +1,9 @@
 use tree-hashes.nu
+use merkle.nu
 use ots.nu
 use ssh-sign.nu
 use _repo.nu repo-root
-use _layout.nu [manifest-path ots-dir pubkeys-dir]
+use _layout.nu [manifest-path merkle-root-path ots-dir pubkeys-dir]
 use _sig.nu sig-files-for
 use _key-helpers.nu resolve-signing-key
 
@@ -14,9 +15,10 @@ use _key-helpers.nu resolve-signing-key
 #   2. tree-hashes — regenerate the manifest from current worktree files. With a
 #      root CID, one `ipfs add -r` pass emits per-file, per-dir and the root "."
 #      row together, so the manifest is written once, complete (--no-root-cid
-#      uses the pure-nu path with no root row)
-#   3. ssh-sign — sign the manifest (on by default; --no-sign to skip)
-#   4. ots stamp — timestamp the manifest (on by default; --no-stamp to skip)
+#      uses the pure-nu path with no root row). Then derive the merkle root
+#      statement (multiproofs/tree-root.txt) from the fresh manifest
+#   3. ssh-sign — sign the manifest and the root statement (--no-sign to skip)
+#   4. ots stamp — timestamp both (--no-stamp to skip)
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
 # context (message, scope, timing). Also avoids circularity: git-proof proves
@@ -66,28 +68,45 @@ export def main [
     }
     print $"Manifest: ($manifest_path)"
 
-    # Why: a sig from a previous seal signs the now-regenerated (stale) manifest.
-    # Clear it before step 4 signs fresh. Uses the shared discovery so the bare
-    # `<manifest>.sig` form is cleared too, not just `<manifest>.<signer>.sig`.
-    sig-files-for $manifest_path | each {|sig| rm $sig }
+    # Derive the merkle root statement from the fresh manifest — the compact
+    # signing target: consumers verify per-file inclusion proofs against this
+    # 32-byte commitment instead of keeping the whole CSV (see merkle.nu).
+    # Immediately after regen, so no window where the statement describes a
+    # previous manifest.
+    let root_statement_path = merkle-root-path $root
+    let merkle_result = merkle root --repo $root
+    print $"Merkle root: ($merkle_result.root)"
+    $result = ($result | insert merkle_root $merkle_result.root)
 
-    # 3. Sign the manifest — covers root CID via the "." row
+    # Why: a sig from a previous seal signs the now-regenerated (stale) manifest
+    # and root statement. Clear both before step 3 signs fresh. Uses the shared
+    # discovery so the bare `.sig` form is cleared too, not just `.<signer>.sig`.
+    [$manifest_path $root_statement_path] | each {|file|
+        sig-files-for $file | each {|sig| rm $sig }
+    }
+
+    # 3. Sign. Transition: both artifacts — the CSV for whole-file consumers,
+    # the root statement for compact inclusion-proof consumers.
     if not $no_sign {
         let signing_key = if $key != null { $key | into string } else { resolve-signing-key --root $root }
         # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
         # git root, but seal may target a different repo via --repo.
         let sig = ssh-sign sign $manifest_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
-        $result = ($result | insert sig $sig)
+        let root_sig = ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
+        $result = ($result | insert sig $sig | insert root_sig $root_sig)
     }
 
-    # 4. OTS timestamp — anchors the manifest (with root CID) to Bitcoin
+    # 4. OTS timestamp — anchors the manifest (with root CID) and the root
+    # statement to Bitcoin. Distinct bundle dirs: stamp keys bundles by file
+    # stem, and tree-root.txt was named to not collide with tree-hashes.csv.
     # Why pass out-dir explicitly: ots stamp defaults it to the CWD's git root,
     # but seal may target a different repo via --repo (same fix as pubkeys-dir
-    # in step 4). Without it, `seal --repo /other` writes the bundle into the
+    # in step 3). Without it, `seal --repo /other` writes the bundle into the
     # CWD's repo, or fails when CWD is not a repo.
     if not $no_stamp {
         let stamp_result = ots stamp $manifest_path --out-dir $ots_dir
-        $result = ($result | insert ots $stamp_result.ots)
+        let root_stamp = ots stamp $root_statement_path --out-dir $ots_dir
+        $result = ($result | insert ots $stamp_result.ots | insert root_ots $root_stamp.ots)
     }
 
     $result
