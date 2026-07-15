@@ -7,7 +7,7 @@
 # Tree spec: README.md "Merkle inclusion proofs"; primitives: _merkle-helpers.nu.
 
 use _repo.nu repo-root
-use _layout.nu [manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir]
+use _layout.nu [manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir MERKLE_ROOT_FILE]
 use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
     root-statement parse-root-statement validate-leaf
@@ -137,13 +137,27 @@ export def verify [
     # (info.hash), not by bundle name — stale bundles from previous seals are
     # archival, so "no stamp commits to THIS root" is absent, not invalid.
     let root_hash = open --raw $root_file | hash sha256
-    let matching_ots = glob ((ots-dir $target) | path join "tree-root.*" "*.ots")
-        | where {|f| (ots info $f | get hash) == $root_hash }
+    let root_stem = $MERKLE_ROOT_FILE | path parse | get stem
+    let matching_ots = glob ((ots-dir $target) | path join $"($root_stem).*" "*.ots")
+        | each {|f|
+            # A corrupt/truncated archival .ots must not block verification of
+            # an unrelated proof — skip it with a note and keep looking.
+            let info = try { ots info $f } catch {|e|
+                print $"note: skipping unparsable OTS file ($f): ($e.msg)"
+                null
+            }
+            if $info != null and $info.hash == $root_hash {
+                {file: $f type: $info.attestation.type}
+            } else { null }
+        }
     let ots_status = if ($matching_ots | is-empty) {
         {status: "absent" ots: null}
     } else {
-        let type = ots info ($matching_ots | first) | get attestation.type
-        {status: (if $type == "bitcoin" { "anchored" } else { "pending" }) ots: ($matching_ots | first)}
+        # Prefer an anchored match: glob order can put an archived
+        # still-pending <stem>.<timestamp>.ots before the anchored <stem>.ots.
+        let anchored = $matching_ots | where type == "bitcoin"
+        let pick = if ($anchored | is-not-empty) { $anchored | first } else { $matching_ots | first }
+        {status: (if $pick.type == "bitcoin" { "anchored" } else { "pending" }) ots: $pick.file}
     }
 
     let valid = $structure_valid and $signed_ok and ($content_verified == true or $content_verified == null)

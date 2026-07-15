@@ -268,6 +268,33 @@ def "ots status: discovery by content commitment, pending and anchored pinned" [
 }
 
 @test
+def "ots discovery: corrupt archival stamps skipped, anchored preferred" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = make-test-repo $tmp_dir
+    merkle root --repo $repo
+    let proof = merkle prove README.md --repo $repo
+    let root_hash = open --raw $"($repo)/multiproofs/tree-root.txt" | hash sha256 | decode hex
+    let bundle = $"($repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
+    mkdir $bundle
+
+    # A truncated archival .ots is an artifact of a past seal — it must not
+    # crash verification of an unrelated proof
+    0x[deadbeef] | save --raw --force $"($bundle)/tree-root.20260101-000000.ots"
+    build-pending-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.ots"
+    assert equal (merkle verify $proof --repo $repo).ots.status "pending"
+
+    # An archived still-pending stamp sorts before <stem>.ots in glob order;
+    # an anchored match must win regardless of ordering
+    build-pending-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.20260102-000000.ots"
+    build-bitcoin-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.ots"
+    let result = merkle verify $proof --repo $repo
+    assert equal $result.ots.status "anchored"
+    assert equal $result.ots.ots $"($bundle)/tree-root.ots"
+
+    rm --recursive $tmp_dir
+}
+
+@test
 def "proof against a different seal root throws loudly" [] {
     let tmp_dir = (^mktemp -d | str trim)
     let repo = make-test-repo $tmp_dir
