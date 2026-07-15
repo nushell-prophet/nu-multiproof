@@ -57,7 +57,7 @@ nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.nu
 
 ## Prerequisites
 
-- [Nushell](https://www.nushell.sh/) 0.101+
+- [Nushell](https://www.nushell.sh/) — developed and tested on 0.114.1; the minimum supported version has not been established
 - `git` (SHA-256 repos supported)
 - `ssh-keygen` (for SSH signing)
 
