@@ -70,9 +70,11 @@ export def prove [
 # result record (mirrors git-proof verify), not a bare pass/fail:
 #   valid            — structure ok AND >=1 valid signature AND content not contradicted
 #   structure_valid  — leaf hash folds up the path to the signed root
-#   content_verified — on-disk file matches leaf.content_sha256 (null when the
-#                      file is absent or the leaf attests no sha256 — directory
-#                      rows and oversized files attest only content_git)
+#   content_verified — on-disk file matches leaf.content_sha256; null when the
+#                      leaf attests no sha256 (directory rows and oversized
+#                      files attest only content_git); "missing" when the leaf
+#                      attests one but the file is absent on disk — blocks
+#                      valid, same as a mismatch
 #   signatures       — ssh-sign results over the root statement file
 #   ots              — {status: absent|pending|anchored, ots} — a status, NOT
 #                      pass/fail: a fresh seal stays pending for hours/days
@@ -119,8 +121,14 @@ export def verify [
     # Content binding: without this the proof only shows the ROW was
     # catalogued, not that the on-disk FILE matches it.
     let target_file = $target | path join $proof.leaf.filepath
-    let content_verified = if $proof.leaf.content_sha256 == "" or not ($target_file | path exists) {
+    let content_verified = if $proof.leaf.content_sha256 == "" {
         null
+    } else if not ($target_file | path exists) {
+        # Why "missing", not null: null means "nothing to check" (directory
+        # rows). A deleted/renamed file is a real divergence from the sealed
+        # catalogue — folded into null it yielded `valid: true` for a proof
+        # whose file is gone, misleading consumers keying only on .valid.
+        "missing"
     } else {
         (open --raw $target_file | hash sha256) == $proof.leaf.content_sha256
     }
@@ -138,17 +146,19 @@ export def verify [
         {status: (if $type == "bitcoin" { "anchored" } else { "pending" }) ots: ($matching_ots | first)}
     }
 
-    let valid = $structure_valid and $signed_ok and $content_verified != false
+    let valid = $structure_valid and $signed_ok and ($content_verified == true or $content_verified == null)
     let error = if not $structure_valid {
         "proof path does not fold to the signed root"
     } else if $content_verified == false {
         $"on-disk ($proof.leaf.filepath) does not match the proven content_sha256"
+    } else if $content_verified == "missing" {
+        $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"
     } else if not $signed_ok {
         $sig_check.error | default "no valid signature over the root statement"
     } else { null }
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', null => 'not checked' })"
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING \(file absent on disk\)', null => 'not checked' })"
     print $"ots:       ($ots_status.status)"
 
     if $fail and not $valid {

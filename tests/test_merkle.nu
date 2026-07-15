@@ -215,6 +215,15 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
     assert equal $drifted.content_verified false
     assert not $drifted.valid
 
+    # Deleted file after sealing: absence is a divergence from the sealed
+    # catalogue, not "nothing to check" — must not collapse into the
+    # directory-row null and read as valid
+    rm $"($repo)/README.md"
+    let missing = merkle verify $proof --repo $repo
+    assert $missing.structure_valid
+    assert equal $missing.content_verified "missing"
+    assert not $missing.valid
+
     # Tampered leaf (well-formed hex, wrong value): fold no longer reaches
     # the signed root
     let tampered_file = $"($tmp_dir)/tampered.nuon"
