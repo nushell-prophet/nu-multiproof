@@ -5,6 +5,7 @@ use _ots-helpers.nu [copy-path-for check-block-header]
 use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
+use _sig.nu sig-files-for
 
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 const OP_SHA256 = 0x08
@@ -265,9 +266,10 @@ export def stamp [file: path --out-dir: path] {
 
     # Why: a self-contained bundle must answer "signer X endorsed content C at
     # time T, anchored to Bitcoin block B" using only files in the bundle dir.
-    # Snapshot any sibling `<file>.<signer>.sig` next to the frozen copy so
-    # the binding survives the next `seal` (which overwrites the live sig).
-    let sigs = glob $"($file).*.sig"
+    # Snapshot any sibling sig next to the frozen copy so the binding
+    # survives the next `seal` (which overwrites the live sig). Shared
+    # discovery, so the bare `<file>.sig` form is bundled too.
+    let sigs = sig-files-for $file
     let bundled_sigs = $sigs | each {|sig|
         let sig_name = $sig | path basename
         let dest = $"($bundle_dir)/($sig_name)"
