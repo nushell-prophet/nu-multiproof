@@ -162,8 +162,13 @@ def build-tree [
 
     # Append the root "." row when we have a root CID (only --ipfs computes one),
     # so the manifest is written once, complete — no reopen-and-rewrite (B2).
+    # Why re-sort: the "." row must obey the manifest's own byte-wise order
+    # ("." sorts before ".woodpecker.yaml"), not sit appended last — merkle
+    # leaf ordering will depend on the CSV honoring its own rule.
     if $root_cid != null {
-        $rows | append {filepath: "." content_sha256: "" content_git: "" content_cid: $root_cid}
+        $rows
+        | append {filepath: "." content_sha256: "" content_git: "" content_cid: $root_cid}
+        | sort-by filepath
     } else {
         $rows
     }

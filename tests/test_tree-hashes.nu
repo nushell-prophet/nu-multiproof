@@ -99,6 +99,11 @@ def "ipfs pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     assert equal ($dot | length) 1
     assert ($dot.0.content_cid | str starts-with "Qm") $"expected CIDv0 for . row, got ($dot.0.content_cid)"
 
+    # The "." row participates in the sort (first byte-wise), not appended last —
+    # the manifest must honor its own ordering rule
+    assert equal $table.filepath.0 "."
+    assert equal $table.filepath ($table.filepath | sort)
+
     # Directory rows now carry their CID (A3), not an empty string
     let dirs = $table | where content_sha256 == "" and filepath != "."
     assert (($dirs | length) > 0)
