@@ -11,6 +11,7 @@ Proof of concept: Composable cryptographic proofs for git repositories, written 
 | **This content existed in a signed commit** | Git merkle proof | SHA-256 merkle path from signed commit to blob, self-verifiable without the original repo |
 | **This content existed at a specific time** | OpenTimestamps | Hash chain anchored to a Bitcoin block header |
 | **This person signed this file** | SSH file signature | SSH-keygen signature verified against bundled public keys |
+| **This file was in the catalogued snapshot** | Merkle inclusion proof | RFC 6962-style binary tree over the manifest rows; one signed 32-byte root verifies a proof of ~log2(n) hashes |
 
 Each proof type is independent. Use one, two, or all three.
 
@@ -45,6 +46,13 @@ nu-multiproof ots verify multiproofs/ots-timestamps/tree-hashes.ABCD1234/tree-ha
 nu-multiproof ssh-sign sign tree-hashes.csv --key ~/.ssh/id_ed25519
 # Verify signatures against bundled public keys
 nu-multiproof ssh-sign verify tree-hashes.csv
+
+# Derive the merkle root over the manifest (seal does this automatically)
+nu-multiproof merkle root
+# Extract a compact inclusion proof for one manifest row
+nu-multiproof merkle prove README.md
+# Verify it: fold to the signed root, check signatures, content, OTS status
+nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.nuon
 ```
 
 ## Prerequisites
@@ -64,6 +72,26 @@ git clone https://github.com/vyadh/nutest ../nutest
 ```nushell no-run
 use toolkit.nu *; main test
 ```
+
+## Merkle inclusion proofs
+
+`multiproofs/tree-hashes.csv` is a flat signed manifest: proving one file's inclusion with its signature means keeping the entire CSV. The merkle layer fixes that. The CSV stays the authoritative catalogue, but `seal` also derives a binary merkle tree over its rows and signs/stamps only the one-line root statement (`multiproofs/tree-root.txt`). A consumer then holds one row plus ~log2(n) sibling hashes — for a million files, ~20 hashes instead of a million rows. (The existing git merkle proofs don't cover this: git trees branch wide, so each proof level lists every sibling in the directory — it grows with directory width and leaks the neighbors' filenames.)
+
+A consumer's full artifact set: the proof file (`merkle prove <filepath>`), `tree-root.txt`, a `.sig` over it, the signer's pubkey from `multiproofs/pubkeys/`, and — for the time anchor — the `tree-root.*` OTS bundle.
+
+`merkle verify` folds the proof to the signed root, checks the SSH signatures over the root statement, re-hashes the on-disk file against the proven `content_sha256` when present, and reports the OTS anchor as a status (`absent`/`pending`/`anchored` — a fresh seal stays pending until Bitcoin confirms, hours or days). A proof whose embedded root differs from the signed root is for a different seal and fails loudly rather than reporting invalid.
+
+### Tree specification
+
+Pinned exactly, so an independent implementation reproduces the root from the same CSV (reference: `nu-multiproof/_merkle-helpers.nu`, test vectors: `tests/test_merkle.nu`).
+
+- **Leaves**: all CSV rows (directory rows and the `.` root-CID row included), sorted by `filepath` — byte-wise lexicographic over the UTF-8 path bytes, no locale, no Unicode normalization. Duplicate filepaths are a hard error.
+- **Leaf bytes**: the four parsed field values (RFC 4180 CSV parsing, not raw lines) joined with `\n`: `filepath \n content_sha256 \n content_git \n content_cid`.
+- **Charset constraints** (make the `\n`-join injective; reject, never normalize): `filepath` contains no bytes < 0x20; `content_sha256` is empty or 64 lowercase hex; `content_git` is empty or 40/64 lowercase hex (SHA-1 or SHA-256 git repos); `content_cid` is empty or a base58btc CIDv0 (`Qm` + 44 chars).
+- **Hashing** (RFC 6962 domain separation): leaf hash = `sha256(0x00 ++ leaf_bytes)`; inner node = `sha256(0x01 ++ left ++ right)` over the raw 32-byte child hashes.
+- **Shape** (RFC 6962 MTH): split the leaf list at the largest power of two below n, recurse on both halves. No padding, no last-leaf duplication. n=1: root = the leaf hash. n=0: root = `sha256("")` = `e3b0c442…`.
+- **Proof steps**: `side` names the **sibling**'s position, leaf-to-root order: `side: right` → `acc = sha256(0x01 ++ acc ++ sibling)`; `side: left` → the sibling goes first.
+- **Root statement**: exactly `multiproof-merkle-v1 <64 lowercase hex>` + one trailing `\n`. The statement form (not a bare hash) keeps the signature from being replayed in another hash-signing context.
 
 ## Origin proofs
 

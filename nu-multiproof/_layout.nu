@@ -6,6 +6,10 @@ export const MULTIPROOFS_DIR = "multiproofs"
 export const PUBKEYS_DIR = "pubkeys"
 export const OTS_DIR = "ots-timestamps"
 export const MANIFEST_FILE = "tree-hashes.csv"
+# Not tree-hashes.root because: ots stamp keys bundle dirs by file stem, so a
+# root file sharing the CSV's stem would collide with the manifest's bundles.
+export const MERKLE_ROOT_FILE = "tree-root.txt"
+export const INCLUSION_PROOFS_DIR = "inclusion-proofs"
 
 # <root>/multiproofs
 export def multiproofs-dir [root: path]: nothing -> path {
@@ -25,4 +29,14 @@ export def ots-dir [root: path]: nothing -> path {
 # <root>/multiproofs/tree-hashes.csv
 export def manifest-path [root: path]: nothing -> path {
     $root | path join $MULTIPROOFS_DIR $MANIFEST_FILE
+}
+
+# <root>/multiproofs/tree-root.txt
+export def merkle-root-path [root: path]: nothing -> path {
+    $root | path join $MULTIPROOFS_DIR $MERKLE_ROOT_FILE
+}
+
+# <root>/multiproofs/inclusion-proofs
+export def inclusion-proofs-dir [root: path]: nothing -> path {
+    $root | path join $MULTIPROOFS_DIR $INCLUSION_PROOFS_DIR
 }
