@@ -101,6 +101,9 @@ def "ipfs pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     ^git -C $repo init -q
     "hello\n" | save --force $"($repo)/file.txt"
     "world\n" | save --force $"($repo)/sub/inner.txt"
+    # Hidden tracked file: ipfs add skips dotfiles without --hidden, which
+    # dropped it from per-file CIDs and from the dir/root CIDs the seal signs
+    "hidden\n" | save --force $"($repo)/.hidden"
     ^git -C $repo add . o+e>| ignore
     ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
 
@@ -122,6 +125,11 @@ def "ipfs pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     for d in $dirs {
         assert ($d.content_cid | str starts-with "Qm") $"dir ($d.filepath) has no CID: ($d.content_cid)"
     }
+
+    # The hidden tracked file gets a CID like any other file
+    let hidden = $table | where filepath == ".hidden"
+    assert equal ($hidden | length) 1
+    assert ($hidden.0.content_cid | str starts-with "Qm") $"hidden file has no CID: ($hidden.0.content_cid)"
 
     # root-cid regenerates the manifest and returns the "." CID matching it
     let cid = tree-hashes root-cid --repo $repo

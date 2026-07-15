@@ -114,7 +114,13 @@ def build-tree [
         # Why complete: on failure (notably `ipfs` repo-lock contention when
         # another add runs concurrently) stdout is empty and the root-row lookup
         # below would crash with a cryptic index error. Surface the ipfs stderr.
-        let add = ^ipfs add --recursive ...$publish_flags ...$IPFS_CID_FLAGS $tmp | complete
+        # Why --hidden: ipfs add skips dotfiles by default, silently dropping
+        # tracked dotfiles (.gitignore) from the add — and thus from the dir and
+        # root CIDs the seal signs. Safe here: the staging dir holds only
+        # tracked files, so there is no .git/ or ignored noise to pick up.
+        # Not in IPFS_CID_FLAGS because: that const is the hashing parameters
+        # shared with cid-v0.nu; --hidden is a traversal flag.
+        let add = ^ipfs add --recursive --hidden ...$publish_flags ...$IPFS_CID_FLAGS $tmp | complete
         rm --recursive --force $tmp
         if $add.exit_code != 0 {
             error make {msg: $"ipfs add failed: ($add.stderr | str trim)"}
@@ -163,8 +169,7 @@ def build-tree [
 
     # Join lookup tables into final CSV structure. In --ipfs mode CIDs (files and
     # dirs — A3) come from the add pass's table; default mode uses the per-file
-    # CID computed during the single read (dirs stay empty). get --optional guards
-    # a missing entry — shows empty, not a cryptic crash.
+    # CID computed during the single read (dirs stay empty).
     let rows = $entries
         | each {|e|
             {
@@ -173,7 +178,15 @@ def build-tree [
                 content_git: ($git_hashes | get --optional $e.rel | default "")
                 content_cid: (
                     if $ipfs {
-                        $content_cid_table | get --optional $e.rel | default ""
+                        # Why an error, not `default ""`: every staged path must
+                        # come back from the add pass — a miss means the add
+                        # disagrees with the manifest file set. The silent empty
+                        # fallback is what hid ipfs add skipping dotfiles.
+                        let cid = $content_cid_table | get --optional $e.rel
+                        if $cid == null {
+                            error make {msg: $"ipfs add returned no CID for staged path ($e.rel)"}
+                        }
+                        $cid
                     } else {
                         $e | get --optional content_cid | default ""
                     }
