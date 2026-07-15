@@ -36,7 +36,17 @@ export def main [
 ] {
     let root = repo-root $repo
     let manifest_path = manifest-path $root
+    let root_statement_path = merkle-root-path $root
     let ots_dir = ots-dir $root
+
+    # Fingerprint the signed artifacts before regen: a sig covers exact bytes,
+    # so it only goes stale when the bytes actually change. This is what lets
+    # --no-sign mean "skip signing" instead of "remove still-valid signatures"
+    # on an unchanged reseal (see the clearing step below).
+    let sign_targets = [$manifest_path $root_statement_path]
+    let pre_hashes = $sign_targets | each {|f|
+        if ($f | path exists) { open --raw $f | hash sha256 } else { "" }
+    }
 
     # 1. Upgrade pending OTS — every seal progresses previous seals automatically,
     #    so there's no need for a separate upgrade command
@@ -73,16 +83,19 @@ export def main [
     # 32-byte commitment instead of keeping the whole CSV (see merkle.nu).
     # Immediately after regen, so no window where the statement describes a
     # previous manifest.
-    let root_statement_path = merkle-root-path $root
     let merkle_result = merkle root --repo $root
     print $"Merkle root: ($merkle_result.root)"
     $result = ($result | insert merkle_root $merkle_result.root)
 
-    # Why: a sig from a previous seal signs the now-regenerated (stale) manifest
-    # and root statement. Clear both before step 3 signs fresh. Uses the shared
-    # discovery so the bare `.sig` form is cleared too, not just `.<signer>.sig`.
-    [$manifest_path $root_statement_path] | each {|file|
-        sig-files-for $file | each {|sig| rm $sig }
+    # Why: a sig from a previous seal signs the previous bytes — stale exactly
+    # when regen changed them. Clear those before step 3 signs fresh; sigs
+    # over unchanged bytes are still valid and survive (so --no-sign doesn't
+    # behave as "remove signatures"). Uses the shared discovery so the bare
+    # `.sig` form is cleared too, not just `.<signer>.sig`.
+    $sign_targets | zip $pre_hashes | each {|pair|
+        if (open --raw $pair.0 | hash sha256) != $pair.1 {
+            sig-files-for $pair.0 | each {|sig| rm $sig }
+        }
     }
 
     # 3. Sign. Transition: both artifacts — the CSV for whole-file consumers,
