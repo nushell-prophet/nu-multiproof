@@ -8,6 +8,7 @@ use ../nu-multiproof/_merkle-helpers.nu [
     mth audit-path fold-path leaf-hash load-leaves
     root-statement parse-root-statement validate-leaf
 ]
+use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots]
 
 # Leaf inputs from the RFC 6962 / Certificate Transparency test suite,
 # hashed per spec: sha256(0x00 ++ input).
@@ -233,6 +234,35 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
     let tampered = merkle verify $tampered_file --repo $repo
     assert not $tampered.structure_valid
     assert not $tampered.valid
+
+    rm --recursive $tmp_dir
+}
+
+@test
+def "ots status: discovery by content commitment, pending and anchored pinned" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = make-test-repo $tmp_dir
+    merkle root --repo $repo
+    let proof = merkle prove README.md --repo $repo
+
+    # Discovery keys on the stamp's content commitment: its hash must equal
+    # sha256(tree-root.txt). Without these branches pinned, a silently broken
+    # discovery (always "absent") would keep the suite green.
+    let root_hash = open --raw $"($repo)/multiproofs/tree-root.txt" | hash sha256 | decode hex
+    let bundle = $"($repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
+    mkdir $bundle
+
+    # A stamp committing to a different hash is archival — stays absent
+    build-pending-ots | save --raw --force $"($bundle)/tree-root.ots"
+    assert equal (merkle verify $proof --repo $repo).ots.status "absent"
+
+    build-pending-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.ots"
+    let pending = merkle verify $proof --repo $repo
+    assert equal $pending.ots.status "pending"
+    assert equal $pending.ots.ots $"($bundle)/tree-root.ots"
+
+    build-bitcoin-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.ots"
+    assert equal (merkle verify $proof --repo $repo).ots.status "anchored"
 
     rm --recursive $tmp_dir
 }

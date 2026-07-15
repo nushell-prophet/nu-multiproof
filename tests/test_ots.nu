@@ -3,46 +3,7 @@ use std/testing *
 
 use ../nu-multiproof/ots.nu
 use ../nu-multiproof/_ots-helpers.nu [copy-path-for check-block-header bits-to-target]
-
-# --- Embedded test vectors ---
-
-const HEADER = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
-const ZERO_HASH = 0x[0000000000000000000000000000000000000000000000000000000000000000]
-const ATT_PENDING_TAG = 0x[83dfe30d2ef90c8e]
-const ATT_BITCOIN_TAG = 0x[0588960d73d71901]
-
-def build-pending-ots [--with-ops] {
-    let url_bytes = "https://a.pool.opentimestamps.org" | into binary
-    mut ots = ($HEADER | bytes add --end 0x[01 08] | bytes add --end $ZERO_HASH)
-    if $with_ops {
-        $ots = (
-            $ots
-            | bytes add --end 0x[f0 04 deadbeef]
-            | bytes add --end 0x[08]
-        )
-    }
-    let url_len = $url_bytes | bytes length
-    let inner_len = ($url_len | into binary | bytes at 0..0)
-    let outer_len = ($url_len + 1 | into binary | bytes at 0..0)
-    $ots
-    | bytes add --end 0x[00]
-    | bytes add --end $ATT_PENDING_TAG
-    | bytes add --end $outer_len
-    | bytes add --end $inner_len
-    | bytes add --end $url_bytes
-}
-
-def build-bitcoin-ots [] {
-    # Block height 123456 as LEB128 = 0xC0C407 (3 bytes)
-    $HEADER
-    | bytes add --end 0x[01 08]
-    | bytes add --end $ZERO_HASH
-    | bytes add --end 0x[f1 02 aabb]
-    | bytes add --end 0x[08]
-    | bytes add --end 0x[00]
-    | bytes add --end $ATT_BITCOIN_TAG
-    | bytes add --end 0x[03 C0C407]
-}
+use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG]
 
 # --- parse-ots / info tests ---
 
@@ -88,7 +49,7 @@ def "bad header rejected" [] {
 @test
 def "fork produces error" [] {
     let forked = (
-        $HEADER
+        $OTS_HEADER
         | bytes add --end 0x[01 08]
         | bytes add --end $ZERO_HASH
         | bytes add --end 0x[ff]

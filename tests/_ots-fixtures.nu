@@ -1,0 +1,44 @@
+# Synthetic OTS proof builders shared by test suites — offline, no calendar.
+# Byte layout mirrors ots.nu parse-ots: header magic, version 1, sha256 op,
+# 32-byte file hash, ops, attestation. The `_` name keeps nutest from picking
+# this up as a suite (discovery matches test_*.nu); import names explicitly.
+
+export const OTS_HEADER = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
+export const ZERO_HASH = 0x[0000000000000000000000000000000000000000000000000000000000000000]
+export const ATT_PENDING_TAG = 0x[83dfe30d2ef90c8e]
+export const ATT_BITCOIN_TAG = 0x[0588960d73d71901]
+
+# Pending attestation over --hash, pointing at the public calendar URL.
+export def build-pending-ots [--hash: binary = $ZERO_HASH --with-ops] {
+    let url_bytes = "https://a.pool.opentimestamps.org" | into binary
+    mut ots = ($OTS_HEADER | bytes add --end 0x[01 08] | bytes add --end $hash)
+    if $with_ops {
+        $ots = (
+            $ots
+            | bytes add --end 0x[f0 04 deadbeef]
+            | bytes add --end 0x[08]
+        )
+    }
+    let url_len = $url_bytes | bytes length
+    let inner_len = ($url_len | into binary | bytes at 0..0)
+    let outer_len = ($url_len + 1 | into binary | bytes at 0..0)
+    $ots
+    | bytes add --end 0x[00]
+    | bytes add --end $ATT_PENDING_TAG
+    | bytes add --end $outer_len
+    | bytes add --end $inner_len
+    | bytes add --end $url_bytes
+}
+
+# Bitcoin attestation over --hash at block height 123456.
+export def build-bitcoin-ots [--hash: binary = $ZERO_HASH] {
+    # Block height 123456 as LEB128 = 0xC0C407 (3 bytes)
+    $OTS_HEADER
+    | bytes add --end 0x[01 08]
+    | bytes add --end $hash
+    | bytes add --end 0x[f1 02 aabb]
+    | bytes add --end 0x[08]
+    | bytes add --end 0x[00]
+    | bytes add --end $ATT_BITCOIN_TAG
+    | bytes add --end 0x[03 C0C407]
+}
