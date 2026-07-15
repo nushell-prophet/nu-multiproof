@@ -111,7 +111,11 @@ def "duplicate filepaths are a hard error - equivocation guard" [] {
     let row = {filepath: "a.txt" content_sha256: ("one" | hash sha256) content_git: "" content_cid: ""}
     [$row $row] | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
-    assert error {|| merkle root --repo $tmp_dir }
+    # Not bare `assert error` because: it stays green on ANY error (e.g.
+    # manifest-not-found) — pin the equivocation message
+    let err = try { merkle root --repo $tmp_dir; null } catch {|e| $e.msg }
+    assert ($err != null) "duplicate filepaths were accepted"
+    assert ($err | str contains "duplicate filepaths")
 
     rm --recursive $tmp_dir
 }
@@ -126,7 +130,10 @@ def "newline in filepath is rejected - leaf forgery guard" [] {
     [{filepath: $evil content_sha256: ("one" | hash sha256) content_git: "" content_cid: ""}]
         | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
-    assert error {|| merkle root --repo $tmp_dir }
+    # Pin the validate-leaf message so an unrelated error can't keep this green
+    let err = try { merkle root --repo $tmp_dir; null } catch {|e| $e.msg }
+    assert ($err != null) "forged filepath was accepted"
+    assert ($err | str contains "control bytes")
 
     rm --recursive $tmp_dir
 }
