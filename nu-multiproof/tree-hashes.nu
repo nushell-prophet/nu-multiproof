@@ -40,6 +40,20 @@ def build-tree [
         | sort
     )
 
+    # Why reject control bytes here, not only in merkle validate-leaf: git
+    # allows tab/ESC/\n in filenames. Such a name would pass manifest
+    # generation but fail later at `merkle root` — which seal runs AFTER
+    # regenerating the CSV, leaving a fresh manifest beside the previous
+    # seal's still-valid signed root; rebuild-and-compare consumers read that
+    # as tampering. Fail before writing anything (merkle's check stays as the
+    # verifier-side guard for untrusted manifests). Consequence accepted: the
+    # repo is unsealable until the file is renamed — per the spec's
+    # "reject, never normalize".
+    let control_byte_paths = $tracked_files | where { $in =~ '[\x00-\x1f]' }
+    if ($control_byte_paths | is-not-empty) {
+        error make {msg: $"git-tracked filenames contain control bytes \(< 0x20\), which merkle leaves reject — rename: ($control_byte_paths | to json)"}
+    }
+
     # Synthesize directory entries from file paths (ls-files returns only files).
     let dir_entries = (
         $tracked_files

@@ -145,6 +145,24 @@ def "non-ascii filenames come through raw, not C-quoted" [] {
 }
 
 @test
+def "control-byte filename is rejected at generation, before any write" [] {
+    let tmp_dir = (^mktemp -d | str trim)
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+    # git allows tab in a tracked filename; sealing must fail at tree-hashes
+    # (before the CSV regen), not later at merkle root
+    "x\n" | save --force ($repo | path join $"a(char tab)b.txt")
+    ^git -C $repo add . o+e>| ignore
+
+    let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
+    assert ($err != null) "control-byte filename was accepted"
+    assert ($err | str contains "control bytes")
+
+    rm --recursive $tmp_dir
+}
+
+@test
 def "directory content_git matches working-tree blob hashes of its files" [] {
     let result = tree-hashes --echo
     let dirs = $result | where content_sha256 == "" and filepath != "."
