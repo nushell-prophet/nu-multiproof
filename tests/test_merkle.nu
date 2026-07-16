@@ -190,7 +190,7 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
 
     # File row: content on disk matches the proven sha256
     let proof = merkle prove README.md --repo $repo
-    assert equal $proof $"($repo)/multiproofs/inclusion-proofs/README.md.multiproof.nuon"
+    assert equal $proof $"($repo)/multiproofs/inclusion-proofs/README.md.multiproof.json"
     let result = merkle verify $proof --repo $repo
     assert $result.valid
     assert $result.structure_valid
@@ -236,10 +236,10 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
 
     # Tampered leaf (well-formed hex, wrong value): fold no longer reaches
     # the signed root
-    let tampered_file = $"($tmp_dir)/tampered.nuon"
+    let tampered_file = $"($tmp_dir)/tampered.json"
     open $proof
         | update leaf.content_sha256 ("tampered" | hash sha256)
-        | to nuon | save --force $tampered_file
+        | to json | save --force $tampered_file
     let tampered = merkle verify $tampered_file --repo $repo
     assert not $tampered.structure_valid
     assert not $tampered.valid

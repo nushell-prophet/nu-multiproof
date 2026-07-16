@@ -52,7 +52,7 @@ nu-multiproof merkle root
 # Extract a compact inclusion proof for one manifest row
 nu-multiproof merkle prove README.md
 # Verify it: fold to the signed root, check signatures, content, OTS status
-nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.nuon
+nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.json
 ```
 
 ## Prerequisites
@@ -96,7 +96,7 @@ bundle/
 ```
 
 ```nushell no-run
-nu-multiproof merkle verify bundle/proof.multiproof.nuon --repo bundle/
+nu-multiproof merkle verify bundle/proof.multiproof.json --repo bundle/
 ```
 
 This is a supported contract, pinned by a test — not an accident of path handling: an explicit `--repo` is taken as-is (no git required), and every lookup is layout-relative to it. One caveat: `seal`'s opportunistic OTS upgrade only walks the target repo's own `multiproofs/ots-timestamps/`, so a bundle's `pending` stamp stays pending until you run `ots upgrade` on it yourself.

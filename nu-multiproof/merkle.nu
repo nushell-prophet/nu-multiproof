@@ -36,7 +36,7 @@ export def root [
 export def prove [
     filepath: string # Manifest row to prove (as listed in tree-hashes.csv)
     --repo: path # Target git repo root (default: git root of current directory)
-    --out: path # Proof destination (default: multiproofs/inclusion-proofs/<filepath>.multiproof.nuon)
+    --out: path # Proof destination (default: multiproofs/inclusion-proofs/<filepath>.multiproof.json)
 ]: nothing -> path {
     let target = repo-root $repo
     let leaves = load-leaves (manifest-path $target)
@@ -58,10 +58,10 @@ export def prove [
     # Default under multiproofs/ (excluded from the manifest), never next to
     # the source file — that would pollute the worktree and the next manifest.
     let out = if $out != null { $out } else {
-        inclusion-proofs-dir $target | path join $"($filepath).multiproof.nuon"
+        inclusion-proofs-dir $target | path join $"($filepath).multiproof.json"
     }
     mkdir ($out | path dirname)
-    $proof | to nuon --indent 2 | save --raw --force $out
+    $proof | to json --indent 2 | save --raw --force $out
     print $"Proof: ($out)"
     $out
 }
@@ -82,14 +82,14 @@ export def prove [
 #                      `ots verify` for the independent Bitcoin block check.
 # A proof whose embedded root differs from the signed root is a proof for a
 # DIFFERENT seal — that throws loudly instead of reporting invalid.
-@example "verify a proof, failing on invalid (for CI)" { merkle verify proof.nuon --fail }
+@example "verify a proof, failing on invalid (for CI)" { merkle verify proof.json --fail }
 export def verify [
     proof_file: path
     --repo: path # Target git repo root (default: git root of current directory)
     --fail # Exit non-zero when the result is not valid (for CI)
 ]: nothing -> record {
     let target = repo-root $repo
-    let proof = open --raw $proof_file | from nuon
+    let proof = open --raw $proof_file | from json
     let schema = $proof | get --optional schema | default "missing"
     if $schema != $MERKLE_SCHEMA {
         error make {msg: $"unsupported proof schema: ($schema) — expected ($MERKLE_SCHEMA)"}
