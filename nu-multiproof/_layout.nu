@@ -8,6 +8,9 @@ export const OTS_DIR = "ots-timestamps"
 export const MANIFEST_FILE = "tree-hashes.csv"
 # Not tree-hashes.root because: ots stamp keys bundle dirs by file stem, so a
 # root file sharing the CSV's stem would collide with the manifest's bundles.
+# Why .txt: the statement is one ASCII line meant for human eyes and exact-byte
+# signing — .txt renders as text everywhere; a structured format (.json/.nuon)
+# has no canonical byte form, and a custom extension is opaque for no gain.
 export const MERKLE_ROOT_FILE = "tree-root.txt"
 export const INCLUSION_PROOFS_DIR = "inclusion-proofs"
 
