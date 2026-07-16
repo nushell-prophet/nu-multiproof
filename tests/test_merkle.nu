@@ -246,6 +246,39 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
 }
 
 @test
+def "portable bundle: proof verifies offline in a non-git directory" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle root --repo $repo
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let proof = merkle prove README.md --repo $repo
+
+    # The consumer's full artifact set in the README bundle layout —
+    # deliberately NOT a git repo. This pins the contract that an explicit
+    # --repo needs no .git, only the relative layout (see repo-root).
+    let bundle = $"($tmp_dir)/bundle"
+    mkdir $"($bundle)/multiproofs/pubkeys"
+    cp $"($repo)/README.md" $"($bundle)/README.md"
+    cp $"($repo)/multiproofs/tree-root.txt" $"($bundle)/multiproofs/"
+    cp $"($repo)/multiproofs/tree-root.txt.sshkey.sig" $"($bundle)/multiproofs/"
+    cp $"($repo)/multiproofs/pubkeys/sshkey.pub" $"($bundle)/multiproofs/pubkeys/"
+    let root_hash = open --raw $"($repo)/multiproofs/tree-root.txt" | hash sha256 | decode hex
+    let ots_bundle = $"($bundle)/multiproofs/ots-timestamps/tree-root.cafe0000"
+    mkdir $ots_bundle
+    build-pending-ots --hash $root_hash | save --raw --force $"($ots_bundle)/tree-root.ots"
+
+    let result = merkle verify $proof --repo $bundle
+    assert $result.valid
+    assert equal $result.content_verified true
+    assert equal ($result.signatures | where valid | length) 1
+    assert equal $result.ots.status "pending"
+}
+
+@test
 def "ots status: discovery by content commitment, pending and anchored pinned" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir

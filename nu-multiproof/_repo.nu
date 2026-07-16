@@ -7,6 +7,10 @@
 # downstream on failure and blew up later with a confusing message.
 export def repo-root [repo?: path]: nothing -> path {
     if $repo != null {
+        # Why no git check on the explicit path: `merkle verify --repo` accepts
+        # a portable proof bundle — a plain directory mirroring the multiproofs/
+        # layout (README "Verifying without the origin repo"). Requiring .git
+        # here would break that offline-import path.
         return ($repo | path expand)
     }
     let result = ^git rev-parse --show-toplevel | complete

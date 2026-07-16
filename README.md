@@ -83,6 +83,24 @@ A consumer's full artifact set: the proof file (`merkle prove <filepath>`), `tre
 
 `merkle verify` folds the proof to the signed root, checks the SSH signatures over the root statement, re-hashes the on-disk file against the proven `content_sha256` when present, and reports the OTS anchor as a status (`absent`/`pending`/`anchored` — a fresh seal stays pending until Bitcoin confirms, hours or days). A proof whose embedded root differs from the signed root is for a different seal and fails loudly rather than reporting invalid.
 
+### Verifying without the origin repo
+
+The artifact set is portable. Lay it out in a plain directory — no git, no clone of the origin repo — mirroring the `multiproofs/` layout, and point `merkle verify` at it with `--repo`:
+
+```
+bundle/
+  README.md                                # the proven file, at the leaf's filepath
+  multiproofs/tree-root.txt                # + its .<signer>.sig alongside
+  multiproofs/pubkeys/<signer>.pub
+  multiproofs/ots-timestamps/tree-root.*/  # optional — without it OTS reports `absent`
+```
+
+```nushell no-run
+nu-multiproof merkle verify bundle/proof.multiproof.nuon --repo bundle/
+```
+
+This is a supported contract, pinned by a test — not an accident of path handling: an explicit `--repo` is taken as-is (no git required), and every lookup is layout-relative to it. One caveat: `seal`'s opportunistic OTS upgrade only walks the target repo's own `multiproofs/ots-timestamps/`, so a bundle's `pending` stamp stays pending until you run `ots upgrade` on it yourself.
+
 ### Tree specification
 
 Pinned exactly, so an independent implementation reproduces the root from the same CSV (reference: `nu-multiproof/_merkle-helpers.nu`, test vectors: `tests/test_merkle.nu`).
