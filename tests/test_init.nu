@@ -143,3 +143,25 @@ def "init refuses inline key:: material that is not a public key" [] {
     let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
     assert equal $copied 0
 }
+
+# The stored pubkey bytes are the identity downstream (nu-cybergraph hashes
+# the file), so every write path must land the canonical `<type> <base64>\n`
+# form — the comment ssh-keygen embeds must not survive into pubkeys/.
+@test
+def "init stores the registered pubkey in canonical form, comment dropped" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -C "alice@host" -q
+
+    init --repo $repo --pubkey $"($key_path).pub"
+
+    let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
+    assert equal ($names | length) 1
+    let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
+    let src = (open --raw $"($key_path).pub" | str trim | split row " ")
+    assert equal $saved $"($src.0) ($src.1)\n"
+}

@@ -4,5 +4,6 @@ export use ots.nu
 export use git-proof.nu
 export use merkle.nu
 export use ssh-sign.nu
+export use pubkey.nu
 export use init.nu
 export use seal.nu

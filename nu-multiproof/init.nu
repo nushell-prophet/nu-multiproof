@@ -2,13 +2,17 @@
 
 use _repo.nu repo-root
 use _layout.nu [multiproofs-dir pubkeys-dir]
+use pubkey.nu
 
 # Initialize multiproofs/ structure in a git repo.
-# Creates the directory, copies public keys from ssh-agent or a given path.
+# Creates the directory and registers the public key from a given path or git
+# config. Keys land in `pubkey canonical` form — `<type> <base64>\n`, comment
+# stripped — so their file bytes hash identically everywhere; the human label
+# survives in the file name (see pubkey.nu for the full rationale).
 @example "bootstrap multiproofs/ in the current repo" { init }
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
-    --pubkey: path # SSH public key file to copy (default: signing key from git config)
+    --pubkey: path # SSH public key file to register (default: signing key from git config)
 ] {
     let root = repo-root $repo
     let multiproofs = multiproofs-dir $root
@@ -23,7 +27,7 @@ export def main [
 
     mkdir $pubkeys_dir
 
-    # Resolve pubkey to copy
+    # Resolve pubkey to register
     let key_file = if $pubkey != null {
         resolve-pubkey-file $pubkey
     } else {
@@ -32,9 +36,9 @@ export def main [
         if $git_key.exit_code == 0 {
             let raw = $git_key.stdout | str trim
             if ($raw | str starts-with "key::") {
-                # Inline key — save it directly
+                # Inline key — canonicalize and save
                 let key_data = $raw | str replace "key::" ""
-                if not (looks-like-ssh-pubkey ($key_data | str trim)) {
+                let canon = try { $key_data | pubkey canonical } catch {
                     error make {msg: "user.signingKey inline `key::` value is not an SSH public key — pubkeys/ must hold public keys only"}
                 }
                 let name = resolve-key-name $key_data
@@ -42,7 +46,7 @@ export def main [
                 if ($dest | path exists) {
                     print $"pubkey already exists: ($dest | path relative-to $root)"
                 } else {
-                    $key_data | save --force $dest
+                    $canon | save --force $dest
                     print $"Saved signing key as ($dest | path relative-to $root)"
                 }
                 return
@@ -72,17 +76,16 @@ export def main [
     if ($dest | path exists) {
         print $"pubkey already exists: ($dest | path relative-to $root)"
     } else {
-        cp $key_file $dest
-        print $"Copied ($key_file | path basename) → ($dest | path relative-to $root)"
+        # Not cp because: the stored bytes are the identity downstream — they
+        # must be canonical regardless of how the source file was written.
+        open --raw $key_file | pubkey canonical | save --force $dest
+        print $"Registered ($key_file | path basename) → ($dest | path relative-to $root)"
     }
 }
 
-# The one shape check behind init's rule that nothing but a public key lands in
-# pubkeys/. Every branch that writes there goes through here — the file-path
-# branch via resolve-pubkey-file, the inline `key::` branch directly.
-def looks-like-ssh-pubkey [line: string]: nothing -> bool {
-    ["ssh-" "sk-" "ecdsa-"] | any {|prefix| $line | str starts-with $prefix }
-}
+# The one shape check behind init's rule that nothing but a public key lands
+# in pubkeys/ is `pubkey canonical` — every branch that writes there runs it,
+# so a private key (multi-line, no pubkey type prefix) can never land.
 
 # Resolve an SSH key path to its public-key file.
 # Why: --pubkey and the user.signingKey file-path branch must never copy a
@@ -98,7 +101,7 @@ def resolve-pubkey-file [key_path: path]: nothing -> path {
         error make {msg: $"pubkey file not found: ($key_path)"}
     }
     let first_line = (open --raw $expanded | lines | first | default "")
-    if (looks-like-ssh-pubkey $first_line) {
+    if (try { $first_line | pubkey canonical } | is-not-empty) {
         $expanded
     } else {
         error make {msg: $"($key_path) does not look like an SSH public key — point at the .pub file"}
