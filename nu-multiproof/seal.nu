@@ -17,7 +17,7 @@ use _key-helpers.nu resolve-signing-key
 #      row together, so the manifest is written once, complete (--no-root-cid
 #      uses the pure-nu path with no root row). Then derive the merkle root
 #      statement (multiproofs/tree-root.txt) from the fresh manifest
-#   3. ssh-sign — sign the manifest and the root statement (--no-sign to skip)
+#   3. ssh-sign — sign the root statement (--no-sign to skip)
 #   4. ots stamp — timestamp both (--no-stamp to skip)
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
@@ -39,11 +39,11 @@ export def main [
     let root_statement_path = merkle-root-path $root
     let ots_dir = ots-dir $root
 
-    # Fingerprint the signed artifacts before regen: a sig covers exact bytes,
+    # Fingerprint the signed artifact before regen: a sig covers exact bytes,
     # so it only goes stale when the bytes actually change. This is what lets
     # --no-sign mean "skip signing" instead of "remove still-valid signatures"
     # on an unchanged reseal (see the clearing step below).
-    let sign_targets = [$manifest_path $root_statement_path]
+    let sign_targets = [$root_statement_path]
     let pre_hashes = $sign_targets | each {|f|
         if ($f | path exists) { open --raw $f | hash sha256 } else { "" }
     }
@@ -98,19 +98,23 @@ export def main [
         }
     }
 
-    # 3. Sign. Transition: both artifacts — the CSV for whole-file consumers,
-    # the root statement for compact inclusion-proof consumers. The root is
-    # derived from every row, so it already authenticates the full CSV data
-    # indirectly (rebuild the tree, compare roots); the CSV sig exists only
-    # for legacy whole-file verification and can be dropped after the
-    # transition.
+    # Legacy cleanup: the CSV itself is no longer signed (the root statement
+    # covers every row — see step 3), so a live manifest sig can only be a
+    # leftover from the transition era. Delete it rather than leave a stale
+    # artifact; frozen copies inside OTS bundle dirs stay — they're archival.
+    # Tag pre-drop-manifest-sig marks the last version that produced them.
+    sig-files-for $manifest_path | each {|sig| rm $sig }
+
+    # 3. Sign the root statement — the one signed artifact. The root is
+    # derived from every manifest row (the "." root-CID row included), so it
+    # authenticates the full CSV indirectly: rebuild the tree, compare roots.
+    # The transitional whole-CSV signature was dropped as unneeded legacy.
     if not $no_sign {
         let signing_key = if $key != null { $key | into string } else { resolve-signing-key --root $root }
         # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
         # git root, but seal may target a different repo via --repo.
-        let sig = ssh-sign sign $manifest_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
         let root_sig = ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
-        $result = ($result | insert sig $sig | insert root_sig $root_sig)
+        $result = ($result | insert root_sig $root_sig)
     }
 
     # 4. OTS timestamp — anchors the manifest (with root CID) and the root

@@ -77,7 +77,7 @@ use toolkit.nu *; main test
 
 `multiproofs/tree-hashes.csv` is a flat signed manifest: proving one file's inclusion with its signature means keeping the entire CSV. The merkle layer fixes that. The CSV stays the authoritative catalogue, but `seal` also derives a binary merkle tree over its rows and signs/stamps only the one-line root statement (`multiproofs/tree-root.txt`). A consumer then holds one row plus ~log2(n) sibling hashes — for a million files, ~20 hashes instead of a million rows. (The existing git merkle proofs don't cover this: git trees branch wide, so each proof level lists every sibling in the directory — it grows with directory width and leaks the neighbors' filenames.)
 
-The root also authenticates the whole catalogue, indirectly: it is computed from every row, so anyone holding the full CSV can rebuild the tree and must land on the signed root — alter one row and the roots diverge. That is why the separate whole-CSV signature becomes redundant and can be dropped once the transition ends. One deliberate boundary: the root commits to the parsed row data, not the CSV's exact bytes (column order, quoting style) — leaf serialization uses parsed field values because CSV quoting is not canonical.
+The root also authenticates the whole catalogue, indirectly: it is computed from every row, so anyone holding the full CSV can rebuild the tree and must land on the signed root — alter one row and the roots diverge. That is why the CSV itself carries no signature: earlier versions signed it too during a transition, and that legacy signature was dropped — git tag `pre-drop-manifest-sig` marks the last version that produced it, and `seal` now deletes any leftover live manifest sig it finds. One deliberate boundary: the root commits to the parsed row data, not the CSV's exact bytes (column order, quoting style) — leaf serialization uses parsed field values because CSV quoting is not canonical.
 
 A consumer's full artifact set: the proof file (`merkle prove <filepath>`), `tree-root.txt`, a `.sig` over it, the signer's pubkey from `multiproofs/pubkeys/`, and — for the time anchor — the `tree-root.*` OTS bundle.
 
@@ -131,7 +131,7 @@ An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is 
 - `<stem>.ots` — Bitcoin-anchored timestamp over the snapshot's hash
 - `<stem>.<ext>.<signer>.sig` (when signing is on) — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig)
 
-`seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and its live sig — the previous bundle remains intact because the sig was already copied in.
+`seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. Archival `tree-hashes.*` bundles may carry a transition-era CSV sig; new ones don't, since the CSV is no longer signed.
 
 Verify the git proof:
 
