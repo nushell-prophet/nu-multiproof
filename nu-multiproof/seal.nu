@@ -18,7 +18,7 @@ use _key-helpers.nu resolve-signing-key
 #      uses the pure-nu path with no root row). Then derive the merkle root
 #      statement (multiproofs/tree-root.txt) from the fresh manifest
 #   3. ssh-sign — sign the root statement (--no-sign to skip)
-#   4. ots stamp — timestamp both (--no-stamp to skip)
+#   4. ots stamp — timestamp the root statement (--no-stamp to skip)
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
 # context (message, scope, timing). Also avoids circularity: git-proof proves
@@ -117,17 +117,17 @@ export def main [
         $result = ($result | insert root_sig $root_sig)
     }
 
-    # 4. OTS timestamp — anchors the manifest (with root CID) and the root
-    # statement to Bitcoin. Distinct bundle dirs: stamp keys bundles by file
-    # stem, and tree-root.txt was named to not collide with tree-hashes.csv.
+    # 4. OTS timestamp — anchors the root statement to Bitcoin. The manifest
+    # is not stamped: the root is derived from every row, so its anchor
+    # time-bounds the full CSV — the same argument that dropped the whole-CSV
+    # signature. Archival tree-hashes.* bundles from the stamping era stay.
     # Why pass out-dir explicitly: ots stamp defaults it to the CWD's git root,
     # but seal may target a different repo via --repo (same fix as pubkeys-dir
     # in step 3). Without it, `seal --repo /other` writes the bundle into the
     # CWD's repo, or fails when CWD is not a repo.
     if not $no_stamp {
-        let stamp_result = ots stamp $manifest_path --out-dir $ots_dir
         let root_stamp = ots stamp $root_statement_path --out-dir $ots_dir
-        $result = ($result | insert ots $stamp_result.ots | insert root_ots $root_stamp.ots)
+        $result = ($result | insert root_ots $root_stamp.ots)
     }
 
     $result

@@ -34,13 +34,13 @@ nu-multiproof git-proof verify proof/
 nu-multiproof git-proof render-allowed-signers allowed_signers
 
 # Timestamp a file via OpenTimestamps
-nu-multiproof ots stamp multiproofs/tree-hashes.csv
+nu-multiproof ots stamp multiproofs/tree-root.txt
 # Upgrade pending attestation to Bitcoin (hours/days later)
-nu-multiproof ots upgrade multiproofs/ots-timestamps/tree-hashes.ABCD1234/tree-hashes.ots
+nu-multiproof ots upgrade multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
 # Inspect a timestamp
-nu-multiproof ots info tree-hashes.ots
+nu-multiproof ots info tree-root.ots
 # Independently verify the Bitcoin anchor against real block headers
-nu-multiproof ots verify multiproofs/ots-timestamps/tree-hashes.ABCD1234/tree-hashes.ots
+nu-multiproof ots verify multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
 
 # Sign a file with your SSH key
 nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ~/.ssh/id_ed25519
@@ -127,11 +127,11 @@ These are archival artifacts. Ongoing operational timestamps live in [`multiproo
 
 An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is self-contained provenance: every file needed to assert *"signer X endorsed content C at time T, anchored to Bitcoin block B"* lives in the directory, with no reference to anything outside it.
 
-- `<stem>.<ext>` — frozen content snapshot (the manifest at stamp time)
+- `<stem>.<ext>` — frozen content snapshot (the stamped file's bytes at stamp time)
 - `<stem>.ots` — Bitcoin-anchored timestamp over the snapshot's hash
 - `<stem>.<ext>.<signer>.sig` (when signing is on) — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig)
 
-`seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. Archival `tree-hashes.*` bundles may carry a transition-era CSV sig; new ones don't, since the CSV is no longer signed.
+`seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. New seals produce only `tree-root.*` bundles: the manifest is neither signed nor stamped anymore, since the root statement is derived from every manifest row, so its signature and Bitcoin anchor cover the full CSV. Archival `tree-hashes.*` bundles (including `origin-proofs/`) stay valid as-is; the transition-era ones may also carry a CSV sig.
 
 Verify the git proof:
 
