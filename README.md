@@ -43,9 +43,9 @@ nu-multiproof ots info tree-hashes.ots
 nu-multiproof ots verify multiproofs/ots-timestamps/tree-hashes.ABCD1234/tree-hashes.ots
 
 # Sign a file with your SSH key
-nu-multiproof ssh-sign sign tree-hashes.csv --key ~/.ssh/id_ed25519
+nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ~/.ssh/id_ed25519
 # Verify signatures against bundled public keys
-nu-multiproof ssh-sign verify tree-hashes.csv
+nu-multiproof ssh-sign verify multiproofs/tree-root.txt
 
 # Derive the merkle root over the manifest (seal does this automatically)
 nu-multiproof merkle root
@@ -75,7 +75,7 @@ use toolkit.nu *; main test
 
 ## Merkle inclusion proofs
 
-`multiproofs/tree-hashes.csv` is a flat signed manifest: proving one file's inclusion with its signature means keeping the entire CSV. The merkle layer fixes that. The CSV stays the authoritative catalogue, but `seal` also derives a binary merkle tree over its rows and signs/stamps only the one-line root statement (`multiproofs/tree-root.txt`). A consumer then holds one row plus ~log2(n) sibling hashes — for a million files, ~20 hashes instead of a million rows. (The existing git merkle proofs don't cover this: git trees branch wide, so each proof level lists every sibling in the directory — it grows with directory width and leaks the neighbors' filenames.)
+`multiproofs/tree-hashes.csv` is a flat manifest: signing it whole would mean that proving one file's inclusion requires keeping the entire CSV. The merkle layer fixes that. The CSV stays the authoritative catalogue, but `seal` also derives a binary merkle tree over its rows and signs/stamps only the one-line root statement (`multiproofs/tree-root.txt`). A consumer then holds one row plus ~log2(n) sibling hashes — for a million files, ~20 hashes instead of a million rows. (The existing git merkle proofs don't cover this: git trees branch wide, so each proof level lists every sibling in the directory — it grows with directory width and leaks the neighbors' filenames.)
 
 The root also authenticates the whole catalogue, indirectly: it is computed from every row, so anyone holding the full CSV can rebuild the tree and must land on the signed root — alter one row and the roots diverge. That is why the CSV itself carries no signature: earlier versions signed it too during a transition, and that legacy signature was dropped — git tag `pre-drop-manifest-sig` marks the last version that produced it, and `seal` now deletes any leftover live manifest sig it finds. One deliberate boundary: the root commits to the parsed row data, not the CSV's exact bytes (column order, quoting style) — leaf serialization uses parsed field values because CSV quoting is not canonical.
 

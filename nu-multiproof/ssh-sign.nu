@@ -41,7 +41,7 @@ def lookup-signer-name [key: path pubkeys_dir: path]: nothing -> string {
 
 # Sign a file with an SSH key.
 # Creates {path}.{name}.sig alongside the input file.
-@example "sign the manifest with the git signing key" { ssh-sign sign multiproofs/tree-hashes.csv }
+@example "sign the root statement with the git signing key" { ssh-sign sign multiproofs/tree-root.txt }
 export def sign [
     path: path # File to sign
     --key: path # SSH private key (default: from git config user.signingKey)
@@ -78,7 +78,7 @@ export def sign [
 # naming the original verifies every {path}.*.sig found beside it.
 # Returns a table of {signer, valid, error?}. --fail exits non-zero if any
 # signature is invalid (for CI), instead of a silent pass the caller must inspect.
-@example "verify all signatures on the manifest" { ssh-sign verify multiproofs/tree-hashes.csv }
+@example "verify all signatures on the root statement" { ssh-sign verify multiproofs/tree-root.txt }
 export def verify [
     path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
     --sig: path # Specific signature file (default: all .sig files)
