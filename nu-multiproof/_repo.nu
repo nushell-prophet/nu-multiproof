@@ -10,8 +10,13 @@ export def repo-root [repo?: path]: nothing -> path {
         # Why no git check on the explicit path: `merkle verify --repo` accepts
         # a portable proof bundle — a plain directory mirroring the multiproofs/
         # layout (README "Verifying without the origin repo"). Requiring .git
-        # here would break that offline-import path.
-        return ($repo | path expand)
+        # here would break that offline-import path. Existence IS checked:
+        # unchecked, a typo surfaces later as a confusing downstream error.
+        let expanded = $repo | path expand
+        if not ($expanded | path exists) {
+            error make {msg: $"repo path does not exist: ($expanded)"}
+        }
+        return $expanded
     }
     let result = ^git rev-parse --show-toplevel | complete
     if $result.exit_code != 0 {
