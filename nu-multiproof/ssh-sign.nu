@@ -66,6 +66,19 @@ export def sign [
         error make {msg: $"signature file not created: ($default_sig)"}
     }
 
+    # Why: Apple's ssh-keychain.dylib fail-opens — on a cancelled Touch ID
+    # prompt (or a wedged Secure Enclave stack) it reports success and
+    # ssh-keygen writes a sig whose ECDSA r/s are empty. A .sig file existing
+    # proves nothing; only a verify does. Delete the bad artifact so it can't
+    # be committed as if it were a signature.
+    let check = (do {
+        open --raw $path | ^ssh-keygen -Y check-novalidate -n $namespace -s $default_sig
+    } | complete)
+    if $check.exit_code != 0 {
+        rm $default_sig
+        error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony. Re-run and complete the prompt."}
+    }
+
     let sig_path = $"($path).($signer_name).sig"
     mv $default_sig $sig_path
 
