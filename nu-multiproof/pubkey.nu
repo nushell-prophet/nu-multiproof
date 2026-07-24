@@ -4,7 +4,12 @@
 # bytes* — hash the file, compare, no SSH parsing in the trust path. For that
 # hash to be stable the bytes must have exactly one encoding, so the parsing
 # happens once, at the write/import boundary: `init` stores keys in canonical
-# form, and bundle verifiers reject files that are not.
+# form.
+#
+# Only that boundary enforces it. No verifier re-checks the form of a pubkey it
+# reads, so a key that reached pubkeys/ by any other route (hand-edited,
+# unpacked from a bundle) keeps whatever bytes it has, and its CID identity
+# differs from the same key stored through `init`.
 #
 # Canonical form: `<type> <base64>` plus a trailing newline — no comment, no
 # extra whitespace. Why the comment goes: it is mutable metadata (`user@host`

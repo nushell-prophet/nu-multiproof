@@ -237,8 +237,10 @@ def build-tree [
 # One `ipfs add -r` pass over the staged worktree yields per-file, per-dir and
 # the root "." CID together (build-tree does this in --ipfs mode), so the
 # manifest is written once, complete — no reopen-and-rewrite and no
-# stale-signature guard (B2). The root CID lands in the manifest as the "." row;
-# signing the CSV implicitly covers it. Not a separate file/git tag/provenance
+# stale-signature guard (B2). The root CID lands in the manifest as the "." row,
+# so it becomes a merkle leaf like any other row and the signed root statement
+# covers it — the whole-CSV signature that used to cover it was dropped in
+# 6bcfa24. Not a separate file/git tag/provenance
 # bundle because: the "." row collapses the root CID into the existing manifest
 # — no new artifact to track. tree-hashes.csv is excluded from its own manifest
 # (build-tree filters multiproofs/ out), so the root CID covers all listed files

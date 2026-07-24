@@ -114,6 +114,36 @@ def "golden root for the fixed mini-manifest, statement byte-exact" [] {
     assert equal (parse-root-statement $"($tmp_dir)/multiproofs/tree-root.txt") $GOLDEN_MINI_ROOT
 }
 
+# The IPFS root CID rides in the manifest as the "." row (tree-hashes.nu), and
+# nothing signs the CSV any more — so the only thing authenticating that CID is
+# its being a leaf under the signed root. Pinned by a hand-written manifest, not
+# by an --ipfs build: the point is what the leaf set covers, and the assertion
+# must not depend on an ipfs daemon.
+@test
+def "the root-CID row is a covered leaf" [] {
+    let tmp_dir = $in.tmp_dir
+    let cid = "QmNwvubv2KpTeugGN29uBnaZhZkDCwG4kMrx2vAEBk9nPo"
+    let other_cid = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+    let rows = [
+        {filepath: "." content_sha256: "" content_git: "" content_cid: $cid}
+        {filepath: "z.txt" content_sha256: ("one" | hash sha256) content_git: ("two" | hash sha256) content_cid: ""}
+    ]
+    mkdir $"($tmp_dir)/multiproofs"
+    $rows | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
+    let with_cid = merkle root --repo $tmp_dir
+
+    assert equal $with_cid.leaves 2
+    # "." is a provable row like any other
+    let proof = open (merkle prove "." --repo $tmp_dir)
+    assert equal $proof.leaf.content_cid $cid
+
+    # Swap only the root CID: a different root means the signature over the old
+    # root no longer covers this manifest.
+    $rows | update 0 {|r| $r | update content_cid $other_cid } | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
+    let swapped = merkle root --repo $tmp_dir
+    assert not ($swapped.root == $with_cid.root) "changing the root-CID row left the merkle root unchanged"
+}
+
 @test
 def "duplicate filepaths are a hard error - equivocation guard" [] {
     let tmp_dir = $in.tmp_dir
