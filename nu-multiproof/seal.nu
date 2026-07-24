@@ -99,10 +99,15 @@ export def main [
     }
 
     # Legacy cleanup: the CSV itself is no longer signed (the root statement
-    # covers every row — see step 3), so a live manifest sig can only be a
-    # leftover from the transition era. Delete it rather than leave a stale
-    # artifact; frozen copies inside OTS bundle dirs stay — they're archival.
-    # Tag pre-drop-manifest-sig marks the last version that produced them.
+    # covers every row — see step 3), so a live manifest sig is normally a
+    # leftover from the transition era. Tag pre-drop-manifest-sig marks the last
+    # version that produced them. Frozen copies inside OTS bundle dirs stay —
+    # they're archival.
+    #
+    # Blunt: `ssh-sign sign multiproofs/tree-hashes.csv` is still a public
+    # command, so this also deletes a manifest sig the user made deliberately,
+    # and says nothing. Kept because a stale CSV sig is the likelier case, but
+    # it is a wrong default, not a fact about where the sig came from.
     sig-files-for $manifest_path | each {|sig| rm $sig }
 
     # 3. Sign the root statement — the one signed artifact. The root is

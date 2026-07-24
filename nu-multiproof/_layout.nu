@@ -1,6 +1,12 @@
-# Filesystem layout of the multiproofs/ output tree. One source of truth for
-# every path the module reads or writes under a target repo root — so a layout
-# change is one edit here, not six files silently disagreeing.
+# Filesystem layout of the multiproofs/ output tree: the directories and the two
+# top-level artifact names, in one place, so a layout change is one edit here
+# rather than six files silently disagreeing.
+#
+# Not everything under multiproofs/ is here yet. The OTS bundle grammar
+# (<stem>.<HASH8>/<stem>.ots) is built inline in ots.nu and re-derived by glob in
+# merkle.nu and seal.nu; `.pub`, `.sig` and `.multiproof.json` are spelled at
+# their use sites, and git-proof's bundle names are CWD-relative by design.
+# Anything moved in here should come with its readers.
 
 export const MULTIPROOFS_DIR = "multiproofs"
 export const PUBKEYS_DIR = "pubkeys"

@@ -142,9 +142,14 @@ def fingerprint [key: string]: nothing -> string {
     }
 }
 
-# The one shape check behind init's rule that nothing but a public key lands
-# in pubkeys/ is `pubkey canonical` — every branch that writes there runs it,
-# so a private key (multi-line, no pubkey type prefix) can never land.
+# Every branch that writes to pubkeys/ runs `pubkey canonical` first, so a
+# private key (multi-line, no pubkey type prefix) can never land — that much is
+# pinned by the private-key refusal tests.
+#
+# It is not a full validity check: `pubkey canonical` only matches shape
+# (`<type> <base64>`), never decodes the base64 and never compares the key type
+# against the blob, so `ssh-rsa A` passes. What lands here is well-formed, not
+# necessarily a usable key.
 
 # Resolve an SSH key path to its public-key file.
 # Why: --pubkey and the user.signingKey file-path branch must never copy a
