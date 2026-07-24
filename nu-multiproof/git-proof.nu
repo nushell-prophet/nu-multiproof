@@ -15,9 +15,14 @@ use _allowed-signers.nu allowed-signers-body
 
 # --- Shared helpers ---
 
-# Parse `git ls-tree` output into a table
+# Parse `git ls-tree -z` output into a table.
+# Why -z: with git's default core.quotePath=true, plain `ls-tree` C-quotes any
+# name holding non-ASCII bytes or a `"` — `файл.md` comes back as
+# "\321\204\320\260\320\271\320\273.md", so a lookup by the raw name never
+# matches and the file reads as missing from its own tree. NUL-terminated
+# records carry the path bytes exactly as git stored them.
 def parse-ls-tree []: string -> table<mode: string, type: string, hash: string, name: string> {
-    lines | parse "{mode} {type} {hash}\t{name}"
+    split row (char -i 0) | where { $in != "" } | parse "{mode} {type} {hash}\t{name}"
 }
 
 # Extract tree hash from commit object text.
@@ -62,7 +67,7 @@ def walk-tree-path [
         let is_last = $it.index == $last_index
 
         let tree = $current_tree # immutable copy — mut vars can't be captured in the do closure
-        let result = (do { ^git ...$git_args ls-tree $tree } | complete)
+        let result = (do { ^git ...$git_args ls-tree -z $tree } | complete)
         if $result.exit_code != 0 {
             error make {msg: $"cannot read tree ($tree | str substring 0..12)... for ($file_path): ($result.stderr | str trim)"}
         }

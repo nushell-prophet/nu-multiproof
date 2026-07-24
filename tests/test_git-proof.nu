@@ -300,6 +300,55 @@ def "extract errors when path descends into a blob without sibling" [] {
     assert (not ($proof_dir | path exists)) "proof dir created despite error"
 }
 
+# With git's default core.quotePath=true, plain `ls-tree` renders a non-ASCII
+# name as "\321\204\320\260\320\271\320\273.md". The lookup by raw name then
+# never matched and `extract` reported the file as missing from its own tree.
+# The directory segment is non-ASCII too, so the tree descent is covered as well.
+@test
+def "extract and verify a file with a non-ascii name" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    let proof = $"($tmp_dir)/proof"
+    mkdir $"($repo)/каталог"
+    ^git -C $repo init --object-format=sha256 -q
+    ^git -C $repo config user.email "test@example.com"
+    ^git -C $repo config user.name "test"
+
+    "привет\n" | save --force $"($repo)/каталог/файл.md"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo commit -m init o+e>| ignore
+
+    let result = (git-proof extract "каталог/файл.md" --repo $repo --out-dir $proof)
+    assert equal ($result.files | first | get path) "каталог/файл.md"
+
+    # Why structure_valid, not valid: the fixture commit is unsigned, so the
+    # signature leg fails by construction. The merkle walk is what's under test.
+    let verified = (git-proof verify $proof)
+    assert equal $verified.structure_valid true
+}
+
+# core.quotePath also C-quotes a name containing `"` — same missed lookup.
+@test
+def "extract and verify a file with a quote in its name" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    let proof = $"($tmp_dir)/proof"
+    mkdir $repo
+    ^git -C $repo init --object-format=sha256 -q
+    ^git -C $repo config user.email "test@example.com"
+    ^git -C $repo config user.name "test"
+
+    "quoted\n" | save --force ($repo | path join 'say "hi".txt')
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo commit -m init o+e>| ignore
+
+    let result = (git-proof extract 'say "hi".txt' --repo $repo --out-dir $proof)
+    assert equal ($result.files | first | get path) 'say "hi".txt'
+
+    let verified = (git-proof verify $proof)
+    assert equal $verified.structure_valid true
+}
+
 @test
 def "render-allowed-signers writes one wildcard line per pubkey" [] {
     let tmp_dir = $in.tmp_dir
