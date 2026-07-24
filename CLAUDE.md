@@ -36,6 +36,33 @@ list everything explicitly in mod.nu. For the small number of helpers
 actually needing to be hidden, the `_*.nu` extract pattern achieves the
 same end with a much smaller diff.
 
+## Rules for proof code
+
+This module's output is evidence. A bug here does not crash — it returns `valid: true` for something false. Every rule below exists because an audit found the opposite in this repo.
+
+- **A guard on a verify path needs a test that feeds a hostile artifact** — a proof file, manifest or bundle built by hand, not one this repo's builder produced. Round-tripping the builder proves self-consistency, never conformance. Mutation testing found that `merkle verify` could stop calling `validate-leaf` entirely and the suite stayed green.
+- **Crypto conformance needs at least one vector from outside this codebase.** The `side` convention in `audit-path`/`fold-path` can be flipped in both at once and no test notices, because every path test folds a path the same code built.
+- **Never write an artifact you have not parsed back.** `ots stamp` appended an unvalidated calendar body and reported success; the resulting `.ots` was unreadable and unrecoverable. `ots upgrade` gets this right — validate, then atomic-rename.
+- **A comment or README line may claim a security property only when a test pins it.** Name the test. `--signer` was documented as pinning a principal while it compared a filename; `check-block-header` was documented as rejecting low-work headers while it read the difficulty out of the header being checked.
+- **Reject, never normalize** — already the rule for leaf charsets; it holds everywhere.
+- **Trust lists**: a principal comes from key material, never from a filename; a name interpolated into `allowed_signers` must be rejected if it holds whitespace, quotes or newlines.
+
+## Nushell traps this repo has already hit
+
+- **Never pass a path that came from data to `glob`.** It reads `[ ] * ? {` as pattern syntax and silently returns nothing — a discovery loop then reports "0 objects verified" or "no stamp found" instead of failing. Use `ls --all $dir | get name | where ...`. Fixed once in `_sig.nu` (`bfca95e`), still open at 8 other sites.
+- **`ls` without `--all` hides dotfiles.** Any discovery over user-named files needs it — `.env.alice.sig` was invisible to signature discovery.
+- **Don't rewrap errors as `error make {msg: $e.msg}`** — it drops the span, label, help and inner error, leaving messages like a bare `Not found`. Use `try { ... } finally { cleanup }` for the cleanup case (0.111+).
+- **`open --raw` yields a *string* when the bytes happen to be valid UTF-8.** Add `| into binary` before any binary pipeline.
+- **External commands throw on non-zero exit, but their stderr never reaches `$e.msg`.** Use `do { ^cmd } | complete` wherever the failure is caught and reported to the user.
+- **Pass `--` before data-derived arguments** to `git` and `ssh-keygen`. `git verify-commit --help` exits 0.
+- **Every `http` call needs a timeout**, and a URL taken from a file is attacker-controlled input.
+
+## Command conventions
+
+- Every command that touches a repo takes `--repo` and resolves it through `_repo.nu repo-root`. A callee that resolves the CWD instead forces its caller into workarounds — see the two apology comments in `seal.nu`.
+- Paths come from `_layout.nu`, signature names from `_sig.nu`. Don't re-derive either grammar inline; that is how `ssh-sign verify` ended up resolving the wrong original file.
+- `@example` must run offline in a throwaway directory. nutest does not execute them, so a broken one is invisible until a human tries it.
+
 ## Running tests
 
 ```sh
