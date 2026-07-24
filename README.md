@@ -10,10 +10,11 @@ Proof of concept: Composable cryptographic proofs for git repositories, written 
 |-------|-----------|-----------|
 | **This content existed in a signed commit** | Git merkle proof | SHA-256 merkle path from signed commit to blob, self-verifiable without the original repo |
 | **This content existed at a specific time** | OpenTimestamps | Hash chain anchored to a Bitcoin block header |
-| **A registered key signed this file** | SSH file signature | Every `.sig` beside the target checked against the keys in `multiproofs/pubkeys/`; per signer it separates "content changed" from "key not registered" |
 | **This file was in the catalogued snapshot** | Merkle inclusion proof | RFC 6962-style binary tree over the manifest rows; one signed 32-byte root verifies a proof of ~log2(n) hashes |
 
 Each proof type is independent. Use one, two, or all three.
+
+`ssh-sign` is not a fourth claim — it is the signing step under all three. It signs a file with an SSH key, and verifies every `.sig` beside a file against the keys in `multiproofs/pubkeys/`, separating "content changed" from "key not registered". `seal` uses it to sign the root statement, `merkle verify` to check that signature, and a git merkle proof is worth no more than the commit signature it ends at. It also runs standalone on any file.
 
 None of them proves identity. A signer name here is the filename of a `.pub` in `multiproofs/pubkeys/` — chosen by whoever committed that key, and travelling inside the very thing under examination. Binding a key to a person is the verifier's own step: compare the fingerprint against a list you hold. See "Verifying commit signatures" below.
 
