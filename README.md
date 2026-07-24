@@ -10,10 +10,12 @@ Proof of concept: Composable cryptographic proofs for git repositories, written 
 |-------|-----------|-----------|
 | **This content existed in a signed commit** | Git merkle proof | SHA-256 merkle path from signed commit to blob, self-verifiable without the original repo |
 | **This content existed at a specific time** | OpenTimestamps | Hash chain anchored to a Bitcoin block header |
-| **This person signed this file** | SSH file signature | SSH-keygen signature verified against bundled public keys |
+| **A registered key signed this file** | SSH file signature | Every `.sig` beside the target checked against the keys in `multiproofs/pubkeys/`; per signer it separates "content changed" from "key not registered" |
 | **This file was in the catalogued snapshot** | Merkle inclusion proof | RFC 6962-style binary tree over the manifest rows; one signed 32-byte root verifies a proof of ~log2(n) hashes |
 
 Each proof type is independent. Use one, two, or all three.
+
+None of them proves identity. A signer name here is the filename of a `.pub` in `multiproofs/pubkeys/` — chosen by whoever committed that key, and travelling inside the very thing under examination. Binding a key to a person is the verifier's own step: compare the fingerprint against a list you hold. See "Verifying commit signatures" below.
 
 Only the git merkle proof constrains the repo: `git-proof` requires SHA-256 object format (`extensions.objectFormat=sha256`) and refuses a SHA-1 repo. Not a technical limit — a SHA-1 source could produce a native SHA-1 bundle — but a SHA-1 path from a signed commit to a blob is not evidence: chosen-prefix collisions on SHA-1 have been practical since 2019, so the same path can be made to fit a second, different blob. Git's `sha1dc` detection catches known collision techniques, which is a patch, not collision resistance. The other proof types hash file contents themselves and work on any repo.
 
