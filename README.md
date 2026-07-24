@@ -108,6 +108,7 @@ Pinned exactly, so an independent implementation reproduces the root from the sa
 - **Leaves**: all CSV rows (directory rows and the `.` root-CID row included), sorted by `filepath` — byte-wise lexicographic over the UTF-8 path bytes, no locale, no Unicode normalization. Duplicate filepaths are a hard error.
 - **Leaf bytes**: the four parsed field values (RFC 4180 CSV parsing, not raw lines) joined with `\n`: `filepath \n content_sha256 \n content_git \n content_cid`.
 - **Charset constraints** (make the `\n`-join injective; reject, never normalize): `filepath` contains no bytes < 0x20; `content_sha256` is empty or 64 lowercase hex; `content_git` is empty or 40/64 lowercase hex (SHA-1 or SHA-256 git repos); `content_cid` is empty or a base58btc CIDv0 (`Qm` + 44 chars).
+- **Symlinks**: refused, never followed. Following one would take `content_sha256` and `content_cid` from the target while `content_git` stays git's blob of the link string — one row describing two objects, and a link pointing outside the repo would pull foreign content into the catalogue. `tree-hashes` errors and names the offending paths.
 - **Hashing** (RFC 6962 domain separation): leaf hash = `sha256(0x00 ++ leaf_bytes)`; inner node = `sha256(0x01 ++ left ++ right)` over the raw 32-byte child hashes.
 - **Shape** (RFC 6962 MTH): split the leaf list at the largest power of two below n, recurse on both halves. No padding, no last-leaf duplication. n=1: root = the leaf hash. n=0: root = `sha256("")` = `e3b0c442…`.
 - **Proof steps**: `side` names the **sibling**'s position, leaf-to-root order: `side: right` → `acc = sha256(0x01 ++ acc ++ sibling)`; `side: left` → the sibling goes first.
@@ -200,7 +201,6 @@ Good "git" signature for * with ECDSA-SK key SHA256:7SOGNZ2C…
 ### Self-verifying proof bundles
 
 `git-proof verify <proof-bundle>` is the preferred verifier for historical commits packaged as proof bundles: it bundles its own pubkeys with the proof and verifies in a temp repo via `git -c`, with no `allowedSignersFile` setup needed and no dependence on the verifier's local trust at all.
-
 ## License
 
 MIT
