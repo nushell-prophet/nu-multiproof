@@ -4,6 +4,7 @@
 # for all git-tracked files and their parent directories.
 
 use cid-v0.nu
+use cid-v0.nu MAX_SINGLE_CHUNK
 use _repo.nu repo-root
 use _layout.nu [MULTIPROOFS_DIR multiproofs-dir manifest-path]
 
@@ -11,7 +12,7 @@ use _layout.nu [MULTIPROOFS_DIR multiproofs-dir manifest-path]
 # ipfs CLI, so the two agree. To reproduce a name hash: printf '%s' 'name' | ipfs add ...
 # --only-hash is the default (no daemon needed); --publish-to-ipfs drops it to
 # actually store the content so the shared root CID is retrievable.
-const IPFS_CID_FLAGS = ["--progress=false" "--cid-version=0" "--raw-leaves=false" "--hash=sha2-256" "--chunker=size-262144"]
+const IPFS_CID_FLAGS = ["--progress=false" "--cid-version=0" "--raw-leaves=false" "--hash=sha2-256" $"--chunker=size-($MAX_SINGLE_CHUNK)"]
 
 def build-tree [
     --ipfs # Compute CIDs using ipfs CLI (records per-file, per-dir and the root "." CID)
@@ -109,7 +110,7 @@ def build-tree [
                 # Empty in --ipfs mode (the add pass fills CIDs) and for files
                 # over the single-chunk limit; otherwise the pure-nu CID.
                 content_cid: (
-                    if $ipfs { "" } else if $size > 262144 {
+                    if $ipfs { "" } else if $size > $MAX_SINGLE_CHUNK {
                         print $"skip: ($f) \(($size) bytes\) exceeds 256 KB single-chunk limit"
                         ""
                     } else { $content | cid-v0 }

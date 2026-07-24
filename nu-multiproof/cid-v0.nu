@@ -4,7 +4,10 @@
 use _varint.nu encode-varint
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-const MAX_SINGLE_CHUNK = 262144
+# Exported: tree-hashes.nu both size-checks against it and builds the ipfs
+# `--chunker=size-…` flag from it, so the pure-nu CID and the ipfs CLI cannot
+# drift apart on the chunk size.
+export const MAX_SINGLE_CHUNK = 262144
 
 # Wrap content in UnixFS dag-pb protobuf (single-chunk leaf node, no links)
 def unixfs-dag-pb []: binary -> binary {
