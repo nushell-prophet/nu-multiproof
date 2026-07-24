@@ -8,10 +8,11 @@ use _layout.nu ots-dir
 use _sig.nu sig-files-for
 
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
+# Only the ops this code names as values live here. The rest (0x03 RIPEMD-160,
+# 0xf0 append, 0xf1 prepend) stay byte literals at their two use sites: `match`
+# arms must be literal patterns, and `stamp` writes raw bytes (0x[f0]) where an
+# int const would need converting first. A const nothing reads is drift bait.
 const OP_SHA256 = 0x08
-const OP_RIPEMD160 = 0x03
-const OP_APPEND = 0xf0
-const OP_PREPEND = 0xf1
 const TAG_ATTESTATION = 0x00
 const TAG_FORK = 0xff
 const ATT_PENDING = 0x[83dfe30d2ef90c8e]
