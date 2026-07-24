@@ -141,9 +141,13 @@ export def root-statement [root_hex: string]: nothing -> string {
 # newlines; the signature covers exact bytes, so drift must be loud.
 export def parse-root-statement [file: path]: nothing -> string {
     let content = open --raw $file | into string
-    let matched = $content | parse --regex '\Amultiproof-merkle-v1 (?<root>[0-9a-f]{64})\n\z'
-    if ($matched | is-empty) {
-        error make {msg: $"malformed root statement ($file): expected 'multiproof-merkle-v1 <64 lowercase hex>' with exactly one trailing newline"}
+    # The schema token is captured and compared against MERKLE_SCHEMA rather
+    # than spelled into the regex: hardcoding it made the parser keep accepting
+    # the old schema after a bump, while root-statement already wrote the new
+    # one — a silent version split in the one file that must be byte-exact.
+    let matched = $content | parse --regex '\A(?<schema>\S+) (?<root>[0-9a-f]{64})\n\z'
+    if ($matched | is-empty) or $matched.schema.0 != $MERKLE_SCHEMA {
+        error make {msg: $"malformed root statement ($file): expected '($MERKLE_SCHEMA) <64 lowercase hex>' with exactly one trailing newline"}
     }
     $matched.root.0
 }

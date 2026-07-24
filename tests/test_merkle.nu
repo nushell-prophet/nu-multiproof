@@ -167,6 +167,7 @@ def "malformed root statements are rejected" [] {
         $"multiproof-merkle-v1 ($root)" # missing newline
         $"multiproof-merkle-v1 ($root | str uppercase)\n" # uppercase hex
         $"($root)\n" # bare hash, no statement prefix
+        $"multiproof-merkle-v2 ($root)\n" # another schema — parser must track MERKLE_SCHEMA
     ] {
         $bad | save --raw --force $file
         assert error {|| parse-root-statement $file } $"accepted: ($bad | to json)"
