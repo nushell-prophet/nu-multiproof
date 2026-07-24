@@ -177,6 +177,36 @@ def "control-byte filename is rejected at generation, before any write" [] {
 }
 
 @test
+def "live symlink is rejected and named" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+    "x\n" | save --force $"($repo)/real.txt"
+    ^ln -s real.txt $"($repo)/link.txt"
+    ^git -C $repo add . o+e>| ignore
+
+    let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
+    assert ($err != null) "tracked symlink was accepted"
+    assert ($err | str contains "symlink")
+    assert ($err | str contains "link.txt") $"error does not name the symlink: ($err)"
+}
+
+@test
+def "broken symlink is rejected by name, not an opaque open failure" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+    ^ln -s missing.txt $"($repo)/dangling.txt"
+    ^git -C $repo add . o+e>| ignore
+
+    let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
+    assert ($err != null) "broken tracked symlink was accepted"
+    assert ($err | str contains "dangling.txt") $"error does not name the broken symlink: ($err)"
+}
+
+@test
 def "directory content_git matches working-tree blob hashes of its files" [] {
     let result = tree-hashes --echo
     let dirs = $result | where content_sha256 == "" and filepath != "."

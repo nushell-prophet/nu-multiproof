@@ -33,12 +33,23 @@ def build-tree [
     # Why -z: without it core.quotePath C-quotes non-ASCII names
     # ("\346\226\207.md"), poisoning the filepath as an open path and as
     # future merkle leaf bytes. Filepath = the raw path bytes as stored in git.
-    let tracked_files = (
-        ^git -C $root ls-files -z
+    # Why -s: it carries the staged mode in the same pass, which the symlink
+    # gate below needs — no extra stat over the tree.
+    let tracked_entries = (
+        ^git -C $root ls-files -s -z
         | split row (char -i 0)
-        | where { $in != "" and not ($in | str starts-with $exclude_prefix) }
-        | sort
+        | where { $in != "" }
+        # Why split on the first tab instead of `parse`: ls-files -s separates
+        # "<mode> <object> <stage>" from the path with one tab, and the path
+        # itself may contain tabs (see the control-byte gate below).
+        | each {|row|
+            let parts = $row | split row --number 2 (char tab)
+            {mode: ($parts.0 | split row " " | first) path: $parts.1}
+        }
+        | where { not ($in.path | str starts-with $exclude_prefix) }
+        | sort-by path
     )
+    let tracked_files = $tracked_entries | get path
 
     # Why reject control bytes here, not only in merkle validate-leaf: git
     # allows tab/ESC/\n in filenames. Such a name would pass manifest
@@ -52,6 +63,21 @@ def build-tree [
     let control_byte_paths = $tracked_files | where { $in =~ '[\x00-\x1f]' }
     if ($control_byte_paths | is-not-empty) {
         error make {msg: $"git-tracked filenames contain control bytes \(< 0x20\), which merkle leaves reject — rename: ($control_byte_paths | to json)"}
+    }
+
+    # Why reject symlinks (mode 120000) rather than follow or hash them: one
+    # manifest row must describe one object. `open --raw` follows the link, so
+    # content_sha256 and content_cid would describe the target while
+    # content_git describes git's blob holding the link string — one row, two
+    # objects, and two honest verifiers (re-hash the worktree vs. rebuild from
+    # git objects) that disagree without either being wrong. A link pointing
+    # outside the repo would also pull foreign content into the sealed
+    # catalogue. Same "reject, never normalize" rule as the control-byte gate.
+    # Naming the offending paths also replaces the opaque death a broken link
+    # caused downstream in `open` ("Eval block failed with pipeline input").
+    let symlink_paths = $tracked_entries | where mode == "120000" | get path
+    if ($symlink_paths | is-not-empty) {
+        error make {msg: $"git-tracked symlinks are not supported — one manifest row cannot describe both the link and its target; remove or replace: ($symlink_paths | to json)"}
     }
 
     # Synthesize directory entries from file paths (ls-files returns only files).
