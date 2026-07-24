@@ -167,7 +167,7 @@ def "control-byte filename is rejected at generation, before any write" [] {
     mkdir $repo
     ^git -C $repo init -q
     # git allows tab in a tracked filename; sealing must fail at tree-hashes
-    # (before the CSV regen), not later at merkle root
+    # (before the CSV regen), not later at merkle write-root
     "x\n" | save --force ($repo | path join $"a(char tab)b.txt")
     ^git -C $repo add . o+e>| ignore
 

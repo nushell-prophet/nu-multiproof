@@ -52,8 +52,8 @@ nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ~/.ssh/id_ed25519
 # Verify signatures against bundled public keys
 nu-multiproof ssh-sign verify multiproofs/tree-root.txt
 
-# Derive the merkle root over the manifest (seal does this automatically)
-nu-multiproof merkle root
+# Derive the merkle root over the manifest and write multiproofs/tree-root.txt (seal does this automatically)
+nu-multiproof merkle write-root
 # Extract a compact inclusion proof for one manifest row
 nu-multiproof merkle prove README.md
 # Verify it: fold to the signed root, check signatures, content, OTS status

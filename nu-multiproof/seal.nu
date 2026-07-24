@@ -84,7 +84,7 @@ export def main [
     # 32-byte commitment instead of keeping the whole CSV (see merkle.nu).
     # Immediately after regen, so no window where the statement describes a
     # previous manifest.
-    let merkle_result = merkle root --repo $root
+    let merkle_result = merkle write-root --repo $root
     print $"Merkle root: ($merkle_result.root)"
     $result = ($result | insert merkle_root $merkle_result.root)
 

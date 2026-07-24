@@ -18,8 +18,8 @@ use ots.nu
 
 # Build the tree from the manifest and write the root statement file
 # (multiproofs/tree-root.txt) — the artifact seal signs and stamps.
-@example "derive and record the merkle root" { merkle root }
-export def root [
+@example "derive and record the merkle root" { merkle write-root }
+export def write-root [
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> record {
     let target = repo-root $repo
@@ -111,7 +111,7 @@ export def verify [
 
     let root_file = merkle-root-path $target
     if not ($root_file | path exists) {
-        error make {msg: $"root statement not found: ($root_file) — run `merkle root` or `seal`"}
+        error make {msg: $"root statement not found: ($root_file) — run `merkle write-root` or `seal`"}
     }
     let signed_root = parse-root-statement $root_file
     if $proof.root != $signed_root {

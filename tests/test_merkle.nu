@@ -105,7 +105,7 @@ def "golden root for the fixed mini-manifest, statement byte-exact" [] {
     let tmp_dir = $in.tmp_dir
     write-mini-manifest $tmp_dir
 
-    let result = merkle root --repo $tmp_dir
+    let result = merkle write-root --repo $tmp_dir
     assert equal $result.root $GOLDEN_MINI_ROOT
     assert equal $result.leaves 4
     # Signature and OTS cover exact bytes: one statement line, one "\n"
@@ -130,7 +130,7 @@ def "the root-CID row is a covered leaf" [] {
     ]
     mkdir $"($tmp_dir)/multiproofs"
     $rows | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
-    let with_cid = merkle root --repo $tmp_dir
+    let with_cid = merkle write-root --repo $tmp_dir
 
     assert equal $with_cid.leaves 2
     # "." is a provable row like any other
@@ -140,7 +140,7 @@ def "the root-CID row is a covered leaf" [] {
     # Swap only the root CID: a different root means the signature over the old
     # root no longer covers this manifest.
     $rows | update 0 {|r| $r | update content_cid $other_cid } | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
-    let swapped = merkle root --repo $tmp_dir
+    let swapped = merkle write-root --repo $tmp_dir
     assert not ($swapped.root == $with_cid.root) "changing the root-CID row left the merkle root unchanged"
 }
 
@@ -153,7 +153,7 @@ def "duplicate filepaths are a hard error - equivocation guard" [] {
 
     # Not bare `assert error` because: it stays green on ANY error (e.g.
     # manifest-not-found) — pin the equivocation message
-    let err = try { merkle root --repo $tmp_dir; null } catch {|e| $e.msg }
+    let err = try { merkle write-root --repo $tmp_dir; null } catch {|e| $e.msg }
     assert ($err != null) "duplicate filepaths were accepted"
     assert ($err | str contains "duplicate filepaths")
 }
@@ -169,7 +169,7 @@ def "newline in filepath is rejected - leaf forgery guard" [] {
         | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
     # Pin the validate-leaf message so an unrelated error can't keep this green
-    let err = try { merkle root --repo $tmp_dir; null } catch {|e| $e.msg }
+    let err = try { merkle write-root --repo $tmp_dir; null } catch {|e| $e.msg }
     assert ($err != null) "forged filepath was accepted"
     assert ($err | str contains "control bytes")
 }
@@ -235,7 +235,7 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
 
-    let root_result = merkle root --repo $repo
+    let root_result = merkle write-root --repo $repo
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
 
     # File row: content on disk matches the proven sha256
@@ -276,7 +276,7 @@ def "signed roundtrip works when the repo path holds glob metacharacters" [] {
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
 
-    let root_result = merkle root --repo $repo
+    let root_result = merkle write-root --repo $repo
     # --name is not passed: the signer name comes from matching key material
     # against the registered pubkeys, which is one of the discovery steps.
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -291,7 +291,7 @@ def "signed roundtrip works when the repo path holds glob metacharacters" [] {
 def "tampered leaf, changed content, and unsigned root are each caught" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    merkle root --repo $repo
+    merkle write-root --repo $repo
     let proof = merkle prove README.md --repo $repo
 
     # Unsigned root: structure holds, valid stays false, --fail throws
@@ -343,7 +343,7 @@ def "signer flag pins the principal, not just any registered key" [] {
     cp $"($alice).pub" $"($pubkeys)/alice.pub"
     cp $"($mallory).pub" $"($pubkeys)/mallory.pub"
 
-    let root_result = merkle root --repo $repo
+    let root_result = merkle write-root --repo $repo
     ssh-sign sign $root_result.path --key $mallory --pubkeys-dir $pubkeys
     let proof = merkle prove README.md --repo $repo
 
@@ -370,7 +370,7 @@ def "pubkeys-dir flag supplies the verifier trust list from outside the bundle" 
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle root --repo $repo
+    let root_result = merkle write-root --repo $repo
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let proof = merkle prove README.md --repo $repo
 
@@ -401,7 +401,7 @@ def "portable bundle: proof verifies offline in a non-git directory" [] {
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle root --repo $repo
+    let root_result = merkle write-root --repo $repo
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let proof = merkle prove README.md --repo $repo
 
@@ -430,7 +430,7 @@ def "portable bundle: proof verifies offline in a non-git directory" [] {
 def "ots status: discovery by content commitment, pending and anchored pinned" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    merkle root --repo $repo
+    merkle write-root --repo $repo
     let proof = merkle prove README.md --repo $repo
 
     # Discovery keys on the stamp's content commitment: its hash must equal
@@ -457,7 +457,7 @@ def "ots status: discovery by content commitment, pending and anchored pinned" [
 def "ots discovery: corrupt archival stamps skipped, anchored preferred" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    merkle root --repo $repo
+    merkle write-root --repo $repo
     let proof = merkle prove README.md --repo $repo
     let root_hash = open --raw $"($repo)/multiproofs/tree-root.txt" | hash sha256 | decode hex
     let bundle = $"($repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
@@ -482,7 +482,7 @@ def "ots discovery: corrupt archival stamps skipped, anchored preferred" [] {
 def "proof against a different seal root throws loudly" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    merkle root --repo $repo
+    merkle write-root --repo $repo
     let proof = merkle prove README.md --repo $repo
 
     # A later seal rewrote the root statement: verification must name the

@@ -55,7 +55,7 @@ def build-tree [
 
     # Why reject control bytes here, not only in merkle validate-leaf: git
     # allows tab/ESC/\n in filenames. Such a name would pass manifest
-    # generation but fail later at `merkle root` — which seal runs AFTER
+    # generation but fail later at `merkle write-root` — which seal runs AFTER
     # regenerating the CSV, leaving a fresh manifest beside the previous
     # seal's still-valid signed root; rebuild-and-compare consumers read that
     # as tampering. Fail before writing anything (merkle's check stays as the
