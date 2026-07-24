@@ -1,0 +1,91 @@
+use std/assert
+use std/testing *
+
+use ../nu-multiproof/_sig.nu [sig-files-for signer-from-sig]
+
+# Why a fixture, not rm at the end of test bodies: after-each runs even when
+# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
+# Discovery must return both grammar forms — a caller that clears only the
+# named one leaves a stale bare `.sig` behind.
+@test
+def "discovery finds the named and the bare form" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "content" | save --force $file
+    "sig" | save --force $"($file).sig"
+    "sig" | save --force $"($file).alice.sig"
+    "sig" | save --force $"($file).bob.sig"
+
+    let found = sig-files-for $file | each {|f| $f | path basename } | sort
+    assert equal $found ["doc.txt.alice.sig" "doc.txt.bob.sig" "doc.txt.sig"]
+}
+
+# The regression this module's discovery was rewritten for: the path is data,
+# so `[`, `*` and `?` in a filename must not be read as pattern syntax.
+@test
+def "discovery survives glob metacharacters in the filename" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/w[1]?x*y.txt"
+    "content" | save --force $file
+    "sig" | save --force $"($file).sig"
+    "sig" | save --force $"($file).bob.sig"
+
+    let found = sig-files-for $file
+    assert equal ($found | each {|f| $f | path basename } | sort) ["w[1]?x*y.txt.bob.sig" "w[1]?x*y.txt.sig"]
+    # The returned paths must be usable as-is, not just look right
+    $found | each {|f| assert ($f | path exists) $"discovered path does not exist: ($f)" }
+}
+
+# A sibling whose name merely starts with the same characters is a different
+# file — its signature is not ours.
+@test
+def "discovery ignores sigs of a different file" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "content" | save --force $file
+    "sig" | save --force $"($file).alice.sig"
+    "other" | save --force $"($tmp_dir)/doc.txt2"
+    "sig" | save --force $"($tmp_dir)/doc.txt2.sig"
+    "sig" | save --force $"($tmp_dir)/doc.txt2.bob.sig"
+
+    let found = sig-files-for $file | each {|f| $f | path basename }
+    assert equal $found ["doc.txt.alice.sig"]
+}
+
+@test
+def "discovery returns an empty list when nothing is signed" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "content" | save --force $file
+
+    assert equal (sig-files-for $file) []
+}
+
+# Discovery and naming encode one grammar; they must agree on which discovered
+# file is bare (null signer) and which carries a signer label.
+@test
+def "signer-from-sig agrees with discovery" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/w[1]?x*y.txt"
+    "content" | save --force $file
+    "sig" | save --force $"($file).sig"
+    "sig" | save --force $"($file).maxim-uvarov2.sig"
+
+    let labelled = sig-files-for $file
+        | each {|sig| {sig: ($sig | path basename) signer: (signer-from-sig $file $sig)} }
+        | sort-by sig
+    assert equal $labelled [
+        {sig: "w[1]?x*y.txt.maxim-uvarov2.sig" signer: "maxim-uvarov2"}
+        {sig: "w[1]?x*y.txt.sig" signer: null}
+    ]
+}

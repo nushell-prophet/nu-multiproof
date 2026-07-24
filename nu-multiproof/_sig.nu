@@ -5,10 +5,22 @@
 
 # All signature files for <path>: every `<path>.<signer>.sig` plus the bare
 # `<path>.sig` when it exists.
+#
+# Not `glob $"($path).*.sig"` because: the path is data, but glob reads it as a
+# pattern, so `[`, `*` or `?` in a filename made its named sigs invisible —
+# this module exists to keep that grammar in one place, and losing sigs is the
+# very drift it must prevent. Listing the directory and comparing basenames
+# treats every character literally.
 export def sig-files-for [path: path]: nothing -> list<path> {
-    let named = glob $"($path).*.sig"
-    let bare = $"($path).sig"
-    if ($bare | path exists) { $named ++ [$bare] } else { $named }
+    let base = $path | path basename
+    let dir = $path | path dirname
+    let entries = ls (if ($dir | is-empty) { "." } else { $dir }) | get name
+    let bare_base = $"($base).sig"
+    let named = $entries | where {|f|
+        let f_base = $f | path basename
+        ($f_base | str starts-with $"($base).") and ($f_base | str ends-with ".sig") and $f_base != $bare_base
+    }
+    $named ++ ($entries | where {|f| ($f | path basename) == $bare_base })
 }
 
 # Signer label carried by a sig filename, given the file it signs.
