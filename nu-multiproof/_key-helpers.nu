@@ -5,14 +5,17 @@
 # private keys, whereas this returns the private key (or its inline material)
 # to sign with — the opposite intent and safety rule.
 
-# Return a key path usable with `ssh-keygen -Y sign -f <key>`, read from
-# user.signingKey. Handles both forms:
+# Read user.signingKey and return {path, temp} — a key path usable with
+# `ssh-keygen -Y sign -f <key>`, plus who owns it. Handles both forms:
 #  - inline `key::ssh-ed25519 AAAA…` — materialized to a temp .pub file
-#    (ssh-keygen wants a file; the agent must hold the matching private key)
-#  - a file path — used as-is, falling back to its `.pub` sibling
+#    (ssh-keygen wants a file; the agent must hold the matching private key),
+#    `temp: true`: the caller must delete it when done
+#  - a file path — used as-is, falling back to its `.pub` sibling, `temp: false`
+#
+# Prefer `with-signing-key`, which owns that lifetime for you.
 #
 # --root: repo whose git config to read (default: current directory's repo).
-export def resolve-signing-key [--root: path]: nothing -> path {
+export def resolve-signing-key [--root: path]: nothing -> record<path: path, temp: bool> {
     let git = if $root != null {
         do { ^git -C $root config user.signingKey } | complete
     } else {
@@ -28,15 +31,46 @@ export def resolve-signing-key [--root: path]: nothing -> path {
         # other's key file mid-operation.
         let tmp = $nu.temp-dir | path join $"nu-multiproof-signing-key-(random uuid).pub"
         $key_data | save --raw --force $tmp
-        $tmp
+        {path: $tmp temp: true}
     } else {
         let expanded = $raw | path expand
         if ($expanded | path exists) {
-            $expanded
+            {path: $expanded temp: false}
         } else if ($"($expanded).pub" | path exists) {
-            $"($expanded).pub"
+            {path: $"($expanded).pub" temp: false}
         } else {
             error make {msg: $"signing key not found: ($raw)"}
         }
     }
+}
+
+# Run `action` with a signing-key path, then delete anything resolution had to
+# materialize. Returns whatever `action` returns.
+#
+# Why a closure: the inline `key::` form has no file on disk, so resolution
+# writes one — and a command that only *returns* the path has no moment at
+# which it can delete it. That leaked one temp key per call, forever.
+#
+# --key: caller-supplied key, used as-is (nothing to resolve or clean up).
+# --root: repo whose git config to read (default: current directory's repo).
+export def with-signing-key [
+    action: closure # Receives the key path
+    --key: path
+    --root: path
+]: nothing -> any {
+    let resolved = if $key != null {
+        {path: ($key | into string) temp: false}
+    } else {
+        resolve-signing-key --root $root
+    }
+    # Why try/rethrow (same shape as `git-proof verify`): a failed signing
+    # ceremony must not skip the cleanup.
+    let out = try {
+        do $action $resolved.path
+    } catch {|e|
+        if $resolved.temp { rm --force $resolved.path }
+        error make {msg: $e.msg}
+    }
+    if $resolved.temp { rm --force $resolved.path }
+    $out
 }

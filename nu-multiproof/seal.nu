@@ -5,7 +5,7 @@ use ssh-sign.nu
 use _repo.nu repo-root
 use _layout.nu [manifest-path merkle-root-path ots-dir pubkeys-dir]
 use _sig.nu sig-files-for
-use _key-helpers.nu resolve-signing-key
+use _key-helpers.nu with-signing-key
 
 # Full seal pipeline: hash+root-cid → sign → stamp.
 #
@@ -110,10 +110,14 @@ export def main [
     # authenticates the full CSV indirectly: rebuild the tree, compare roots.
     # The transitional whole-CSV signature was dropped as unneeded legacy.
     if not $no_sign {
-        let signing_key = if $key != null { $key | into string } else { resolve-signing-key --root $root }
+        # Why resolve here and not let `ssh-sign sign` do it: the key comes from
+        # --repo's git config, and ssh-sign reads the CWD's repo. The closure
+        # form bounds an inline `key::` temp file to the signing call.
         # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
         # git root, but seal may target a different repo via --repo.
-        let root_sig = ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
+        let root_sig = with-signing-key --key $key --root $root {|signing_key|
+            ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
+        }
         $result = ($result | insert root_sig $root_sig)
     }
 

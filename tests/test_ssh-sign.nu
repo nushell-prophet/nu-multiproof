@@ -2,6 +2,9 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/ssh-sign.nu
+# Tested here rather than in its own suite: `ssh-sign sign` is what the key
+# lifetime exists for, and signing an inline `key::` key needs an agent.
+use ../nu-multiproof/_key-helpers.nu with-signing-key
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -30,6 +33,50 @@ def "sign creates named sig file" [] {
     ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
     assert ($"($test_file).alice.sig" | path exists)
     assert (not ($"($test_file).sig" | path exists))
+}
+
+# The inline `key::` form has no file on disk, so resolution writes one. Its
+# lifetime ends with the signing call — otherwise every call leaks a key file.
+@test
+def "with-signing-key removes the materialized inline key" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    let key_path = $"($tmp_dir)/inline_key"
+    mkdir $repo
+    ^git -C $repo init -q
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    ^git -C $repo config user.signingKey $"key::(open --raw $"($key_path).pub" | str trim)"
+
+    let used = with-signing-key --root $repo {|key|
+        assert ($key | path exists) $"key not materialized: ($key)"
+        $key
+    }
+    assert (not ($used | path exists)) $"temp key survived the call: ($used)"
+
+    # A throwing action must not skip the cleanup either. The path is recorded
+    # to a file because a closure cannot write to a `mut` of the outer scope.
+    let marker = $"($tmp_dir)/used_key"
+    try {
+        with-signing-key --root $repo {|key|
+            $key | save --force $marker
+            error make {msg: "signing ceremony failed"}
+        }
+    } catch {|e| assert equal $e.msg "signing ceremony failed" }
+    let leaked = open --raw $marker | str trim
+    assert (not ($leaked | path exists)) $"temp key survived a failed call: ($leaked)"
+}
+
+# An explicit --key is the caller's file: passed through untouched, and still
+# there afterwards.
+@test
+def "with-signing-key leaves an explicit key alone" [] {
+    let tmp_dir = $in.tmp_dir
+    let key_path = $"($tmp_dir)/mykey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+
+    let used = with-signing-key --key $key_path {|key| $key }
+    assert equal $used $key_path
+    assert ($key_path | path exists)
 }
 
 @test
