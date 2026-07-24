@@ -3,6 +3,15 @@ use std/testing *
 
 use ../nu-multiproof/init.nu
 
+# Why a const: one test checks what init *prints*, which is only observable
+# from outside the process — it spawns `nu` and needs the module's real path.
+const MODULE_DIR = path self ../nu-multiproof
+
+# SHA256:... fingerprint of a public key file.
+def fingerprint-of [pub_file: path]: nothing -> string {
+    ^ssh-keygen -lf $pub_file | str trim | split row " " | get 1
+}
+
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
 @before-each
@@ -164,4 +173,105 @@ def "init stores the registered pubkey in canonical form, comment dropped" [] {
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
     let src = (open --raw $"($key_path).pub" | str trim | split row " ")
     assert equal $saved $"($src.0) ($src.1)\n"
+}
+
+# Registering the very same key twice is a no-op, and the message must say so.
+# Checked through an external `nu` because print output is not observable
+# in-process.
+@test
+def "init reports the same key registered twice as already registered" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let key_path = $"($tmp_dir)/alice"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+
+    init --repo $repo --pubkey $"($key_path).pub"
+    let first = (open --raw $"($repo)/multiproofs/pubkeys/alice.pub")
+
+    let out = (^nu -c $"use ($MODULE_DIR)/init.nu; init --repo ($repo) --pubkey ($key_path).pub" | complete)
+    assert equal $out.exit_code 0 $"expected exit 0, got ($out)"
+    assert ($out.stdout | str contains "pubkey already registered: multiproofs/pubkeys/alice.pub") $"got ($out.stdout)"
+
+    assert equal (ls $"($repo)/multiproofs/pubkeys" | length) 1
+    assert equal (open --raw $"($repo)/multiproofs/pubkeys/alice.pub") $first
+}
+
+# A *different* key whose file shares a stem must be refused out loud: the old
+# code printed "already exists" and kept the first key, so the operator was
+# told a key was registered when it was rejected.
+@test
+def "init refuses a different key whose file shares a stem" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let first_key = $"($tmp_dir)/alice"
+    ^ssh-keygen -t ed25519 -f $first_key -N "" -q
+    init --repo $repo --pubkey $"($first_key).pub"
+    let registered = (open --raw $"($repo)/multiproofs/pubkeys/alice.pub")
+
+    # Same stem, different key material.
+    mkdir $"($tmp_dir)/other"
+    let second_key = $"($tmp_dir)/other/alice"
+    ^ssh-keygen -t ed25519 -f $second_key -N "" -q
+
+    let outcome = (try { init --repo $repo --pubkey $"($second_key).pub"; "ok" } catch { |e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert ($outcome | str contains "already holds a different key") $"got ($outcome)"
+    assert ($outcome | str contains (fingerprint-of $"($first_key).pub")) $"registered fingerprint missing: ($outcome)"
+    assert ($outcome | str contains (fingerprint-of $"($second_key).pub")) $"offered fingerprint missing: ($outcome)"
+
+    assert equal (open --raw $"($repo)/multiproofs/pubkeys/alice.pub") $registered
+}
+
+# The same key under a second stem yields two matching files, and `ssh-sign`'s
+# signer lookup then dies with `multiple pubkeys match`. Refuse at init instead.
+@test
+def "init refuses the same key material under another name" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let key_path = $"($tmp_dir)/alice"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    init --repo $repo --pubkey $"($key_path).pub"
+
+    cp $"($key_path).pub" $"($tmp_dir)/bob.pub"
+    let outcome = (try { init --repo $repo --pubkey $"($tmp_dir)/bob.pub"; "ok" } catch { |e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert ($outcome | str contains "already registered as multiproofs/pubkeys/alice.pub") $"got ($outcome)"
+
+    let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
+    assert equal $names ["alice.pub"]
+}
+
+# The inline `key::` branch derives the name from the key comment, so two
+# machines' keys sharing "alice@host" collide far more easily than file stems.
+@test
+def "init refuses a different inline key that derives the same name" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let first_key = $"($tmp_dir)/first"
+    ^ssh-keygen -t ed25519 -f $first_key -N "" -C "alice@host" -q
+    ^git -C $repo config user.signingKey $"key::(open --raw $"($first_key).pub" | str trim)"
+    init --repo $repo
+    let registered = (open --raw $"($repo)/multiproofs/pubkeys/alicehost.pub")
+
+    let second_key = $"($tmp_dir)/second"
+    ^ssh-keygen -t ed25519 -f $second_key -N "" -C "alice@host" -q
+    ^git -C $repo config user.signingKey $"key::(open --raw $"($second_key).pub" | str trim)"
+
+    let outcome = (try { init --repo $repo; "ok" } catch { |e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert ($outcome | str contains "already holds a different key") $"got ($outcome)"
+
+    assert equal (open --raw $"($repo)/multiproofs/pubkeys/alicehost.pub") $registered
 }

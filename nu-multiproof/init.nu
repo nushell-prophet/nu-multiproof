@@ -43,9 +43,7 @@ export def main [
                 }
                 let name = resolve-key-name $key_data
                 let dest = $pubkeys_dir | path join $"($name).pub"
-                if ($dest | path exists) {
-                    print $"pubkey already exists: ($dest | path relative-to $root)"
-                } else {
+                if (check-registration $canon $dest $pubkeys_dir $root) {
                     $canon | save --force $dest
                     print $"Saved signing key as ($dest | path relative-to $root)"
                 }
@@ -73,13 +71,74 @@ export def main [
 
     let name = $key_file | path parse | get stem
     let dest = $pubkeys_dir | path join $"($name).pub"
-    if ($dest | path exists) {
-        print $"pubkey already exists: ($dest | path relative-to $root)"
-    } else {
-        # Not cp because: the stored bytes are the identity downstream — they
-        # must be canonical regardless of how the source file was written.
-        open --raw $key_file | pubkey canonical | save --force $dest
+    # Not cp because: the stored bytes are the identity downstream — they
+    # must be canonical regardless of how the source file was written.
+    let canon = open --raw $key_file | pubkey canonical
+    if (check-registration $canon $dest $pubkeys_dir $root) {
+        $canon | save --force $dest
         print $"Registered ($key_file | path basename) → ($dest | path relative-to $root)"
+    }
+}
+
+# Decide what registering $canon at $dest means, by key material — never by
+# path. Why: two different keys whose files share a stem land on the same
+# $dest, and a path-only check reported "already exists" while keeping the
+# first key — telling the operator a key was registered when it was refused.
+# Returns true when the caller should write; prints and returns false when the
+# key is already there; errors when the outcome is a refusal.
+def check-registration [
+    canon: string # canonical bytes of the key being registered
+    dest: path # where this key would be written
+    pubkeys_dir: path
+    root: path
+]: nothing -> bool {
+    if ($dest | path exists) {
+        let registered = canonical-file $dest
+        if $registered == $canon {
+            print $"pubkey already registered: ($dest | path relative-to $root)"
+            return false
+        }
+        # Not overwriting because: pubkeys/ is the trust list, and silently
+        # swapping an entry is worse than refusing. But the operator must hear
+        # that the key was rejected, not registered.
+        error make {msg: ([
+            $"($dest | path relative-to $root) already holds a different key — refusing to overwrite the trust list"
+            $"  registered: (fingerprint $registered)"
+            $"  offered:    (fingerprint $canon)"
+            "register the new key under another name"
+        ] | str join "\n")}
+    }
+
+    let twins = glob ($pubkeys_dir | path join "*.pub") | where {|f| (canonical-file $f) == $canon }
+    if ($twins | is-not-empty) {
+        # Why an error and not a second copy: `ssh-sign` finds the signer name
+        # by matching key material, so a duplicate under another stem makes
+        # every later signature fail with `multiple pubkeys match`.
+        error make {msg: $"this key \((fingerprint $canon)\) is already registered as ($twins | first | path relative-to $root) — a second copy under another name makes the signer ambiguous when signing"}
+    }
+    true
+}
+
+# Canonical bytes of an already-registered pubkey file, naming the file when it
+# is not one. Fail loudly: a file in pubkeys/ that is not a public key is a
+# broken trust list, not something to skip over.
+def canonical-file [file: path]: nothing -> string {
+    try {
+        open --raw $file | pubkey canonical
+    } catch {|e|
+        error make {msg: $"($file) is not an SSH public key: ($e.msg)"}
+    }
+}
+
+# SSH fingerprint of a canonical key line, for operator-facing messages only.
+# Falls back to the key line itself so a fingerprint failure never replaces the
+# real message.
+def fingerprint [key: string]: nothing -> string {
+    let out = $key | ^ssh-keygen -lf - | complete
+    if $out.exit_code == 0 {
+        $out.stdout | str trim | split row " " | get 1
+    } else {
+        $key | str trim
     }
 }
 
