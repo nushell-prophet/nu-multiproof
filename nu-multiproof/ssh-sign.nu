@@ -134,23 +134,26 @@ export def verify [
     let signers_file = mktemp
     $signers | save --force $signers_file
 
-    # Why the positional sig wins over discovery: `verify foo.csv.alice.sig`
-    # reads as "check alice's signature", but discovery would also pull in
-    # bob's — reporting on sigs the caller never named.
-    let sig_files = if $sig != null {
-        [$sig]
-    } else if $target.sig != null {
-        [$target.sig]
-    } else {
-        sig-files-for $path
-    }
+    # Why one cleanup point (same shape as `git-proof verify`): a thrown error
+    # below — a missing sig, an erroring ssh-keygen call — used to skip the
+    # `rm` and leak the file. Run the checks in a try, remove once, rethrow.
+    let results = try {
+        # Why the positional sig wins over discovery: `verify foo.csv.alice.sig`
+        # reads as "check alice's signature", but discovery would also pull in
+        # bob's — reporting on sigs the caller never named.
+        let sig_files = if $sig != null {
+            [$sig]
+        } else if $target.sig != null {
+            [$target.sig]
+        } else {
+            sig-files-for $path
+        }
 
-    if ($sig_files | is-empty) {
-        rm $signers_file
-        error make {msg: $"no signature files found for ($path)"}
-    }
+        if ($sig_files | is-empty) {
+            error make {msg: $"no signature files found for ($path)"}
+        }
 
-    let results = $sig_files | each {|sig_path|
+        $sig_files | each {|sig_path|
             # find-principals matches by public key alone (not the signature),
             # so exit 0 means "this sig's key is registered" — its stem is the
             # signer. It does not prove the content matches; verify does that.
@@ -185,8 +188,12 @@ export def verify [
                 }
             }
         }
+    } catch {|e|
+        rm --force $signers_file
+        error make {msg: $e.msg}
+    }
 
-    rm $signers_file
+    rm --force $signers_file
 
     if $fail {
         let bad = $results | where not valid
