@@ -246,6 +246,62 @@ def "verify rejects a bundle that proves no files" [] {
     assert ($outcome | str contains "proves nothing") $"expected empty-file-list rejection, got ($outcome)"
 }
 
+# The bundle declares its format; the verifier must read it. A v2 bundle read as
+# v1 would fail later as "content does not hash to its name", blaming the objects
+# for what is a format mismatch. Same category as a missing manifest.json — an
+# error, not a proof that failed.
+@test
+def "verify rejects an unknown bundle version" [] {
+    let proof_dir = $in.tmp_dir
+
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    let manifest_path = ($proof_dir | path join "manifest.json")
+    open $manifest_path | update version 2 | to json --indent 2 | save --force $manifest_path
+
+    let outcome = (try {
+        git-proof verify $proof_dir | ignore
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert ($outcome | str contains "unsupported proof bundle version") $"expected version rejection, got ($outcome)"
+}
+
+@test
+def "verify rejects a missing bundle version" [] {
+    let proof_dir = $in.tmp_dir
+
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    let manifest_path = ($proof_dir | path join "manifest.json")
+    open $manifest_path | reject version | to json --indent 2 | save --force $manifest_path
+
+    let outcome = (try {
+        git-proof verify $proof_dir | ignore
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str contains "unsupported proof bundle version: missing") $"expected missing-version rejection, got ($outcome)"
+}
+
+@test
+def "verify rejects an unknown object format" [] {
+    let proof_dir = $in.tmp_dir
+
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    let manifest_path = ($proof_dir | path join "manifest.json")
+    open $manifest_path | update object_format "sha1" | to json --indent 2 | save --force $manifest_path
+
+    let outcome = (try {
+        git-proof verify $proof_dir | ignore
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str contains "unsupported object format: sha1") $"expected object-format rejection, got ($outcome)"
+}
+
 # A path like `a/b` where `a` is a blob must fail-fast inside `extract`.
 # Previously, the cursor only advanced on trees, so `b` was searched in the
 # root tree — silently succeeding (when `b` was a sibling) or erroring with

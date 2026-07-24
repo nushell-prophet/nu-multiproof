@@ -365,6 +365,20 @@ export def verify [
         error make {msg: $"manifest.json not found in ($proof_dir)/"}
     }
     let manifest = (open $manifest_path)
+    # Read the format the bundle declares before trusting anything in it. Errors,
+    # not {valid: false}: a bundle this verifier cannot read is the same category
+    # as a missing manifest.json — not a proof that failed. Without the check, a
+    # future v2 (or SHA-1) bundle would be read as v1 and fail downstream as
+    # "content does not hash to its name", blaming the objects for a format
+    # mismatch. Checked before the temp repo is built, which hardcodes sha256.
+    let version = ($manifest | get --optional version | default "missing")
+    if $version != 1 {
+        error make {msg: $"unsupported proof bundle version: ($version) — expected 1"}
+    }
+    let object_format = ($manifest | get --optional object_format | default "missing")
+    if $object_format != "sha256" {
+        error make {msg: $"unsupported object format: ($object_format) — expected sha256"}
+    }
     # Why an error, not {valid: false}: a bundle claiming no files is malformed,
     # the same category as a missing manifest.json — not a proof that failed.
     # Every check below passes vacuously on it (objects re-hash fine, the
