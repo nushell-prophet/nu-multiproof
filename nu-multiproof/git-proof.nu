@@ -109,18 +109,26 @@ def extract-loose-objects [
     dest: path # Directory to receive loose objects
     --repo: path # Target git repo root
 ] {
+    # Why one cleanup point: a bare `rm` after the externals is never reached
+    # when pack-objects or unpack-objects throws, leaking the dir. Same shape
+    # `verify` uses — run the work in a try, remove the dir once, rethrow.
     let tmp_dir = (^mktemp -d | str trim)
-    let hashes_file = ($tmp_dir | path join "hashes.txt")
-    let pack_file = ($tmp_dir | path join "pack.bin")
-    let bare_repo = ($tmp_dir | path join "bare-repo")
+    try {
+        let hashes_file = ($tmp_dir | path join "hashes.txt")
+        let pack_file = ($tmp_dir | path join "pack.bin")
+        let bare_repo = ($tmp_dir | path join "bare-repo")
 
-    $hashes | str join "\n" | save --force $hashes_file
-    ^git init --bare --object-format=sha256 $bare_repo o+e>| ignore
-    open --raw $hashes_file | ^git -C $repo pack-objects --stdout | save --raw --force $pack_file
-    open --raw $pack_file | ^git --git-dir $bare_repo unpack-objects
+        $hashes | str join "\n" | save --force $hashes_file
+        ^git init --bare --object-format=sha256 $bare_repo o+e>| ignore
+        open --raw $hashes_file | ^git -C $repo pack-objects --stdout | save --raw --force $pack_file
+        open --raw $pack_file | ^git --git-dir $bare_repo unpack-objects
 
-    copy-loose-objects ($bare_repo | path join "objects") $dest
-    rm --recursive $tmp_dir
+        copy-loose-objects ($bare_repo | path join "objects") $dest
+    } catch {|e|
+        rm --recursive --force $tmp_dir
+        error make {msg: $e.msg}
+    }
+    rm --recursive --force $tmp_dir
 }
 
 # Extract a merkle proof bundle for given files at a given commit
