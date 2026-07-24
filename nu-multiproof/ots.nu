@@ -21,6 +21,11 @@ const TAG_FORK = 0xff
 const ATT_PENDING = 0x[83dfe30d2ef90c8e]
 const ATT_BITCOIN = 0x[0588960d73d71901]
 const DEFAULT_CALENDAR = "https://a.pool.opentimestamps.org"
+# Every outbound call is bounded. Without it a black-holed connection hangs
+# `stamp`, `upgrade` and `verify` with no output and no way back but Ctrl-C —
+# and `seal` runs `upgrade` over every archived stamp in a loop. 30s is well
+# past the calendars' and explorers' normal response time.
+const NETWORK_TIMEOUT = 30sec
 # Esplora-compatible block explorers, queried independently and cross-checked
 # so verification never rests on a single source. Both expose the same routes:
 #   /block-height/<h> -> block hash   and   /block/<hash>/header -> raw 80 bytes.
@@ -209,7 +214,7 @@ export def stamp [file: path --out-dir: path] {
     # exposes the status, --allow-errors returns a non-200 instead of throwing
     # raw, and /digest expects raw bytes (application/octet-stream).
     let response = (
-        http post --full --allow-errors
+        http post --full --allow-errors --max-time $NETWORK_TIMEOUT
         --content-type "application/octet-stream"
         $"($DEFAULT_CALENDAR)/digest"
         $merkle_tip
@@ -315,7 +320,7 @@ export def upgrade [ots_file: path --response-file: path] {
         let hash_hex = $current_hash | encode hex | str lowercase
         let url = $"($parsed.attestation.url)/timestamp/($hash_hex)"
         let response = (
-            http get --full --allow-errors
+            http get --full --allow-errors --max-time $NETWORK_TIMEOUT
             --headers {Accept: "application/vnd.opentimestamps.v1"}
             $url
         )
@@ -384,7 +389,7 @@ def emit-verify [result: record, fail: bool]: nothing -> record {
 # GET an Esplora endpoint, returning its trimmed text body or null on any
 # non-200 / transport error (so a single flaky mirror doesn't abort the run).
 def esplora-get [url: string]: nothing -> any {
-    let r = try { http get --full --allow-errors $url } catch { return null }
+    let r = try { http get --full --allow-errors --max-time $NETWORK_TIMEOUT $url } catch { return null }
     if $r.status != 200 { return null }
     $r.body | into string | str trim
 }
