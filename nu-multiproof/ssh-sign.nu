@@ -134,9 +134,9 @@ export def verify [
     let signers_file = mktemp
     $signers | save --force $signers_file
 
-    # Why one cleanup point (same shape as `git-proof verify`): a thrown error
-    # below — a missing sig, an erroring ssh-keygen call — used to skip the
-    # `rm` and leak the file. Run the checks in a try, remove once, rethrow.
+    # Why finally: a thrown error below — a missing sig, an erroring ssh-keygen
+    # call — used to skip the `rm` and leak the file. The earlier catch-and-
+    # rethrow form cleaned up but replaced the error with a bare message.
     let results = try {
         # Why the positional sig wins over discovery: `verify foo.csv.alice.sig`
         # reads as "check alice's signature", but discovery would also pull in
@@ -188,12 +188,9 @@ export def verify [
                 }
             }
         }
-    } catch {|e|
+    } finally {
         rm --force $signers_file
-        error make {msg: $e.msg}
     }
-
-    rm --force $signers_file
 
     if $fail {
         let bad = $results | where not valid

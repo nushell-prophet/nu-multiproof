@@ -7,6 +7,7 @@ use cid-v0.nu
 use cid-v0.nu MAX_SINGLE_CHUNK
 use _repo.nu repo-root
 use _layout.nu [MULTIPROOFS_DIR multiproofs-dir manifest-path]
+use _temp-helpers.nu [with-temp-dir with-temp-file]
 
 # IPFS CID parameters shared by the pure-nu reproduction (cid-v0.nu) and the
 # ipfs CLI, so the two agree. To reproduce a name hash: printf '%s' 'name' | ipfs add ...
@@ -128,40 +129,38 @@ def build-tree [
         # Stage tracked files into a temp dir and ipfs-add that — so the CIDs
         # cover exactly the manifest file set. Not `ipfs add -r $root` because:
         # it walks .git/ and ignored files, polluting directory CIDs.
-        let tmp = $nu.temp-dir | path join $"nu-multiproof-build-tree-ipfs-(random uuid)"
-        rm --recursive --force $tmp
-        mkdir $tmp
-        $tracked_files | each {|f|
-            let dest = $tmp | path join $f
-            mkdir ($dest | path dirname)
-            cp ($root | path join $f) $dest
-        }
-        let tmp_basename = $tmp | path basename
-        let publish_flags = if $publish_to_ipfs { [] } else { ["--only-hash"] }
-        # Why complete: on failure (notably `ipfs` repo-lock contention when
-        # another add runs concurrently) stdout is empty and the root-row lookup
-        # below would crash with a cryptic index error. Surface the ipfs stderr.
-        # Why --hidden: ipfs add skips dotfiles by default, silently dropping
-        # tracked dotfiles (.gitignore) from the add — and thus from the dir and
-        # root CIDs the seal signs. Safe here: the staging dir holds only
-        # tracked files, so there is no .git/ or ignored noise to pick up.
-        # Not in IPFS_CID_FLAGS because: that const is the hashing parameters
-        # shared with cid-v0.nu; --hidden is a traversal flag.
-        let add = ^ipfs add --recursive --hidden ...$publish_flags ...$IPFS_CID_FLAGS $tmp | complete
-        rm --recursive --force $tmp
-        if $add.exit_code != 0 {
-            error make {msg: $"ipfs add failed: ($add.stderr | str trim)"}
-        }
-        let rows = $add.stdout | lines | parse "added {cid} {path}"
-        # The row whose path is the bare staging basename (no slash) is the root.
-        let root_cid = $rows | where path == $tmp_basename | get cid.0
-        let table = $rows
-            | where path != $tmp_basename
-            | reduce --fold {} {|row acc|
-                let rel = $row.path | str replace $"($tmp_basename)/" ""
-                $acc | insert $rel $row.cid
+        with-temp-dir "build-tree-ipfs" {|tmp|
+            $tracked_files | each {|f|
+                let dest = $tmp | path join $f
+                mkdir ($dest | path dirname)
+                cp ($root | path join $f) $dest
             }
-        {table: $table root_cid: $root_cid}
+            let tmp_basename = $tmp | path basename
+            let publish_flags = if $publish_to_ipfs { [] } else { ["--only-hash"] }
+            # Why complete: on failure (notably `ipfs` repo-lock contention when
+            # another add runs concurrently) stdout is empty and the root-row lookup
+            # below would crash with a cryptic index error. Surface the ipfs stderr.
+            # Why --hidden: ipfs add skips dotfiles by default, silently dropping
+            # tracked dotfiles (.gitignore) from the add — and thus from the dir and
+            # root CIDs the seal signs. Safe here: the staging dir holds only
+            # tracked files, so there is no .git/ or ignored noise to pick up.
+            # Not in IPFS_CID_FLAGS because: that const is the hashing parameters
+            # shared with cid-v0.nu; --hidden is a traversal flag.
+            let add = ^ipfs add --recursive --hidden ...$publish_flags ...$IPFS_CID_FLAGS $tmp | complete
+            if $add.exit_code != 0 {
+                error make {msg: $"ipfs add failed: ($add.stderr | str trim)"}
+            }
+            let rows = $add.stdout | lines | parse "added {cid} {path}"
+            # The row whose path is the bare staging basename (no slash) is the root.
+            let root_cid = $rows | where path == $tmp_basename | get cid.0
+            let table = $rows
+                | where path != $tmp_basename
+                | reduce --fold {} {|row acc|
+                    let rel = $row.path | str replace $"($tmp_basename)/" ""
+                    $acc | insert $rel $row.cid
+                }
+            {table: $table root_cid: $root_cid}
+        }
     } else {
         {table: {} root_cid: null}
     }
@@ -175,18 +174,16 @@ def build-tree [
     let git_hashes = if ($tracked_files | is-empty) {
         {}
     } else {
-        let tmp_index = $nu.temp-dir | path join $"nu-multiproof-build-tree-index-(random uuid)"
-        rm --force $tmp_index
         # Why -z on all three: same core.quotePath issue as ls-files above —
         # ls-tree C-quotes non-ASCII paths, so the git_hashes lookup by raw
         # path would silently miss them.
-        let ls_tree = with-env {GIT_INDEX_FILE: $tmp_index} {
-            $tracked_files | str join (char -i 0) | ^git -C $root update-index --add -z --stdin
-            let tree = ^git -C $root write-tree | str trim
-            ^git -C $root ls-tree -r -t -z $tree
+        with-temp-file "build-tree-index" {|tmp_index|
+            with-env {GIT_INDEX_FILE: $tmp_index} {
+                $tracked_files | str join (char -i 0) | ^git -C $root update-index --add -z --stdin
+                let tree = ^git -C $root write-tree | str trim
+                ^git -C $root ls-tree -r -t -z $tree
+            }
         }
-        rm --force $tmp_index
-        $ls_tree
         | split row (char -i 0)
         | where { $in != "" }
         | parse "{mode} {type} {hash}\t{path}"

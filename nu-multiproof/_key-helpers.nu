@@ -63,14 +63,12 @@ export def with-signing-key [
     } else {
         resolve-signing-key --root $root
     }
-    # Why try/rethrow (same shape as `git-proof verify`): a failed signing
-    # ceremony must not skip the cleanup.
-    let out = try {
+    # Why finally, not catch-and-rethrow: a failed signing ceremony must not
+    # skip the cleanup, and `error make {msg: $e.msg}` would drop the original
+    # error's span, labels, help and inner error on the way out.
+    try {
         do $action $resolved.path
-    } catch {|e|
+    } finally {
         if $resolved.temp { rm --force $resolved.path }
-        error make {msg: $e.msg}
     }
-    if $resolved.temp { rm --force $resolved.path }
-    $out
 }

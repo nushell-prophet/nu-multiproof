@@ -11,6 +11,7 @@
 
 use _repo.nu repo-root
 use _layout.nu pubkeys-dir
+use _temp-helpers.nu with-temp-dir
 use _allowed-signers.nu allowed-signers-body
 
 # --- Shared helpers ---
@@ -111,11 +112,9 @@ def extract-loose-objects [
     dest: path # Directory to receive loose objects
     --repo: path # Target git repo root
 ] {
-    # Why one cleanup point: a bare `rm` after the externals is never reached
-    # when pack-objects or unpack-objects throws, leaking the dir. Same shape
-    # `verify` uses — run the work in a try, remove the dir once, rethrow.
-    let tmp_dir = (^mktemp -d | str trim)
-    try {
+    # Why with-temp-dir: a bare `rm` after the externals is never reached when
+    # pack-objects or unpack-objects throws, leaking the dir.
+    with-temp-dir "git-proof-extract" {|tmp_dir|
         let hashes_file = ($tmp_dir | path join "hashes.txt")
         let pack_file = ($tmp_dir | path join "pack.bin")
         let bare_repo = ($tmp_dir | path join "bare-repo")
@@ -126,11 +125,7 @@ def extract-loose-objects [
         open --raw $pack_file | ^git --git-dir $bare_repo unpack-objects
 
         copy-loose-objects ($bare_repo | path join "objects") $dest
-    } catch {|e|
-        rm --recursive --force $tmp_dir
-        error make {msg: $e.msg}
     }
-    rm --recursive --force $tmp_dir
 }
 
 # Extract a merkle proof bundle for given files at a given commit
@@ -406,12 +401,10 @@ export def verify [
     print $"  Commit: ($manifest.commit | str substring 0..12)..."
     print $"  Files: ($manifest.files | length)"
 
-    # Set up isolated SHA-256 repo with proof objects. Why one cleanup point:
-    # a thrown error inside the checks (e.g. cat-file on a malformed object)
-    # used to leak this temp dir and skip the remaining legs. Run the checks
-    # in a try, remove the dir once, then rethrow.
-    let tmp_dir = (^mktemp -d | str trim)
-    let outcome = try {
+    # Set up isolated SHA-256 repo with proof objects. Why with-temp-dir: a
+    # thrown error inside the checks (e.g. cat-file on a malformed object) used
+    # to leak this temp dir and skip the remaining legs.
+    let outcome = with-temp-dir "git-proof-verify" {|tmp_dir|
         let tmp_repo = ($tmp_dir | path join "repo")
         ^git init --bare --object-format=sha256 $tmp_repo o+e>| ignore
         copy-loose-objects $objects_dir ($tmp_repo | path join "objects")
@@ -455,11 +448,7 @@ export def verify [
                 $base | merge {valid: $sig_result.valid structure_valid: true signature: $sig_result}
             }
         }
-    } catch {|e|
-        rm --recursive --force $tmp_dir
-        error make {msg: $e.msg}
     }
-    rm --recursive --force $tmp_dir
 
     # Why: callers checking only `.valid` must reject unsigned/wrongly-signed
     # bundles. `structure_valid` is exposed for callers that want each leg.
