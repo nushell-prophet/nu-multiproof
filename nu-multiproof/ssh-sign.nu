@@ -4,6 +4,7 @@ use _repo.nu repo-root
 use _layout.nu pubkeys-dir
 use _sig.nu [sig-files-for signer-from-sig]
 use _key-helpers.nu with-signing-key
+use _temp-helpers.nu with-temp-file
 use _fs.nu list-files
 use _allowed-signers.nu allowed-signers-body
 
@@ -132,13 +133,8 @@ export def verify [
     }
     # One allowed_signers file with every registered key (principal = stem), so
     # find-principals identifies the signer in a single call per sig.
-    let signers_file = mktemp
-    $signers | save --force $signers_file
-
-    # Why finally: a thrown error below — a missing sig, an erroring ssh-keygen
-    # call — used to skip the `rm` and leak the file. The earlier catch-and-
-    # rethrow form cleaned up but replaced the error with a bare message.
-    let results = try {
+    let results = with-temp-file "allowed-signers" {|signers_file|
+        $signers | save --force $signers_file
         # Why the positional sig wins over discovery: `verify foo.csv.alice.sig`
         # reads as "check alice's signature", but discovery would also pull in
         # bob's — reporting on sigs the caller never named.
@@ -189,8 +185,6 @@ export def verify [
                 }
             }
         }
-    } finally {
-        rm --force $signers_file
     }
 
     if $fail {
