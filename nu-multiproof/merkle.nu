@@ -172,7 +172,7 @@ export def verify [
     } else { null }
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING \(file absent on disk\)', null => 'not checked' })"
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', null => 'not checked' })"
     print $"ots:       ($ots_status.status)"
 
     if $fail and not $valid {
