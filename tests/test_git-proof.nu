@@ -184,6 +184,68 @@ def "verify rejects a bundle with tampered object content" [] {
     assert ($result.error | str contains "object hash") $"expected object-hash failure, got ($result.error)"
 }
 
+# The same substitution, but the attacker also edits manifest.json — which ships
+# inside the bundle they control. Emptying `objects` used to walk the integrity
+# check past every object ("OK: all 0 objects verified"), after which the merkle
+# walk read the tampered bytes through `git cat-file` (which does not re-hash)
+# and the genuine commit signature carried the bundle to `valid: true`.
+# The verified set must come from the filesystem, never from the manifest.
+@test
+def "verify rejects a tampered object dropped from the manifest object list" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    let proof = $"($tmp_dir)/proof"
+    mkdir $repo
+    ^git -C $repo init --object-format=sha256 -q
+    ^git -C $repo config user.email "test@example.com"
+    ^git -C $repo config user.name "test"
+
+    "REAL CONTENT\n" | save --force $"($repo)/secret.txt"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo commit -m init o+e>| ignore
+
+    let evil_oid = ("EVIL FORGED CONTENT\n" | ^git -C $repo hash-object -w --stdin | str trim)
+
+    git-proof extract secret.txt --repo $repo --out-dir $proof
+
+    let blob_oid = (open ($proof | path join "manifest.json") | get files.0.hash)
+    let dst = ($proof | path join "objects" ($blob_oid | str substring 0..<2) ($blob_oid | str substring 2..))
+    let src = ($repo | path join ".git/objects" ($evil_oid | str substring 0..<2) ($evil_oid | str substring 2..))
+    ^chmod u+w $dst
+    cp $src $dst
+
+    # The manifest is the attacker's to edit — strip the list the check reads.
+    let manifest_path = ($proof | path join "manifest.json")
+    open $manifest_path | update objects [] | to json --indent 2 | save --force $manifest_path
+
+    let result = (git-proof verify $proof)
+    assert equal $result.valid false
+    assert equal $result.structure_valid false
+    assert ($result.error | str contains "object hash") $"expected object-hash failure, got ($result.error)"
+}
+
+# A bundle listing no files passes every check vacuously — objects re-hash, the
+# commit->tree link holds, the commit signature is genuine — so it reported
+# `valid: true` while proving nothing. `extract` refuses an empty file list; a
+# bundle that the producer cannot emit must not verify.
+@test
+def "verify rejects a bundle that proves no files" [] {
+    let proof_dir = $in.tmp_dir
+
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    let manifest_path = ($proof_dir | path join "manifest.json")
+    open $manifest_path | update files [] | to json --indent 2 | save --force $manifest_path
+
+    let outcome = (try {
+        git-proof verify $proof_dir | ignore
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert ($outcome | str contains "proves nothing") $"expected empty-file-list rejection, got ($outcome)"
+}
+
 # A path like `a/b` where `a` is a blob must fail-fast inside `extract`.
 # Previously, the cursor only advanced on trees, so `b` was searched in the
 # root tree — silently succeeding (when `b` was a sibling) or erroring with

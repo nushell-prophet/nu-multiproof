@@ -207,34 +207,41 @@ export def extract [
 
 # --- Verification ---
 
-# Verify object integrity by re-hashing each object and comparing to its oid.
+# Verify object integrity by re-hashing every object and comparing to its oid.
 # Why not trust `git cat-file`: it does NOT re-hash loose objects — a file
 # swapped under the same oid name reads back as the wrong content with exit 0,
 # so `cat-file -t` alone would pass a tampered bundle. Why not `git fsck`: it
 # rejects a legitimate partial bundle, reporting the unbundled sibling objects
-# a merkle proof deliberately omits as broken links. Re-hashing each bundled
-# object with `git hash-object` is the one check that catches altered content
-# without flagging those intentionally-absent siblings.
-def verify-object-hashes [
-    repo: path
-    objects: list<record<hash: string, type: string>>
-]: nothing -> table<hash: string, valid: bool> {
-    $objects | each {|obj|
-        let type_result = (do { ^git --git-dir $repo cat-file -t $obj.hash } | complete)
+# a merkle proof deliberately omits as broken links. Re-hashing each object with
+# `git hash-object` is the one check that catches altered content without
+# flagging those intentionally-absent siblings.
+#
+# Why the object set comes from the filesystem, not manifest.json: the manifest
+# ships INSIDE the bundle, so whoever tampers with an object also controls the
+# list naming it. Dropping the tampered oid from `objects` (or emptying the
+# list outright) walked this check straight past it, while the merkle walk below
+# still read the tampered bytes through `git cat-file`. Enumerating what is
+# physically present makes the verified set a superset of everything the walk
+# can possibly read — `copy-loose-objects` only ever brings in `??/*`, so
+# nothing else is reachable. manifest.objects is now descriptive only.
+def verify-object-hashes [repo: path]: nothing -> table<hash: string, valid: bool> {
+    glob ($repo | path join "objects" "??" "*") | each {|file|
+        let oid = $"($file | path dirname | path basename)($file | path basename)"
+        let type_result = (do { ^git --git-dir $repo cat-file -t $oid } | complete)
         if $type_result.exit_code != 0 {
-            {hash: $obj.hash valid: false error: ($type_result.stderr | str trim)}
+            {hash: $oid valid: false error: ($type_result.stderr | str trim)}
         } else {
             # Recompute the oid from the stored bytes. git derives it from scratch,
             # so a mismatch means the object's content was altered under its name.
             let type = ($type_result.stdout | str trim)
             let recomputed = (do {
-                ^git --git-dir $repo cat-file $type $obj.hash | ^git --git-dir $repo hash-object -t $type --stdin
+                ^git --git-dir $repo cat-file $type $oid | ^git --git-dir $repo hash-object -t $type --stdin
             } | complete)
-            let oid = ($recomputed.stdout | str trim)
-            if $recomputed.exit_code == 0 and $oid == $obj.hash {
-                {hash: $obj.hash valid: true type: $type}
+            let rehashed = ($recomputed.stdout | str trim)
+            if $recomputed.exit_code == 0 and $rehashed == $oid {
+                {hash: $oid valid: true type: $type}
             } else {
-                {hash: $obj.hash valid: false error: $"content does not hash to its name \(recomputed ($oid | str substring 0..12)...\)"}
+                {hash: $oid valid: false error: $"content does not hash to its name \(recomputed ($rehashed | str substring 0..12)...\)"}
             }
         }
     }
@@ -353,6 +360,15 @@ export def verify [
         error make {msg: $"manifest.json not found in ($proof_dir)/"}
     }
     let manifest = (open $manifest_path)
+    # Why an error, not {valid: false}: a bundle claiming no files is malformed,
+    # the same category as a missing manifest.json — not a proof that failed.
+    # Every check below passes vacuously on it (objects re-hash fine, the
+    # commit->tree link holds, the commit signature is genuine), so it used to
+    # report `valid: true` for a proof of nothing. `extract` already refuses an
+    # empty file list; the verifier must not accept what the producer can't emit.
+    if ($manifest.files | is-empty) {
+        error make {msg: $"($proof_dir)/manifest.json lists no files — the bundle proves nothing"}
+    }
     let objects_dir = ($proof_dir | path join "objects")
 
     print "Verifying proof bundle..."
@@ -369,9 +385,10 @@ export def verify [
         ^git init --bare --object-format=sha256 $tmp_repo o+e>| ignore
         copy-loose-objects $objects_dir ($tmp_repo | path join "objects")
 
-        # Step 1: Object integrity — git rejects any object whose content doesn't match its SHA-256 name
+        # Step 1: Object integrity — every object physically in the bundle must
+        # hash to the name it is stored under
         print "\n1. Verifying object integrity..."
-        let hash_results = (verify-object-hashes $tmp_repo $manifest.objects)
+        let hash_results = (verify-object-hashes $tmp_repo)
         let invalid = ($hash_results | where valid == false)
 
         # Uniform record shape across every exit (kinder to scripts than the old
