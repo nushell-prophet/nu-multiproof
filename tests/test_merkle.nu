@@ -255,6 +255,38 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
     assert equal $dir_result.content_verified null
 }
 
+# Every discovery step here (pubkeys for the allowed_signers body, the signer
+# lookup, sig files beside the root statement, archived OTS bundles) used to
+# build a glob pattern by interpolating a directory path. A repo checked out
+# under a name holding `[`, `]`, `*` or `?` made those patterns match nothing,
+# and the failures were silent: no keys in the trust list, no signature found.
+@test
+def "signed roundtrip works when the repo path holds glob metacharacters" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/re[po] v*1?"
+    mkdir $repo
+    ^git -C $repo init -q
+    "hello\n" | save --force $"($repo)/README.md"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    tree-hashes --repo $repo
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+
+    let root_result = merkle root --repo $repo
+    # --name is not passed: the signer name comes from matching key material
+    # against the registered pubkeys, which is one of the discovery steps.
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+
+    let result = merkle verify (merkle prove README.md --repo $repo) --repo $repo
+    assert $result.valid "a repo path with glob metacharacters broke the roundtrip"
+    assert equal ($result.signatures | where valid | length) 1
+    assert equal $result.signatures.0.signer "sshkey"
+}
+
 @test
 def "tampered leaf, changed content, and unsigned root are each caught" [] {
     let tmp_dir = $in.tmp_dir

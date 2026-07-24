@@ -5,6 +5,7 @@ use ssh-sign.nu
 use _repo.nu repo-root
 use _layout.nu [manifest-path merkle-root-path ots-dir pubkeys-dir]
 use _sig.nu sig-files-for
+use _fs.nu list-files
 use _key-helpers.nu with-signing-key
 
 # Full seal pipeline: hash+root-cid → sign → stamp.
@@ -51,7 +52,7 @@ export def main [
     # 1. Upgrade pending OTS — every seal progresses previous seals automatically,
     #    so there's no need for a separate upgrade command
     if ($ots_dir | path exists) {
-        glob ($ots_dir | path join "**/*.ots") | each {|ots_file|
+        list-files $ots_dir --recursive --suffix ".ots" | each {|ots_file|
             try { ots upgrade $ots_file } catch {|e|
                 # Why: "not yet confirmed" is the normal case — Bitcoin
                 # confirmation takes hours/days, so skip it quietly. Anything

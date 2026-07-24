@@ -7,6 +7,7 @@
 # Tree spec: README.md "Merkle inclusion proofs"; primitives: _merkle-helpers.nu.
 
 use _repo.nu repo-root
+use _fs.nu [list-files list-dirs]
 use _layout.nu [manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir MERKLE_ROOT_FILE]
 use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
@@ -157,7 +158,10 @@ export def verify [
     # archival, so "no stamp commits to THIS root" is absent, not invalid.
     let root_hash = open --raw $root_file | hash sha256
     let root_stem = $MERKLE_ROOT_FILE | path parse | get stem
-    let matching_ots = glob ((ots-dir $target) | path join $"($root_stem).*" "*.ots")
+    let matching_ots = list-dirs (ots-dir $target)
+        | where {|d| ($d | path basename | str starts-with $"($root_stem).") }
+        | each {|d| list-files $d --suffix ".ots" }
+        | flatten
         | each {|f|
             # A corrupt/truncated archival .ots must not block verification of
             # an unrelated proof — skip it with a note and keep looking.
@@ -172,7 +176,7 @@ export def verify [
     let ots_status = if ($matching_ots | is-empty) {
         {status: "absent" ots: null}
     } else {
-        # Prefer an anchored match: glob order can put an archived
+        # Prefer an anchored match: listing order can put an archived
         # still-pending <stem>.<timestamp>.ots before the anchored <stem>.ots.
         let anchored = $matching_ots | where type == "bitcoin"
         let pick = if ($anchored | is-not-empty) { $anchored | first } else { $matching_ots | first }

@@ -2,6 +2,7 @@
 
 use _repo.nu repo-root
 use _layout.nu [multiproofs-dir pubkeys-dir]
+use _fs.nu list-files
 use pubkey.nu
 
 # Initialize multiproofs/ structure in a git repo.
@@ -109,7 +110,7 @@ def check-registration [
         ] | str join "\n")}
     }
 
-    let twins = glob ($pubkeys_dir | path join "*.pub") | where {|f| (canonical-file $f) == $canon }
+    let twins = list-files $pubkeys_dir --suffix ".pub" | where {|f| (canonical-file $f) == $canon }
     if ($twins | is-not-empty) {
         # Why an error and not a second copy: `ssh-sign` finds the signer name
         # by matching key material, so a duplicate under another stem makes

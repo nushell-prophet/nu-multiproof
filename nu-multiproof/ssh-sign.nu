@@ -4,6 +4,7 @@ use _repo.nu repo-root
 use _layout.nu pubkeys-dir
 use _sig.nu [sig-files-for signer-from-sig]
 use _key-helpers.nu with-signing-key
+use _fs.nu list-files
 use _allowed-signers.nu allowed-signers-body
 
 # Extract algorithm + base64 blob from a public key line, dropping the trailing comment.
@@ -23,7 +24,7 @@ def lookup-signer-name [key: path pubkeys_dir: path]: nothing -> string {
     }
     let signing = open --raw $pub_path | pubkey-material
 
-    let matches = glob ($pubkeys_dir | path join "*.pub")
+    let matches = list-files $pubkeys_dir --suffix ".pub"
         | each {|file|
             let registered = open --raw $file | pubkey-material
             if $registered == $signing { $file | path parse | get stem } else { null }

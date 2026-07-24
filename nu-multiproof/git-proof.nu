@@ -12,6 +12,7 @@
 use _repo.nu repo-root
 use _layout.nu pubkeys-dir
 use _temp-helpers.nu with-temp-dir
+use _fs.nu [list-files list-dirs]
 use _allowed-signers.nu allowed-signers-body
 
 # --- Shared helpers ---
@@ -38,10 +39,20 @@ def parse-commit-tree []: string -> string {
     | str replace "tree " ""
 }
 
+# Loose object files under an objects/ directory: `<2 hex chars>/<rest of oid>`.
+# Packed objects live in `pack/` and are deliberately not matched — everything
+# this module produces and reads is loose.
+def loose-object-files [objects_dir: path]: nothing -> list<path> {
+    list-dirs $objects_dir
+    | where {|d| ($d | path basename | str length) == 2 }
+    | each {|d| list-files $d }
+    | flatten
+}
+
 # Copy git loose objects between directories
 def copy-loose-objects [src: path dest: path] {
     let src = $src | path expand
-    glob ($src | path join "??/*") | each {|file|
+    loose-object-files $src | each {|file|
         let rel = ($file | path relative-to $src)
         mkdir ($dest | path join $rel | path dirname)
         cp $file ($dest | path join $rel)
@@ -192,7 +203,7 @@ export def extract [
     mkdir $pubkeys_dir
     let repo_pubkeys = pubkeys-dir $root
     if ($repo_pubkeys | path exists) {
-        glob ($repo_pubkeys | path join "*.pub") | each {|file| cp $file $pubkeys_dir }
+        list-files $repo_pubkeys --suffix ".pub" | each {|file| cp $file $pubkeys_dir }
     }
 
     # Write manifest
@@ -237,7 +248,7 @@ export def extract [
 # can possibly read — `copy-loose-objects` only ever brings in `??/*`, so
 # nothing else is reachable. manifest.objects is now descriptive only.
 def verify-object-hashes [repo: path]: nothing -> table<hash: string, valid: bool> {
-    glob ($repo | path join "objects" "??" "*") | each {|file|
+    loose-object-files ($repo | path join "objects") | each {|file|
         let oid = $"($file | path dirname | path basename)($file | path basename)"
         let type_result = (do { ^git --git-dir $repo cat-file -t $oid } | complete)
         if $type_result.exit_code != 0 {
