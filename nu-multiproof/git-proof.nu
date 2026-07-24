@@ -208,7 +208,9 @@ export def extract [
         tree: $tree_hash
         files: $target_files
         objects: ($unique_objects | select hash type)
-        pubkeys: (ls $pubkeys_dir | get name | each { path basename })
+        # Why --all: the copy above is a glob, which matches dotfiles, so plain
+        # `ls` listed fewer keys than the bundle actually carries.
+        pubkeys: (ls --all $pubkeys_dir | get name | each { path basename })
     }
     $manifest | to json --indent 2 | save --force ($out_dir | path join "manifest.json")
 

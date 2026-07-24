@@ -62,6 +62,20 @@ def "discovery ignores sigs of a different file" [] {
     assert equal $found ["doc.txt.alice.sig"]
 }
 
+# A dotfile's sigs are dotfiles too. Plain `ls` hides them, which lost
+# `.env.alice.sig` for verify and left it stale through seal's clearing step.
+@test
+def "discovery finds sigs of a dotfile" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/.env"
+    "content" | save --force $file
+    "sig" | save --force $"($file).sig"
+    "sig" | save --force $"($file).alice.sig"
+
+    let found = sig-files-for $file | each {|f| $f | path basename } | sort
+    assert equal $found [".env.alice.sig" ".env.sig"]
+}
+
 @test
 def "discovery returns an empty list when nothing is signed" [] {
     let tmp_dir = $in.tmp_dir
@@ -69,6 +83,14 @@ def "discovery returns an empty list when nothing is signed" [] {
     "content" | save --force $file
 
     assert equal (sig-files-for $file) []
+}
+
+# Discovery over a directory that does not exist yet is "nothing signed", not a
+# failure — seal clears sigs for targets whose parent dir it has not created.
+@test
+def "discovery returns an empty list when the directory is absent" [] {
+    let tmp_dir = $in.tmp_dir
+    assert equal (sig-files-for $"($tmp_dir)/no-such-dir/doc.txt") []
 }
 
 # Discovery and naming encode one grammar; they must agree on which discovered

@@ -10,11 +10,20 @@
 # pattern, so `[`, `*` or `?` in a filename made its named sigs invisible —
 # this module exists to keep that grammar in one place, and losing sigs is the
 # very drift it must prevent. Listing the directory and comparing basenames
-# treats every character literally.
+# treats every character literally (a variable passed to `ls` is a path, not a
+# pattern).
+#
+# Why --all: sigs of a dotfile are dotfiles too, and plain `ls` hides them —
+# `.env.alice.sig` was invisible, so verify reported "no signature files" and
+# seal's clearing step left a stale sig behind.
 export def sig-files-for [path: path]: nothing -> list<path> {
     let base = $path | path basename
     let dir = $path | path dirname
-    let entries = ls (if ($dir | is-empty) { "." } else { $dir }) | get name
+    let dir = if ($dir | is-empty) { "." } else { $dir }
+    # No directory, no signatures — the same answer the previous glob-based
+    # discovery gave. Callers clear sigs before the dir is created.
+    if not ($dir | path exists) { return [] }
+    let entries = ls --all $dir | get name
     let bare_base = $"($base).sig"
     let named = $entries | where {|f|
         let f_base = $f | path basename
