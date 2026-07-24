@@ -114,10 +114,7 @@ def walk-tree-path [
 #
 # The SHA-256 object format is hardcoded, not read from the source: `extract`
 # already refuses any repo whose extensions.objectFormat is not sha256, so the
-# two always agree. This is not a SHA-1→SHA-256 conversion — tree object bodies
-# encode child references as raw hash bytes, which `git unpack-objects` does not
-# rewrite, so a SHA-1 source would need tree rewriting (out of scope) to produce
-# a self-consistent bundle.
+# two always agree.
 def extract-loose-objects [
     hashes: list<string> # Object hashes to extract
     dest: path # Directory to receive loose objects
@@ -152,11 +149,18 @@ export def extract [
     }
 
     let root = repo-root $repo
-    # Why: tree objects encode children as raw hash bytes; SHA-1 sources would
-    # need tree rewriting to produce a self-consistent SHA-256 bundle.
-    let src_format = (^git -C $root config extensions.objectFormat | complete | get stdout | str trim)
+    # Why refuse rather than emit a SHA-1 bundle: nothing here converts hashes —
+    # a SHA-1 source could produce a native SHA-1 bundle if the three hardcoded
+    # --object-format=sha256 sites read the format instead. The blocker is that
+    # the proof would then rest on SHA-1 collision resistance: chosen-prefix
+    # collisions have been practical since 2019, so one path from a signed commit
+    # to a blob can be made to fit a second, different blob. Git's sha1dc
+    # detection catches known techniques, which is a patch, not a proof.
+    # git writes extensions.objectFormat only for sha256 repos; absent means sha1.
+    let declared = (^git -C $root config extensions.objectFormat | complete | get stdout | str trim)
+    let src_format = if ($declared | is-empty) { "sha1" } else { $declared }
     if $src_format != "sha256" {
-        error make {msg: $"git-proof requires a SHA-256 repo \(extensions.objectFormat=sha256\); source is '($src_format)'"}
+        error make {msg: $"git-proof requires a SHA-256 repo \(extensions.objectFormat=sha256\); source is '($src_format)' — a SHA-1 merkle path is not accepted as evidence"}
     }
     let commit_hash = (^git -C $root rev-parse $commit | str trim)
     let tree_hash = (^git -C $root cat-file -p $commit_hash | parse-commit-tree)

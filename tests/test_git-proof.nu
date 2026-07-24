@@ -356,6 +356,32 @@ def "extract errors when path descends into a blob without sibling" [] {
     assert (not ($proof_dir | path exists)) "proof dir created despite error"
 }
 
+@test
+def "extract refuses a sha1 repo" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    let proof_dir = $"($tmp_dir)/proof"
+    mkdir $repo
+    ^git -C $repo init --object-format=sha1 -q
+    ^git -C $repo config user.email "test@example.com"
+    ^git -C $repo config user.name "test"
+
+    "blob a" | save --force $"($repo)/a"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo commit -m init o+e>| ignore
+
+    let outcome = (try {
+        git-proof extract "a" --repo $repo --out-dir $proof_dir
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    # Why the name: git leaves extensions.objectFormat unset on a sha1 repo, so
+    # the message used to report an empty format for every standard repo.
+    assert ($outcome | str contains "'sha1'") $"expected sha1 named in the error, got ($outcome)"
+    assert (not ($proof_dir | path exists)) "proof dir created despite error"
+}
+
 # With git's default core.quotePath=true, plain `ls-tree` renders a non-ASCII
 # name as "\321\204\320\260\320\271\320\273.md". The lookup by raw name then
 # never matched and `extract` reported the file as missing from its own tree.

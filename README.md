@@ -15,6 +15,8 @@ Proof of concept: Composable cryptographic proofs for git repositories, written 
 
 Each proof type is independent. Use one, two, or all three.
 
+Only the git merkle proof constrains the repo: `git-proof` requires SHA-256 object format (`extensions.objectFormat=sha256`) and refuses a SHA-1 repo. Not a technical limit — a SHA-1 source could produce a native SHA-1 bundle — but a SHA-1 path from a signed commit to a blob is not evidence: chosen-prefix collisions on SHA-1 have been practical since 2019, so the same path can be made to fit a second, different blob. Git's `sha1dc` detection catches known collision techniques, which is a patch, not collision resistance. The other proof types hash file contents themselves and work on any repo.
+
 ## Quick start
 
 ```nushell no-run
@@ -58,7 +60,7 @@ nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.js
 ## Prerequisites
 
 - [Nushell](https://www.nushell.sh/) — developed and tested on 0.114.1; the minimum supported version has not been established
-- `git` (SHA-256 repos supported)
+- `git` (any repo; `git-proof` additionally needs SHA-256 object format — see above)
 - `ssh-keygen` (for SSH signing)
 
 ### Testing
