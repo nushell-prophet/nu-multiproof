@@ -228,6 +228,11 @@ export def stamp [file: path --out-dir: path] {
         | bytes add --end $calendar_bytes
     )
 
+    # Why uppercase here while every other hex in this project is lowercase:
+    # `encode hex` emits uppercase and this prefix is only a directory name.
+    # The form is already baked into committed bundles (tree-root.050186F7)
+    # and documented in README.md, so the two conventions coexist on purpose —
+    # lowercase for hashes that are compared or sent, as-emitted for this name.
     let hash_prefix = $file_hash | encode hex | str substring 0..<8
     let stem = ($file | path parse | get stem)
 
@@ -299,7 +304,11 @@ export def upgrade [ots_file: path --response-file: path] {
         open --raw $response_file
     } else {
         let current_hash = $parsed.hash | replay-ops $parsed.ops
-        let hash_hex = $current_hash | encode hex
+        # Why str lowercase: same canonical-hex rule as `info` above. The
+        # reference calendar unhexlifies server-side and accepts either case,
+        # but this is the one hash this project sends off the machine — it
+        # should not ride on another server's undocumented tolerance.
+        let hash_hex = $current_hash | encode hex | str lowercase
         let url = $"($parsed.attestation.url)/timestamp/($hash_hex)"
         let response = (
             http get --full --allow-errors
