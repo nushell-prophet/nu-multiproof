@@ -247,6 +247,72 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
 }
 
 @test
+def "signer flag pins the principal, not just any registered key" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+
+    # Two registered keys, one signature: the fork-and-reseal shape — the
+    # attacker's key is in the bundle's own trust list
+    let alice = $"($tmp_dir)/alice"
+    let mallory = $"($tmp_dir)/mallory"
+    ^ssh-keygen -t ed25519 -f $alice -N "" -q
+    ^ssh-keygen -t ed25519 -f $mallory -N "" -q
+    let pubkeys = $"($repo)/multiproofs/pubkeys"
+    mkdir $pubkeys
+    cp $"($alice).pub" $"($pubkeys)/alice.pub"
+    cp $"($mallory).pub" $"($pubkeys)/mallory.pub"
+
+    let root_result = merkle root --repo $repo
+    ssh-sign sign $root_result.path --key $mallory --pubkeys-dir $pubkeys
+    let proof = merkle prove README.md --repo $repo
+
+    # Default: any key in the bundle's list satisfies valid — internal
+    # consistency only
+    assert (merkle verify $proof --repo $repo).valid
+
+    # Signature is cryptographically valid, but it is not alice's
+    let wrong = merkle verify $proof --repo $repo --signer alice
+    assert $wrong.structure_valid "structure must still verify"
+    assert not $wrong.valid "a signature from another principal was accepted"
+    assert ($wrong.error | str contains "alice")
+    assert equal ($wrong.signatures | where valid | get signer) [mallory]
+    assert error {|| merkle verify $proof --repo $repo --signer alice --fail }
+
+    assert (merkle verify $proof --repo $repo --signer mallory).valid
+}
+
+@test
+def "pubkeys-dir flag supplies the verifier trust list from outside the bundle" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle root --repo $repo
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let proof = merkle prove README.md --repo $repo
+
+    # Trust list held outside the artifact: same key, verifier's own copy
+    let trusted = $"($tmp_dir)/trusted"
+    mkdir $trusted
+    cp $"($key_path).pub" $"($trusted)/sshkey.pub"
+    assert (merkle verify $proof --repo $repo --pubkeys-dir $trusted).valid
+
+    # A trust list without the signer's key: the sig verifies cryptographically,
+    # but nobody the verifier trusts endorsed this root
+    let stranger_key = $"($tmp_dir)/stranger"
+    ^ssh-keygen -t ed25519 -f $stranger_key -N "" -q
+    let stranger_dir = $"($tmp_dir)/stranger-trust"
+    mkdir $stranger_dir
+    cp $"($stranger_key).pub" $"($stranger_dir)/stranger.pub"
+    let result = merkle verify $proof --repo $repo --pubkeys-dir $stranger_dir
+    assert $result.structure_valid
+    assert not $result.valid
+    assert equal ($result.signatures | get error) [unrecognized_signer]
+}
+
+@test
 def "portable bundle: proof verifies offline in a non-git directory" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir

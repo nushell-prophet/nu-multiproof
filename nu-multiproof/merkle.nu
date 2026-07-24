@@ -68,7 +68,10 @@ export def prove [
 
 # Verify an inclusion proof against the SIGNED root statement. Returns a
 # result record (mirrors git-proof verify), not a bare pass/fail:
-#   valid            — structure ok AND >=1 valid signature AND content not contradicted
+#   valid            — structure ok AND an accepted signature AND content not
+#                      contradicted. "Accepted" means >=1 valid signature from
+#                      any key in --pubkeys-dir, or — with --signer — a valid
+#                      signature from that principal.
 #   structure_valid  — leaf hash folds up the path to the signed root
 #   content_verified — on-disk file matches leaf.content_sha256; null when the
 #                      leaf attests no sha256 (directory rows and oversized
@@ -82,10 +85,17 @@ export def prove [
 #                      `ots verify` for the independent Bitcoin block check.
 # A proof whose embedded root differs from the signed root is a proof for a
 # DIFFERENT seal — that throws loudly instead of reporting invalid.
+#
+# The default trust list ships inside the artifact under examination, so a
+# default `valid: true` states "this bundle is internally consistent", not
+# "the signer I expect endorsed this". --pubkeys-dir and --signer are how the
+# verifier states, from outside the bundle, which keys it actually trusts.
 @example "verify a proof, failing on invalid (for CI)" { merkle verify proof.json --fail }
 export def verify [
     proof_file: path
     --repo: path # Target git repo root (default: git root of current directory)
+    --pubkeys-dir: path # Trusted *.pub directory (default: multiproofs/pubkeys of the target — i.e. the bundle's own keys)
+    --signer: string # Require a valid signature from this principal (pubkey stem), not merely from any registered key
     --fail # Exit non-zero when the result is not valid (for CI)
 ]: nothing -> record {
     let target = repo-root $repo
@@ -113,10 +123,19 @@ export def verify [
     # Signatures over the root statement (the authority). A consumer holding
     # only the structural proof gets a reported absence, not a crash — but
     # valid stays false without at least one valid signature.
+    let trusted_dir = $pubkeys_dir | default (pubkeys-dir $target)
     let sig_check = try {
-        {sigs: (ssh-sign verify $root_file --pubkeys-dir (pubkeys-dir $target)) error: null}
+        {sigs: (ssh-sign verify $root_file --pubkeys-dir $trusted_dir) error: null}
     } catch {|e| {sigs: [] error: $e.msg} }
-    let signed_ok = $sig_check.sigs | any { $in.valid }
+    # Why --signer narrows this: `any { $in.valid }` is the right rule only when
+    # the trust list came from outside. A list travelling inside the artifact
+    # proves internal consistency, not identity — fork, re-init with your own
+    # key, re-seal, and any-key acceptance calls it valid.
+    let signed_ok = if $signer != null {
+        $sig_check.sigs | any {|s| $s.valid and $s.signer == $signer }
+    } else {
+        $sig_check.sigs | any { $in.valid }
+    }
 
     # Content binding: without this the proof only shows the ROW was
     # catalogued, not that the on-disk FILE matches it.
@@ -168,7 +187,13 @@ export def verify [
     } else if $content_verified == "missing" {
         $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"
     } else if not $signed_ok {
-        $sig_check.error | default "no valid signature over the root statement"
+        $sig_check.error | default (
+            if $signer != null {
+                $"no valid signature from signer ($signer) over the root statement \(trusted keys: ($trusted_dir)\)"
+            } else {
+                $"no valid signature over the root statement \(trusted keys: ($trusted_dir)\)"
+            }
+        )
     } else { null }
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
