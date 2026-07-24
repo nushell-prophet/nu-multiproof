@@ -49,18 +49,21 @@ This module's output is evidence. A bug here does not crash — it returns `vali
 
 ## Nushell traps this repo has already hit
 
-- **Never pass a path that came from data to `glob`.** It reads `[ ] * ? {` as pattern syntax and silently returns nothing — a discovery loop then reports "0 objects verified" or "no stamp found" instead of failing. Use `ls --all $dir | get name | where ...`. Fixed once in `_sig.nu` (`bfca95e`), still open at 8 other sites.
-- **`ls` without `--all` hides dotfiles.** Any discovery over user-named files needs it — `.env.alice.sig` was invisible to signature discovery.
+- **Never pass a path that came from data to `glob`.** It reads `[ ] * ? {` as pattern syntax and silently returns nothing — a discovery loop then reports "0 objects verified" or "no stamp found" instead of failing. This includes a pattern *built* from a path: `glob ($dir | path join "*.pub")` returns `[]` for a repo checked out to `/src/re[po]/`. Use `_fs.nu list-files` / `list-dirs`.
+- **`ls` without `--all` hides dotfiles.** Any discovery over user-named files needs it — `.env.alice.sig` was invisible to signature discovery. `_fs.nu` already passes it; prefer that over a fresh `ls`.
+- **A temp path's lifetime belongs to a closure, not to a remembered `rm`.** Use `_temp-helpers.nu with-temp-dir` / `with-temp-file`. Hand-written create-work-remove skips the remove on every throw; that shape was fixed one instance at a time in six separate commits.
 - **Don't rewrap errors as `error make {msg: $e.msg}`** — it drops the span, label, help and inner error, leaving messages like a bare `Not found`. Use `try { ... } finally { cleanup }` for the cleanup case (0.111+).
 - **`open --raw` yields a *string* when the bytes happen to be valid UTF-8.** Add `| into binary` before any binary pipeline.
 - **External commands throw on non-zero exit, but their stderr never reaches `$e.msg`.** Use `do { ^cmd } | complete` wherever the failure is caught and reported to the user.
 - **Pass `--` before data-derived arguments** to `git` and `ssh-keygen`. `git verify-commit --help` exits 0.
-- **Every `http` call needs a timeout**, and a URL taken from a file is attacker-controlled input.
+- **Every `http` call needs a timeout** (`--max-time`), and a URL taken from a file is attacker-controlled input.
+
+Four of these are enforced by `tests/test_lint.nu`, not by memory: the glob rule, `ls --all`, the error rewrap and the http timeout. Adding a rule there is cheaper than re-finding the same defect. Each rule carries a sample of what it forbids, checked on every run, so a rule that quietly stops matching fails instead of passing.
 
 ## Command conventions
 
 - Every command that touches a repo takes `--repo` and resolves it through `_repo.nu repo-root`. A callee that resolves the CWD instead forces its caller into workarounds — see the two apology comments in `seal.nu`.
-- Paths come from `_layout.nu`, signature names from `_sig.nu`. Don't re-derive either grammar inline; that is how `ssh-sign verify` ended up resolving the wrong original file.
+- Paths come from `_layout.nu`, signature names from `_sig.nu`, directory listings from `_fs.nu`, temp paths from `_temp-helpers.nu`. Don't re-derive any of them inline; that is how `ssh-sign verify` ended up resolving the wrong original file.
 - `@example` must run offline in a throwaway directory. nutest does not execute them, so a broken one is invisible until a human tries it.
 
 ## Running tests
