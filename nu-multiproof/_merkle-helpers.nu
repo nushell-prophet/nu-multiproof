@@ -26,6 +26,15 @@ export def validate-leaf [row: record]: nothing -> nothing {
     if $row.filepath =~ '[\x00-\x1f]' {
         error make {msg: $"leaf filepath contains control bytes \(< 0x20\): ($row.filepath | to json)"}
     }
+    # Containment guard: `verify` joins the filepath onto the target dir and
+    # reads it, so an absolute path or a ".." component makes a proof verify
+    # against a file OUTSIDE the directory carrying it — a bundle then proves a
+    # file it does not contain, or one belonging to the verifier. git ls-files
+    # emits neither form, so nothing legitimate is rejected. "." is legal on
+    # purpose: it is the root-CID row (tree-hashes.nu).
+    if ($row.filepath | str starts-with "/") or (".." in ($row.filepath | path split)) {
+        error make {msg: $"leaf filepath must stay inside the repo — no leading / and no .. component: ($row.filepath | to json)"}
+    }
     if $row.content_sha256 != "" and $row.content_sha256 !~ '^[0-9a-f]{64}$' {
         error make {msg: $"leaf content_sha256 must be empty or 64 lowercase hex chars: ($row.content_sha256)"}
     }

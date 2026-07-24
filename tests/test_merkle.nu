@@ -145,6 +145,25 @@ def "newline in filepath is rejected - leaf forgery guard" [] {
 }
 
 @test
+def "a filepath escaping the repo is rejected - containment guard" [] {
+    # Without this, a proof's leaf can name a file OUTSIDE the directory the
+    # proof travels in: verify joins the two and reads whatever it lands on, so
+    # a bundle proves a file it does not contain — or one of the verifier's.
+    for bad in ["../outside.json" "links/../../outside.json" "/etc/passwd" ".."] {
+        let err = try {
+            validate-leaf {filepath: $bad content_sha256: "" content_git: "" content_cid: ""}
+            null
+        } catch {|e| $e.msg }
+        assert ($err != null) $"escaping filepath was accepted: ($bad)"
+        assert ($err | str contains "must stay inside the repo")
+    }
+    # "." is the root-CID row — legal, and a file named "..foo" is not a
+    # traversal either
+    validate-leaf {filepath: "." content_sha256: "" content_git: "" content_cid: ""}
+    validate-leaf {filepath: "..foo" content_sha256: "" content_git: "" content_cid: ""}
+}
+
+@test
 def "uppercase hex in a leaf is rejected, not normalized" [] {
     assert error {||
         validate-leaf {
