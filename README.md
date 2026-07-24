@@ -81,6 +81,8 @@ The root also authenticates the whole catalogue, indirectly: it is computed from
 
 A consumer's full artifact set: the proof file (`merkle prove <filepath>`), `tree-root.txt`, a `.sig` over it, the signer's pubkey from `multiproofs/pubkeys/`, and — for the time anchor — the `tree-root.*` OTS bundle.
 
+The trust list it checks against is, by default, the one inside the target — for a portable bundle, the bundle's own `multiproofs/pubkeys/`. A default `valid: true` therefore says the artifact set is internally consistent, not that the signer you expect endorsed it: anyone can fork the repo, `init` with their own key and re-`seal`. `--pubkeys-dir` points the check at a list you control, and `--signer <name>` requires a valid signature from that principal instead of from any registered key. Which keys count is a statement only the verifier can make — the same verifier-side policy described under "Verifying commit signatures" below.
+
 `merkle verify` folds the proof to the signed root, checks the SSH signatures over the root statement, re-hashes the on-disk file against the proven `content_sha256` when present, and reports the OTS anchor as a status (`absent`/`pending`/`anchored` — a fresh seal stays pending until Bitcoin confirms, hours or days). A proof whose embedded root differs from the signed root is for a different seal and fails loudly rather than reporting invalid.
 
 ### Verifying without the origin repo
@@ -201,6 +203,9 @@ Good "git" signature for * with ECDSA-SK key SHA256:7SOGNZ2C…
 ### Self-verifying proof bundles
 
 `git-proof verify <proof-bundle>` is the preferred verifier for historical commits packaged as proof bundles: it bundles its own pubkeys with the proof and verifies in a temp repo via `git -c`, with no `allowedSignersFile` setup needed and no dependence on the verifier's local trust at all.
+
+What a bundled trust list establishes is exactly that and no more: the bundle agrees with itself — its objects, its commit signature and its keys. It cannot establish identity, because the keys travel inside the thing under examination. To read the result as "this person signed it", check the bundled key against a list you hold yourself: `ssh-keygen -lf <bundle>/pubkeys/<signer>.pub` and compare fingerprints.
+
 ## License
 
 MIT
