@@ -97,13 +97,15 @@ def walk-tree-path [
 
 # --- Extraction ---
 
-# Extract loose objects from the source repo into a fresh bare repo
-# of the same object format, then copy them out.
+# Extract loose objects from the source repo into a fresh SHA-256 bare repo,
+# then copy them out.
 #
-# Not a SHA-1→SHA-256 conversion: tree object bodies encode child references
-# as raw hash bytes, which `git unpack-objects` does not rewrite. The bundle
-# format must match the source; cross-format conversion would need
-# tree-rewriting (out of scope). Caller must ensure source repo is SHA-256.
+# The SHA-256 object format is hardcoded, not read from the source: `extract`
+# already refuses any repo whose extensions.objectFormat is not sha256, so the
+# two always agree. This is not a SHA-1→SHA-256 conversion — tree object bodies
+# encode child references as raw hash bytes, which `git unpack-objects` does not
+# rewrite, so a SHA-1 source would need tree rewriting (out of scope) to produce
+# a self-consistent bundle.
 def extract-loose-objects [
     hashes: list<string> # Object hashes to extract
     dest: path # Directory to receive loose objects
