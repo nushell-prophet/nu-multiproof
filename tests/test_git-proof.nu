@@ -2,6 +2,11 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/git-proof.nu
+use ../nu-multiproof/_fs.nu list-files
+
+# A real key that signed nothing here — for tests that need a well-formed key
+# which is not the signer's.
+const OTHER_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOi7LinplEQewM3/l8Ol9rE85+YwhvLPKf+ZUUf36Xuf"
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -129,13 +134,14 @@ def "verify fails when bundled pubkey tampered" [] {
 
     git-proof extract LICENSE --commit $signed --out-dir $proof_dir
 
-    # Overwrite the matching pubkey with a malformed key. The allowedSignersFile
-    # parser flags the line "invalid key" and git verify-commit can no longer
-    # match the signer.
-    glob ($proof_dir | path join "pubkeys/*.pub") | each {|f|
+    # Swap the matching pubkey for a different, perfectly well-formed key.
+    # Why not a malformed line: that is refused while the trust list is being
+    # rendered (see below), which proves nothing about the signature check.
+    # This is the actual attack — a bundle carrying the wrong key.
+    list-files ($proof_dir | path join "pubkeys") --suffix ".pub" | each {|f|
         let fp = (^ssh-keygen -lf $f | split row " " | get 1)
         if $fp == $signer_fp {
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITAMPERED tampered" | save --force $f
+            $"($OTHER_KEY)\n" | save --force $f
         }
     }
 
@@ -143,6 +149,21 @@ def "verify fails when bundled pubkey tampered" [] {
     assert equal $result.signature.valid false
     assert equal $result.valid false
     assert equal $result.structure_valid true
+}
+
+# A bundle is untrusted input, so its pubkeys/ can hold anything. ssh-keygen
+# rejects a whole allowed_signers file over one bad entry, so rendering it
+# anyway would turn "this key is junk" into "no principal matched" for every
+# other signer in the bundle.
+@test
+def "verify refuses a bundle whose pubkey is not a public key" [] {
+    let proof_dir = $in.tmp_dir
+
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITAMPERED tampered\n" | save --force ($proof_dir | path join "pubkeys" "mallory.pub")
+
+    assert error {|| git-proof verify $proof_dir }
 }
 
 # A bundle whose object bytes were swapped under the same oid name must fail
