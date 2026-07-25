@@ -58,6 +58,19 @@ def "bad header rejected" [] {
     assert ($result != null)
 }
 
+# A short all-ASCII .ots is read back by `open --raw` as a *string*, not binary.
+# Before the `into binary` at the read sites this died with a bare `Type
+# mismatch`, hiding the real reason the file is not a proof.
+@test
+def "ascii file rejected as bad header, not type mismatch" [] {
+    let tmp_dir = $in.tmp_dir
+    let ots_path = $"($tmp_dir)/ascii.ots"
+    "not a proof" | save --raw --force $ots_path
+    let result = try { ots info $ots_path; null } catch { $in }
+    assert ($result != null)
+    assert str contains $result.msg "bad header magic"
+}
+
 @test
 def "fork produces error" [] {
     let forked = (

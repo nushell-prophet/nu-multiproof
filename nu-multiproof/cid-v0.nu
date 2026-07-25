@@ -57,8 +57,15 @@ def base58-encode []: binary -> string {
 }
 
 # Compute CID v0 from raw binary content in pure Nushell (must be ≤ 256 KB)
+#
+# Why string input is accepted: `open --raw f` collects to a *string* whenever
+# the file's bytes are valid UTF-8, so `open --raw README.md | cid-v0` — the
+# main way to use this command — hit a bare `Type mismatch` on a binary-only
+# signature. `into binary` on that string yields the same bytes back, so this
+# widens the accepted type without changing what gets hashed.
 @example "CID v0 of in-memory bytes" { "hello" | into binary | cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
-export def main []: binary -> string {
-    let hash_bytes = $in | unixfs-dag-pb | hash sha256 | decode hex
+@example "same bytes arriving as a string, as `open --raw` returns them" { "hello" | cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
+export def main []: [binary -> string, string -> string] {
+    let hash_bytes = $in | into binary | unixfs-dag-pb | hash sha256 | decode hex
     0x[1220] | bytes add --end $hash_bytes | base58-encode
 }

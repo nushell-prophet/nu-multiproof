@@ -181,7 +181,7 @@ def replay-ops [ops: list]: binary -> binary {
 # no string-building is needed.
 @example "read the attestation from a proof" { ots info proof.ots | get attestation }
 export def info [ots_file: path] {
-    let parsed = open --raw $ots_file | parse-ots
+    let parsed = open --raw $ots_file | into binary | parse-ots
     {
         # Why str lowercase: `encode hex` emits uppercase, but every persisted
         # hash in this project (tree-hashes.csv, git-proof manifests) is
@@ -375,7 +375,7 @@ export def stamp [file: path --out-dir: path --response-file: path] {
 # without a real calendar; also lets callers pre-fetch responses.
 @example "upgrade a pending proof once Bitcoin confirms it" { ots upgrade proof.ots }
 export def upgrade [ots_file: path --response-file: path] {
-    let buf = open --raw $ots_file
+    let buf = open --raw $ots_file | into binary
     let parsed = $buf | parse-ots
 
     if $parsed.attestation.type != "pending" {
@@ -383,7 +383,7 @@ export def upgrade [ots_file: path --response-file: path] {
     }
 
     let new_bytes = if $response_file != null {
-        open --raw $response_file
+        open --raw $response_file | into binary
     } else {
         let current_hash = $parsed.hash | replay-ops $parsed.ops
         # Why str lowercase: same canonical-hex rule as `info` above. The
@@ -495,7 +495,7 @@ export def verify [
     --sources: list<string> = $DEFAULT_EXPLORERS
     --fail # Exit non-zero on an invalid proof (for CI)
 ] {
-    let parsed = open --raw $ots_file | parse-ots
+    let parsed = open --raw $ots_file | into binary | parse-ots
 
     match $parsed.attestation.type {
         "pending" => { error make {msg: $"proof is still pending on calendar ($parsed.attestation.url) — run `ots upgrade` after Bitcoin confirms it, then verify"} }

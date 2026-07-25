@@ -2,6 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/cid-v0.nu
+use ../nu-multiproof/_temp-helpers.nu with-temp-dir
 
 # Test vectors precomputed with:
 # printf '<input>' | ipfs add --only-hash --quieter --cid-version=0 --raw-leaves=false --hash=sha2-256 --chunker=size-262144
@@ -24,6 +25,17 @@ def "single 0xFF byte" [] {
 @test
 def "hello world string" [] {
     assert equal ("hello world" | into binary | cid-v0) "Qmf412jQZiuVUtdgnB36FXFX7xg5V6KEbSJ4dpQuhkLyfD"
+}
+
+# `open --raw` on a UTF-8 file yields a string, not binary — the same bytes
+# through the type nushell actually hands back must give the same CID.
+@test
+def "utf-8 file read with open --raw" [] {
+    with-temp-dir "cid-utf8" {|dir|
+        let file = $dir | path join "hello.txt"
+        "hello world" | save --raw --force $file
+        assert equal (open --raw $file | cid-v0) "Qmf412jQZiuVUtdgnB36FXFX7xg5V6KEbSJ4dpQuhkLyfD"
+    }
 }
 
 @test
