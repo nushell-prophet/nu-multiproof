@@ -96,9 +96,22 @@ export def verify [
     proof_file: path
     --repo: path # Target git repo root (default: git root of current directory)
     --pubkeys-dir: path # Trusted *.pub directory (default: multiproofs/pubkeys of the target — i.e. the bundle's own keys)
-    --signer: string # Require a valid signature from this principal (pubkey stem), not merely from any registered key
+    --signer: string # Require a valid signature from this principal (pubkey stem). Needs --pubkeys-dir
     --fail # Exit non-zero when the result is not valid (for CI)
 ]: nothing -> record {
+    # Why --signer needs --pubkeys-dir: a principal is the *stem of a .pub
+    # file*, so it names a key only as strongly as the directory that file came
+    # from. Over the default list — the one travelling inside the artifact —
+    # `--signer alice` asks no more than "did a file named alice.pub sign
+    # this". Measured before this guard: mallory's key copied in as alice.pub
+    # gave `alice: valid`, `valid: true`. Refuse the combination rather than
+    # return a verdict that reads as an identity check and is not one; naming
+    # --pubkeys-dir (even at the bundle's own path) makes the trust list the
+    # verifier's stated choice. Pinned by tests/test_merkle.nu "signer
+    # flag against a bundle-supplied trust list is refused, not answered".
+    if $signer != null and $pubkeys_dir == null {
+        error make {msg: $"--signer ($signer) needs --pubkeys-dir: a principal is a .pub filename stem, and the default trust list travels inside the artifact — anyone can fork it and file their own key as ($signer).pub. Point --pubkeys-dir at a list you control."}
+    }
     let target = repo-root $repo
     let proof = open --raw $proof_file | from json
     let schema = $proof | get --optional schema | default "missing"
@@ -131,7 +144,9 @@ export def verify [
     # Why --signer narrows this: `any { $in.valid }` is the right rule only when
     # the trust list came from outside. A list travelling inside the artifact
     # proves internal consistency, not identity — fork, re-init with your own
-    # key, re-seal, and any-key acceptance calls it valid.
+    # key, re-seal, and any-key acceptance calls it valid. The guard above is
+    # what makes the narrowing real: $signer is only ever compared against
+    # stems the verifier chose, never against names the artifact carries.
     let signed_ok = if $signer != null {
         $sig_check.sigs | any {|s| $s.valid and $s.signer == $signer }
     } else {

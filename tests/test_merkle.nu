@@ -351,15 +351,58 @@ def "signer flag pins the principal, not just any registered key" [] {
     # consistency only
     assert (merkle verify $proof --repo $repo).valid
 
+    # The verifier's own copy of the list. --signer is reachable only this way,
+    # so every assertion below is about stems the verifier chose.
+    let trusted = $"($tmp_dir)/trusted"
+    mkdir $trusted
+    cp $"($alice).pub" $"($trusted)/alice.pub"
+    cp $"($mallory).pub" $"($trusted)/mallory.pub"
+
     # Signature is cryptographically valid, but it is not alice's
-    let wrong = merkle verify $proof --repo $repo --signer alice
+    let wrong = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer alice
     assert $wrong.structure_valid "structure must still verify"
     assert not $wrong.valid "a signature from another principal was accepted"
     assert ($wrong.error | str contains "alice")
     assert equal ($wrong.signatures | where valid | get signer) [mallory]
-    assert error {|| merkle verify $proof --repo $repo --signer alice --fail }
+    assert error {|| merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer alice --fail }
 
-    assert (merkle verify $proof --repo $repo --signer mallory).valid
+    assert (merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer mallory).valid
+}
+
+@test
+def "signer flag against a bundle-supplied trust list is refused, not answered" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+
+    # The fork-and-file-it-as-alice shape: one key, mallory's, registered in
+    # the bundle's own pubkeys/ under alice's name and signing under it. The
+    # principal is a filename, so before the guard `--signer alice` reported
+    # `alice: valid` / `valid: true` for a key whose comment is mallory@evil.
+    let mallory = $"($tmp_dir)/mallory"
+    ^ssh-keygen -t ed25519 -f $mallory -N "" -q -C "mallory@evil"
+    let pubkeys = $"($repo)/multiproofs/pubkeys"
+    mkdir $pubkeys
+    cp $"($mallory).pub" $"($pubkeys)/alice.pub"
+
+    let root_result = merkle write-root --repo $repo
+    ssh-sign sign $root_result.path --key $mallory --name alice --pubkeys-dir $pubkeys
+    let proof = merkle prove README.md --repo $repo
+
+    # Asking for a principal against a list the artifact supplies is not a
+    # question this command can answer — it refuses instead of returning a
+    # verdict that reads as an identity check.
+    assert error {|| merkle verify $proof --repo $repo --signer alice }
+
+    # The same artifact, checked against alice's real key: not endorsed.
+    let alice = $"($tmp_dir)/alice"
+    ^ssh-keygen -t ed25519 -f $alice -N "" -q
+    let trusted = $"($tmp_dir)/trusted"
+    mkdir $trusted
+    cp $"($alice).pub" $"($trusted)/alice.pub"
+    let result = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer alice
+    assert $result.structure_valid "structure must still verify"
+    assert not $result.valid "mallory's key passed as alice"
+    assert equal ($result.signatures | get error) [unrecognized_signer]
 }
 
 @test
