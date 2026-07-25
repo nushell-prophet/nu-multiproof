@@ -424,6 +424,42 @@ def "signer flag pins the principal, not just any registered key" [] {
     assert (merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer mallory).valid
 }
 
+# "alice did not sign this" is a claim; a verifier holding no key for alice
+# cannot make it. Folded into the negative verdict, a typo in the verifier's own
+# flag read as evidence against the artifact — structure_valid true, valid
+# false, "no valid signature from signer alice".
+@test
+def "signer with no matching key in the trusted dir is an error, not invalid" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+
+    let mallory = $"($tmp_dir)/mallory"
+    ^ssh-keygen -t ed25519 -f $mallory -N "" -q
+    let pubkeys = $"($repo)/multiproofs/pubkeys"
+    mkdir $pubkeys
+    cp $"($mallory).pub" $"($pubkeys)/mallory.pub"
+
+    let root_result = merkle write-root --repo $repo
+    ssh-sign sign $root_result.path --key $mallory --pubkeys-dir $pubkeys
+    let proof = merkle prove README.md --repo $repo
+
+    # The verifier's own list: it holds bob, and was never given alice's key.
+    let bob = $"($tmp_dir)/bob"
+    ^ssh-keygen -t ed25519 -f $bob -N "" -q
+    let trusted = $"($tmp_dir)/trusted"
+    mkdir $trusted
+    cp $"($bob).pub" $"($trusted)/bob.pub"
+
+    let err = try { merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer alice; null } catch {|e| $e.msg }
+    assert ($err != null) "a signer the trust list cannot answer for got a verdict"
+    assert ($err | str contains "no key for signer alice")
+
+    # Same list, a principal it does hold: answered, not refused.
+    let answered = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer bob
+    assert not $answered.valid "bob's key did not sign this root"
+    assert $answered.structure_valid
+}
+
 # A whole artifact set written by hand — attacker's key, attacker's root
 # statement, attacker's proof JSON — with no call to write-root or prove.
 # Round-tripping our own builder can only show self-consistency; the leaf

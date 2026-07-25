@@ -59,6 +59,23 @@ def principal-for [file: path]: nothing -> string {
     check-signer-name ($file | path parse | get stem) $"($file)"
 }
 
+# Refuse a --signer whose key the trust list does not hold.
+#
+# Why an error rather than a negative verdict: "alice did not sign this" is a
+# claim, and a verifier without alice's key cannot make it — the honest answer
+# is "I cannot tell". `merkle verify` used to fold the two together and return
+# `valid: false` with "no valid signature from signer alice", so a typo in the
+# verifier's OWN flag read as evidence against the artifact. Both verify
+# commands ask this before any other work. Shared here because the rule being
+# applied is this module's: a principal is the stem of a .pub file.
+export def check-signer-known [signer: string pubkeys_dir: path]: nothing -> string {
+    let known = list-files $pubkeys_dir --suffix ".pub" | each { principal-for $in }
+    if (check-signer-name $signer "--signer") not-in $known {
+        error make {msg: $"no key for signer ($signer) in ($pubkeys_dir)/ — --signer names a ($signer).pub there, and this verifier cannot say whether ($signer) signed anything without holding their key. Registered: ($known | str join ', ')"}
+    }
+    $signer
+}
+
 # A signer name, refused unless the trust list can express it. Exported
 # because `ssh-sign sign` is the other end of the same grammar: it takes the
 # name from `--name` or from a pubkey stem and writes it into a `.sig` file

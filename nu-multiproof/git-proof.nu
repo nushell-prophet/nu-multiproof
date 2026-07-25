@@ -13,7 +13,7 @@ use _repo.nu repo-root
 use _layout.nu pubkeys-dir
 use _temp-helpers.nu with-temp-dir
 use _fs.nu [list-files list-dirs]
-use _allowed-signers.nu [allowed-signers-body check-signer-name]
+use _allowed-signers.nu [allowed-signers-body check-signer-known]
 
 # --- Shared helpers ---
 
@@ -371,23 +371,25 @@ export def "render-allowed-signers" [
 # --signer nobody in the list can answer for) throws before the temp repo exists.
 def trust-list [
     trusted_dir: path
-    signer: string # "" for collective trust: every key in the list counts
+    --signer: string # omitted = collective trust: every key in the list counts
 ]: nothing -> string {
     # Why the list narrows to one file rather than checking which principal git
     # reports: a principal is the *stem of a .pub*, so `--signer alice` asks
     # about the key material in <trusted_dir>/alice.pub and nothing else.
     # Rendering only that key makes git's exit code the whole answer — no
     # parsing of "Good \"git\" signature for ..." to decide who signed.
-    if $signer != "" {
-        let named = allowed-signers-body $trusted_dir --namespace "git"
+    if $signer != null {
+        # Raises when the list holds no <signer>.pub, so the filter below always
+        # lands on exactly the line that key rendered.
+        check-signer-known $signer $trusted_dir
+        return (
+            allowed-signers-body $trusted_dir --namespace "git"
             | lines
             # The principal grammar forbids whitespace, so a trailing space is
             # an exact match on the field this module itself just wrote.
             | where {|line| $line | str starts-with $"($signer) " }
-        if ($named | is-empty) {
-            error make {msg: $"no key for signer ($signer) in ($trusted_dir)/ — --signer names a ($signer).pub there, and this verifier cannot say whether ($signer) signed a commit without holding their key"}
-        }
-        return ($named | str join "\n")
+            | str join "\n"
+        )
     }
     # No --signer: a collective statement — the key is in the list, without
     # attaching a personal identity (the wildcard principal, as
@@ -506,13 +508,7 @@ export def verify [
     # is an operator error, not a proof that failed.
     let from_bundle = ($pubkeys_dir == null)
     let trusted_dir = $pubkeys_dir | default ($proof_dir | path join "pubkeys")
-    # Checked against the trust list's own grammar, not just used: `--signer ""`
-    # is not a principal, and left alone it would fall through to the collective
-    # reading below while `trust.signer` still reported a narrowing that never
-    # happened.
-    let signers = (trust-list $trusted_dir (
-        if $signer != null { check-signer-name $signer "--signer" } else { "" }
-    ))
+    let signers = (trust-list $trusted_dir --signer $signer)
 
     print "Verifying proof bundle..."
     print $"  Commit: ($manifest.commit | str substring 0..12)..."

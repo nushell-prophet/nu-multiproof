@@ -13,6 +13,7 @@ use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
     root-statement parse-root-statement validate-leaf
 ]
+use _allowed-signers.nu check-signer-known
 use ssh-sign.nu
 use ots.nu
 
@@ -123,6 +124,12 @@ export def verify [
         error make {msg: $"--signer ($signer) needs --pubkeys-dir: a principal is a .pub filename stem, and the default trust list travels inside the artifact — anyone can fork it and file their own key as ($signer).pub. Point --pubkeys-dir at a list you control."}
     }
     let target = repo-root $repo
+    # The trust list, settled before the artifact is even opened: it is the
+    # verifier's own input, so a --signer this list holds no key for is an
+    # operator error and must not be reported as something the proof failed.
+    let trusted_dir = $pubkeys_dir | default (pubkeys-dir $target)
+    if $signer != null { check-signer-known $signer $trusted_dir }
+
     let proof = open --raw $proof_file | from json
     let schema = $proof | get --optional schema | default "missing"
     if $schema != $MERKLE_SCHEMA {
@@ -147,7 +154,6 @@ export def verify [
     # Signatures over the root statement (the authority). A consumer holding
     # only the structural proof gets a reported absence, not a crash — but
     # valid stays false without at least one valid signature.
-    let trusted_dir = $pubkeys_dir | default (pubkeys-dir $target)
     let sig_check = try {
         {sigs: (ssh-sign verify $root_file --pubkeys-dir $trusted_dir) error: null}
     } catch {|e| {sigs: [] error: $e.msg} }
