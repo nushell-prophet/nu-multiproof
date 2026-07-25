@@ -61,7 +61,12 @@ export def sign [
             lookup-signer-name $key $dir
         }
 
-        ^ssh-keygen -Y sign -f $key -n $namespace $path
+        # ssh-keygen takes no `--`, and a file name starting with `-` is read as
+        # an option: it falls back to signing standard input, writes no .sig, and
+        # the check below then reports a failed signing ceremony that never
+        # happened. An absolute path cannot start with `-`.
+        let sign_target = if ($path | str starts-with "-") { $path | path expand } else { $path }
+        ^ssh-keygen -Y sign -f $key -n $namespace $sign_target
         let default_sig = (sig-path-for $path)
         if not ($default_sig | path exists) {
             error make {msg: $"signature file not created: ($default_sig)"}

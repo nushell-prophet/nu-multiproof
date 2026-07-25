@@ -506,3 +506,61 @@ def "blob hash matches git" [] {
 
     assert equal $proof_hash $git_hash
 }
+
+# A bundle is untrusted input, and every oid in it reaches git as a command
+# line argument. `git verify-commit --help` exits 0 and prints a man page, so a
+# manifest naming `--help` as its commit would have read as a good signature.
+@test
+def "verify refuses a manifest whose commit is not an object id" [] {
+    let proof_dir = $in.tmp_dir
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    let manifest_path = ($proof_dir | path join "manifest.json")
+    for bad in ["--help" "HEAD" "" "../../etc/passwd"] {
+        open $manifest_path | merge {commit: $bad} | to json | save --force $manifest_path
+        let outcome = (try { git-proof verify $proof_dir; "ok" } catch {|e| $e.msg })
+        assert ($outcome | str contains "not a SHA-256 object id") $"commit ($bad) got: ($outcome)"
+    }
+}
+
+@test
+def "verify refuses a manifest file hash that is not an object id" [] {
+    let proof_dir = $in.tmp_dir
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    let manifest_path = ($proof_dir | path join "manifest.json")
+    let manifest = open $manifest_path
+    $manifest | merge {files: [{path: "LICENSE" hash: "--help"}]} | to json | save --force $manifest_path
+    assert error {|| git-proof verify $proof_dir }
+
+    # The tree link is read straight out of the manifest too.
+    $manifest | merge {tree: "-x"} | to json | save --force $manifest_path
+    assert error {|| git-proof verify $proof_dir }
+}
+
+# The oid re-hashing loop builds its argument from a *file name* in the bundle,
+# so a directory named `--` is an option, not an object.
+@test
+def "an object file that names an option is an invalid object" [] {
+    let proof_dir = $in.tmp_dir
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    mkdir ($proof_dir | path join "objects" "--")
+    "x" | save --force ($proof_dir | path join "objects" "--" "help")
+
+    let result = (git-proof verify $proof_dir)
+    assert equal $result.valid false
+    assert equal $result.structure_valid false
+    assert equal $result.error "object hash verification failed"
+}
+
+# `--commit` is whatever the caller typed. `git rev-parse --help` exits 0.
+@test
+def "extract refuses a commit that is an option" [] {
+    let proof_dir = $in.tmp_dir
+    assert error {|| git-proof extract LICENSE --commit "--help" --out-dir $proof_dir }
+    assert (not (($proof_dir | path join "manifest.json") | path exists))
+}

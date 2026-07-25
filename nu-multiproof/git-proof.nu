@@ -17,6 +17,22 @@ use _allowed-signers.nu allowed-signers-body
 
 # --- Shared helpers ---
 
+# A SHA-256 object id, as git writes it. Bundles are untrusted input and every
+# oid in one reaches git as a command-line argument, where a value starting
+# with `-` is read as an option: `git verify-commit --help` exits 0 and prints
+# a man page, so `manifest.commit = "--help"` would have produced
+# {valid: true, detail: <man page>}. Today that is unreachable only because an
+# earlier `cat-file` happens to run first and fail.
+export const OID_PATTERN = '^[0-9a-f]{64}$'
+
+# Refuse an oid-shaped manifest field that is not an oid, naming the field.
+def check-oid [value: any field: string]: nothing -> string {
+    if ($value | describe) != "string" or not ($value =~ $OID_PATTERN) {
+        error make {msg: $"manifest ($field) is not a SHA-256 object id: ($value | to nuon)"}
+    }
+    $value
+}
+
 # Parse `git ls-tree -z` output into a table.
 # Why -z: with git's default core.quotePath=true, plain `ls-tree` C-quotes any
 # name holding non-ASCII bytes or a `"` — `файл.md` comes back as
@@ -162,7 +178,10 @@ export def extract [
     if $src_format != "sha256" {
         error make {msg: $"git-proof requires a SHA-256 repo \(extensions.objectFormat=sha256\); source is '($src_format)' — a SHA-1 merkle path is not accepted as evidence"}
     }
-    let commit_hash = (^git -C $root rev-parse $commit | str trim)
+    # --end-of-options: `--commit` is whatever the caller typed, and a rev
+    # starting with `-` is read as an option. --verify keeps the output to the
+    # single object name (bare rev-parse echoes flags it does not recognise).
+    let commit_hash = (^git -C $root rev-parse --verify --end-of-options $commit | str trim)
     let tree_hash = (^git -C $root cat-file -p $commit_hash | parse-commit-tree)
 
     # Collect merkle path objects for all target files
@@ -254,6 +273,13 @@ export def extract [
 def verify-object-hashes [repo: path]: nothing -> table<hash: string, valid: bool> {
     loose-object-files ($repo | path join "objects") | each {|file|
         let oid = $"($file | path dirname | path basename)($file | path basename)"
+        # The oid comes from a file name inside the bundle, and goes to git as an
+        # argument: `objects/--/help` would call `git cat-file -t --help`, which
+        # exits 0 with a man page. An object git could never have written is an
+        # invalid object, not an error — the bundle is what fails.
+        if not ($oid =~ $OID_PATTERN) {
+            return {hash: $oid valid: false error: "not a SHA-256 object id"}
+        }
         let type_result = (do { ^git --git-dir $repo cat-file -t $oid } | complete)
         if $type_result.exit_code != 0 {
             {hash: $oid valid: false error: ($type_result.stderr | str trim)}
@@ -409,6 +435,12 @@ export def verify [
     # empty file list; the verifier must not accept what the producer can't emit.
     if ($manifest.files | is-empty) {
         error make {msg: $"($proof_dir)/manifest.json lists no files — the bundle proves nothing"}
+    }
+    # Every manifest value that reaches git as an argument, checked once, here.
+    check-oid ($manifest | get --optional commit) "commit"
+    check-oid ($manifest | get --optional tree) "tree"
+    for entry in $manifest.files {
+        check-oid ($entry | get --optional hash) $"files hash for ($entry | get --optional path | default '?')"
     }
     let objects_dir = ($proof_dir | path join "objects")
 

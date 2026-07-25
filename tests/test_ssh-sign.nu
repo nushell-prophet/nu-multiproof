@@ -339,3 +339,28 @@ def "verify resolves the bare sig form of a file with an extension" [] {
     assert equal ($result | get signer) ["alice"]
     assert equal ($result | get valid) [true]
 }
+
+# A file name is data. ssh-keygen has no `--`, so `-weird.txt` was read as an
+# option: it signed standard input instead and wrote no .sig at all.
+@test
+def "a file whose name starts with a dash can be signed and verified" [] {
+    let tmp_dir = $in.tmp_dir
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let key_path = $"($tmp_dir)/alice_key"
+
+    mkdir $pubkeys_dir
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    cp $"($key_path).pub" ($pubkeys_dir | path join "alice.pub")
+
+    # Relative, from inside the directory: an absolute path never starts with
+    # `-`, so passing one would not exercise this at all.
+    cd $tmp_dir
+    "hello world" | save --force "-weird.txt"
+
+    # Empty stdin so a regression fails instead of hanging: read as an option,
+    # ssh-keygen waits for standard input forever.
+    "" | ssh-sign sign "-weird.txt" --key $key_path --pubkeys-dir $pubkeys_dir
+    let result = (ssh-sign verify "-weird.txt" --pubkeys-dir $pubkeys_dir)
+    assert equal ($result | get signer) ["alice"]
+    assert equal ($result | get valid) [true]
+}
