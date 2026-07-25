@@ -44,7 +44,7 @@ def cid-nodes [file_entries: table, dir_entries: table]: nothing -> record {
             | default []
             | sort-by name
             | each {|c| {name: $c.name node: ($built | get $c.rel)} }
-        $nodes = ($nodes | insert $d (dir-node $links))
+        $nodes = ($nodes | insert $d (dir-node $links --path $d))
     }
     $nodes
 }

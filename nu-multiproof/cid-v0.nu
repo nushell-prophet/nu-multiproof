@@ -5,7 +5,7 @@ use _cid-helpers.nu [file-node node-cid]
 
 # Compute the CID v0 of raw content in pure Nushell — no ipfs daemon or CLI.
 #
-# Content over 256 KB is chunked and folded into a UnixFS DAG exactly as the
+# Content over 256 KiB is chunked and folded into a UnixFS DAG exactly as the
 # reference client does, so the CID is the same one `ipfs add` reports.
 #
 # Why string input is accepted: `open --raw f` collects to a *string* whenever

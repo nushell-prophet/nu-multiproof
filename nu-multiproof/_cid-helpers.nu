@@ -21,6 +21,16 @@ export const CHUNK_SIZE = 262144
 # (DefaultLinksPerBlock): an 8 KiB block target divided by ~47 bytes per link.
 export const LINKS_PER_NODE = 174
 
+# kubo estimates a directory's size as the sum over its entries of the name
+# length plus the link's CID length, and switches to a HAMT shard once that
+# passes 256 KiB (Import.UnixFSHAMTDirectorySizeThreshold). A shard has a
+# different CID for the same entries, and this file builds no shards — see
+# dir-node. Both numbers were measured against ipfs 0.42.0 at the exact
+# boundary: 4096 entries of 30-byte names (262144) still hash as a basic
+# directory, 4097 (262208) do not.
+export const HAMT_THRESHOLD = 262144
+export const LINK_SIZE_CIDV0 = 34
+
 # Protobuf length-delimited field: <tag><length varint><bytes>
 export def pb-field [tag: binary]: binary -> binary {
     let value = $in
@@ -39,7 +49,10 @@ export def encode-base58 []: binary -> string {
     )
     let chars = $BASE58_ALPHABET | split chars
     let leading = $byte_list | take while { $in == 0 } | length
-    mut nums = $byte_list
+    # Why strip here and not only inside the loop: leading zero bytes are carried
+    # by the '1' prefix below, and an all-zero input left the loop with one pass
+    # to make — emitting a spurious '1' on top of the prefix.
+    mut nums = ($byte_list | skip while { $in == 0 })
     mut digits = []
     while not ($nums | is-empty) {
         mut carry = 0
@@ -55,40 +68,6 @@ export def encode-base58 []: binary -> string {
     let ones = (0..<$leading | each { '1' } | str join)
     let encoded = ($digits | each {|d| $chars | get $d } | str join)
     $"($ones)($encoded)"
-}
-
-# Why decode at all: a directory link carries the child's raw multihash, and the
-# only form of a child CID that crosses a command boundary here is its base58
-# string. Round-tripping it back to bytes keeps the node API in terms of CIDs.
-export def decode-base58 []: string -> binary {
-    let chars = $BASE58_ALPHABET | split chars
-    let input = $in | split chars
-    # Why the check is here and not inside the map below: an error thrown inside
-    # `each` reaches the caller wrapped, as a bare "Eval block failed".
-    let outside = $input | where {|c| $c not-in $chars }
-    if ($outside | is-not-empty) {
-        error make {msg: $"not base58btc: ($outside | uniq | str join '')"}
-    }
-    let values = $input | each {|c| $chars | enumerate | where item == $c | get index.0 }
-    let leading = $values | take while { $in == 0 } | length
-    mut nums = $values
-    mut out = []
-    while not ($nums | is-empty) {
-        mut carry = 0
-        mut quotient = []
-        for d in $nums {
-            let val = $carry * 58 + $d
-            $quotient ++= [($val // 256)]
-            $carry = $val mod 256
-        }
-        $out = [$carry ...$out]
-        $nums = ($quotient | skip while { $in == 0 })
-    }
-    let zeros = 0..<$leading | each { 0 }
-    [...$zeros ...$out]
-    | each {|b| $b | format number | get lowerhex | str substring 2.. | fill --alignment right --character '0' --width 2 }
-    | str join
-    | decode hex
 }
 
 # CID v0 of a node: base58btc of the sha2-256 multihash (0x12 0x20 || digest).
@@ -109,7 +88,7 @@ export def link-bytes [name: string, node: record]: nothing -> binary {
     $body | pb-field 0x[12]
 }
 
-def block-node [block: binary, file_size: int, children: list]: nothing -> record {
+export def block-node [block: binary, file_size: int, children: list]: nothing -> record {
     {
         digest: ($block | hash sha256 | decode hex)
         # append 0: a leaf and an empty directory both link nothing, and
@@ -145,7 +124,19 @@ export def branch-node [children: list]: nothing -> record {
 # UnixFS directory: PBNode{Links: entries, Data: UnixFS{Type: Directory}}.
 # Links must arrive sorted by name — `ipfs add` walks directory entries in
 # byte-wise name order, and the link order is part of what the CID commits to.
-export def dir-node [links: list]: nothing -> record {
+#
+# Refuses a directory large enough that kubo would shard it, rather than
+# returning a basic-directory CID no IPFS client reproduces: the manifest's job
+# is to name content the way the network names it, and a silent divergence here
+# lands in the "." row the merkle root signs. Reject, never normalize.
+export def dir-node [
+    links: list
+    --path: string = "." # directory being built, for the sharding error only
+]: nothing -> record {
+    let estimate = $links | each {|l| ($l.name | into binary | bytes length) + $LINK_SIZE_CIDV0 } | append 0 | math sum
+    if $estimate > $HAMT_THRESHOLD {
+        error make {msg: $"directory ($path) holds ($links | length) entries \(estimated ($estimate) bytes\), over the ($HAMT_THRESHOLD)-byte threshold where IPFS switches to a HAMT-sharded directory. This builds basic directories only, so any CID it produced here would be one no IPFS client agrees with."}
+    }
     let link_bytes = $links | each {|l| link-bytes $l.name $l.node } | bytes collect
     let nodes = $links | each {|l| $l.node }
     let block = $link_bytes | bytes add --end (0x[08 01] | pb-field 0x[0a])
@@ -157,7 +148,9 @@ export def dir-node [links: list]: nothing -> record {
 # LINKS_PER_NODE until one node is left. Not the recursive fill the reference
 # implementation is written as, because: it fills every subtree to capacity
 # before starting the next, which is the same tree this bottom-up grouping
-# produces — checked against the client at 4 chunks and at 192 (two levels).
+# produces. Pinned by tests/test_cid-v0.nu "multi-chunk file: two full chunks
+# and a 1000-byte tail" (one level) and "two-level file: 175 chunks", both
+# recorded from the client.
 export def file-node []: binary -> record {
     let content = $in
     let n = $content | bytes length

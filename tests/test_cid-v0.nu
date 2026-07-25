@@ -2,7 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/cid-v0.nu
-use ../nu-multiproof/_cid-helpers.nu [file-node dir-node node-cid encode-base58 decode-base58]
+use ../nu-multiproof/_cid-helpers.nu [file-node dir-node node-cid encode-base58]
 use ../nu-multiproof/_temp-helpers.nu with-temp-dir
 
 # Every expected value below was recorded from the reference client, not from
@@ -109,39 +109,46 @@ def "directory tree with dotfile and nested dir" [] {
     assert equal ($root | node-cid) "Qme53cg5u81Hh13JAU57drw7Rpm391Pwi2PkbAhF7k3pMS"
 }
 
-# The name order of directory links is part of the CID. This pins that the
-# byte-wise sort in tree-hashes.nu is load-bearing, not decoration: build the
-# same entries in the wrong order and the client's CID is no longer reproduced.
+# Above a size threshold kubo stops writing a basic directory and shards it into
+# a HAMT, which has a different CID for the same entries. Nothing here builds
+# shards, so the boundary is a hard edge of what this code may claim.
+#
+# Both numbers come from the client, measured at the exact boundary: entries of
+# (name bytes + 34) summing to 262144 still hash as a basic directory, and the
+# CID below is what `ipfs add -r` reports for that directory.
 @test
-def "directory link order changes the CID" [] {
-    let file = "hello\n" | into binary | file-node
-    let inner = "world\n" | into binary | file-node
-    let sub = dir-node [{name: "inner.txt" node: $inner}]
-    let unsorted = dir-node [
-        {name: "sub" node: $sub}
-        {name: "file.txt" node: $file}
-    ]
-    let sorted = dir-node [
-        {name: "file.txt" node: $file}
-        {name: "sub" node: $sub}
-    ]
-    assert not (($unsorted | node-cid) == ($sorted | node-cid))
-}
-
-# A directory link carries the child's multihash, which this code recovers from
-# the child's base58 CID string — so the decode must invert the encode exactly.
-@test
-def "base58 round-trips" [] {
-    let cid_bytes = 0x[1220] | bytes add --end ("hello" | into binary | hash sha256 | decode hex)
-    assert equal ($cid_bytes | encode-base58 | decode-base58) $cid_bytes
-    # Leading zero bytes are the case a naive big-integer conversion drops
-    assert equal (0x[0000ff] | encode-base58 | decode-base58) 0x[0000ff]
+def "directory at the sharding threshold still matches the client" [] {
+    let links = threshold-links 4096
+    assert equal ($links | each {|l| ($l.name | into binary | bytes length) + 34 } | math sum) 262144
+    assert equal (dir-node $links | node-cid) "QmYkVrEh726Xuib4nyYSpvN8UxquVr28umQjt8hP4KgvVp"
 }
 
 @test
-def "base58 rejects a character outside the alphabet" [] {
-    # 0, O, I and l are excluded from base58btc precisely to avoid confusion
-    let result = try { "QmO0Il" | decode-base58; null } catch {|e| $e.msg }
-    assert ($result != null) "non-base58 input was accepted"
-    assert ($result | str contains "base58")
+def "directory past the sharding threshold is refused, not guessed" [] {
+    # One more entry and kubo answers QmWaXkfnAfj2HmmWxXKaUgYxkc4nZHcGznGGhzfeRXytGq,
+    # while a basic directory built over the same entries answers something else.
+    let links = threshold-links 4097
+    let result = try { dir-node $links --path "assets"; null } catch {|e| $e.msg }
+    assert ($result != null) "an over-threshold directory was given a basic-directory CID"
+    assert ($result | str contains "HAMT")
+    assert ($result | str contains "assets") $"error does not name the directory: ($result)"
+}
+
+# 30-byte names, so each entry contributes exactly 64 bytes to kubo's estimate
+def threshold-links [count: int]: nothing -> list {
+    let node = "x" | into binary | file-node
+    let pad = 0..<30 | each { "a" } | str join
+    0..<$count
+    | each {|i| $"($i)($pad)" | str substring 0..<30 }
+    | sort # links reach dir-node in name order, as the client walks them
+    | each {|name| {name: $name node: $node} }
+}
+
+@test
+def "base58 of all-zero bytes is leading ones only" [] {
+    # Bitcoin base58: each leading zero byte is one '1', and the remaining value
+    # (zero) contributes no digits at all
+    assert equal (0x[00] | encode-base58) "1"
+    assert equal (0x[0000] | encode-base58) "11"
+    assert equal (0x[0000ff] | encode-base58) "115Q"
 }

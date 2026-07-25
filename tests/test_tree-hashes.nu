@@ -86,10 +86,20 @@ def "hidden tracked files are included" [] {
 def "one pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
-    mkdir $"($repo)/sub"
+    mkdir $"($repo)/sub/deeper"
     ^git -C $repo init -q
     "hello\n" | save --force $"($repo)/file.txt"
     "world\n" | save --force $"($repo)/sub/inner.txt"
+    # Two levels of directory: the fold must build sub/deeper before sub, or sub
+    # has no CID to link. One level cannot tell a deepest-first walk from any
+    # other order.
+    "deep\n" | save --force $"($repo)/sub/deeper/x.txt"
+    # Why an uppercase name beside lowercase ones: directory links are ordered by
+    # name bytes, so "Zebra.txt" sorts before "apple.txt". Under a
+    # case-insensitive sort it would go last and the root CID would change — a
+    # tree of all-lowercase names cannot catch that.
+    "zebra\n" | save --force $"($repo)/Zebra.txt"
+    "apple\n" | save --force $"($repo)/apple.txt"
     # Hidden tracked file: `ipfs add` used to skip dotfiles without --hidden,
     # which dropped it from per-file CIDs and from the dir/root CIDs the seal
     # signs. The file set now comes from git, so nothing can skip it silently.
@@ -100,12 +110,13 @@ def "one pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     let table = tree-hashes --echo --repo $repo
 
     # Root "." row present, and it is the CID `ipfs add -r` reports for exactly
-    # this tree (recorded in tests/test_cid-v0.nu from ipfs 0.42.0) — the whole
-    # manifest fold, from git file set to root, checked against the client.
+    # this tree (recorded from ipfs 0.42.0) — the whole manifest fold, from git
+    # file set through both directory levels to the root, against the client.
     let dot = $table | where filepath == "."
     assert equal ($dot | length) 1
-    assert equal $dot.0.content_cid "Qme53cg5u81Hh13JAU57drw7Rpm391Pwi2PkbAhF7k3pMS"
-    assert equal ($table | where filepath == "sub" | get content_cid.0) "QmQV8kBgwwShkLLLvEej44qvbwTncKJmbwfz5E8e4ApNkj"
+    assert equal $dot.0.content_cid "QmZ57tAfENkUzcCC9CUpXV4kn9QhW4knEHWq96A9MwrybP"
+    assert equal ($table | where filepath == "sub" | get content_cid.0) "QmZFmeyvidcJYhsZRopSFbi3TP7Pwqy93HZ2XHBBXaWaKi"
+    assert equal ($table | where filepath == "sub/deeper" | get content_cid.0) "Qmam1jLqzkQdswuhTKaJDcoN7Zve237vwCBY8nirCYowjW"
 
     # The "." row participates in the sort (first byte-wise), not appended last —
     # the manifest must honor its own ordering rule
