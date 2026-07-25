@@ -262,7 +262,7 @@ def "stamp writes a proof its own parser can read" [] {
 # and an .ots that `info` cannot read — while the digest had already reached
 # the calendar, so the proof is unrecoverable.
 @test
-def "stamp writes nothing when the calendar body is not a timestamp" [] {
+def "stamp writes no bundle when the calendar body is not a timestamp" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc.txt"
     "hello world" | save --force $file
@@ -272,9 +272,38 @@ def "stamp writes nothing when the calendar body is not a timestamp" [] {
         ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/garbage.bin"
         "ok"
     } catch {|e| $e.msg })
-    assert ($outcome | str contains "nothing written") $"expected a refusal, got: ($outcome)"
-    # no bundle directory, no frozen copy, no proof
-    assert equal (ls --all $tmp_dir | get name | each { path basename } | sort) ["doc.txt" "garbage.bin"]
+    assert ($outcome | str contains "no bundle was written") $"expected a refusal, got: ($outcome)"
+    # no bundle directory, no frozen copy, no proof — the rejected bytes are
+    # a loose file, never something a verifier would read as a bundle
+    let left = (ls --all $tmp_dir | get name | each { path basename } | sort)
+    assert equal ($left | where {|f| not ($f | str contains ".rejected-") }) ["doc.txt" "garbage.bin"]
+}
+
+# The digest was already submitted and the nonce that binds it to this file
+# lives only in the failing run, so refusing to write anything at all loses the
+# submission exactly as the unreadable .ots did. The assembled bytes are kept
+# instead — they carry the nonce, and the reference `ots` CLI reads constructs
+# this parser refuses.
+@test
+def "a rejected calendar response is kept, nonce and all" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    # A fork: legal OpenTimestamps, refused by this parser — the case where
+    # dropping the bytes would lose a submission the ots CLI could still read.
+    0x[ff] | save --raw --force $"($tmp_dir)/forked.bin"
+
+    try { ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/forked.bin" }
+
+    let rejected = (ls --all $tmp_dir | get name | where {|f| $f | str contains ".rejected-" })
+    assert equal ($rejected | length) 1
+    let bytes = (open --raw ($rejected | first) | into binary)
+    # header(31) version(1) sha256-op(1) hash(32) append-op(1) len(1) nonce(16)
+    # sha256-op(1) response(1) — the nonce is what makes these bytes worth
+    # keeping, so pin where it sits.
+    assert equal ($bytes | bytes at 33..<65) (open --raw $file | hash sha256 | decode hex)
+    assert equal ($bytes | bytes at 65..<67) 0x[f010]
+    assert equal ($bytes | bytes length) 85
 }
 
 # Validation runs before the archival rename, so a bad response cannot cost the

@@ -246,12 +246,19 @@ export def stamp [file: path --out-dir: path --response-file: path] {
         | bytes add --end $calendar_bytes
     )
 
+    # Why uppercase here while every other hex in this project is lowercase:
+    # `encode hex` emits uppercase and this prefix is only a directory name.
+    # The form is already baked into committed bundles (tree-root.050186F7)
+    # and documented in README.md, so the two conventions coexist on purpose —
+    # lowercase for hashes that are compared or sent, as-emitted for this name.
+    let hash_prefix = $file_hash | encode hex | str substring 0..<8
+    let stem = ($file | path parse | get stem)
+
     # Why parse what we just built, before anything is written: only the HTTP
     # status was checked, so a calendar answering 200 with `b"x"` produced a
     # full success record, exit 0, and an .ots that `info` rejects with
-    # "unknown op tag: 60". That proof is unrecoverable — the digest reached
-    # the calendar, and the local file can never be upgraded. `upgrade` has
-    # validated before writing since 2844626; `stamp` never did.
+    # "unknown op tag: 60". `upgrade` has validated before writing since
+    # 2844626; `stamp` never did.
     let validation = try {
         let reparsed = $ots | parse-ots
         if $reparsed.hash != $file_hash {
@@ -265,16 +272,22 @@ export def stamp [file: path --out-dir: path --response-file: path] {
         {ok: false reason: $e.msg}
     }
     if not $validation.ok {
-        error make {msg: $"calendar response does not make a readable proof, nothing written: ($validation.reason)"}
+        # Why the rejected bytes are still written: the digest already reached
+        # the calendar, and the nonce that binds it to this file exists only in
+        # this run — dropping both is the same unrecoverable loss the guard
+        # above exists to prevent, just moved to the failure path. The bundle
+        # is untouched, so nothing here is mistaken for a proof; these bytes
+        # are the only material a later recovery (or the reference `ots` CLI,
+        # which reads constructs this parser refuses, such as forks) can work
+        # from. Named for the moment, so a retry never overwrites one.
+        mkdir $out_dir
+        let rejected = $"($out_dir)/($stem).($hash_prefix).rejected-(date now | format date '%Y%m%d-%H%M%S').ots"
+        $ots | save --raw --force $rejected
+        error make {msg: ([
+            $"calendar response does not make a readable proof: ($validation.reason)"
+            $"no bundle was written; the assembled bytes \(nonce included\) are at ($rejected)"
+        ] | str join "\n")}
     }
-
-    # Why uppercase here while every other hex in this project is lowercase:
-    # `encode hex` emits uppercase and this prefix is only a directory name.
-    # The form is already baked into committed bundles (tree-root.050186F7)
-    # and documented in README.md, so the two conventions coexist on purpose —
-    # lowercase for hashes that are compared or sent, as-emitted for this name.
-    let hash_prefix = $file_hash | encode hex | str substring 0..<8
-    let stem = ($file | path parse | get stem)
 
     let bundle_dir = $"($out_dir)/($stem).($hash_prefix)"
     mkdir $bundle_dir
