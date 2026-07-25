@@ -186,6 +186,20 @@ def "the root-CID row is a covered leaf" [] {
 }
 
 @test
+def "an empty manifest is refused - the empty root is constant and replayable" [] {
+    let tmp_dir = $in.tmp_dir
+    mkdir $"($tmp_dir)/multiproofs"
+    "filepath,content_sha256,content_git,content_cid\n"
+        | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
+
+    let err = try { merkle write-root --repo $tmp_dir; null } catch {|e| $e.msg }
+    assert ($err != null) "an empty manifest minted a root"
+    assert ($err | str contains "lists no files")
+    # Nothing written: a signature over e3b0c442… would carry no repo in it
+    assert not ($"($tmp_dir)/multiproofs/tree-root.txt" | path exists)
+}
+
+@test
 def "duplicate filepaths are a hard error - equivocation guard" [] {
     let tmp_dir = $in.tmp_dir
     mkdir $"($tmp_dir)/multiproofs"

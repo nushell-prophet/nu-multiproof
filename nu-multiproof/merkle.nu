@@ -23,7 +23,17 @@ export def write-root [
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> record {
     let target = repo-root $repo
-    let leaves = load-leaves (manifest-path $target)
+    let manifest = manifest-path $target
+    let leaves = load-leaves $manifest
+    # Why refuse an empty manifest here, at the one place a root is minted:
+    # `mth []` is sha256 of nothing (e3b0c442…b855) — the same 64 hex for every
+    # empty repo. A signature over that statement carries no repo in it, so it
+    # replays into any other empty seal, and the OTS stamp then times an
+    # attestation that says nothing. Reachable without trying: an empty repo,
+    # and a bare repo, where `git ls-files` exits 0 with no output.
+    if ($leaves | is-empty) {
+        error make {msg: $"($manifest) lists no files — an empty tree hashes to sha256\(\"\") for every repo, so signing that root would state nothing about this one"}
+    }
     let root_hex = mth ($leaves | each { leaf-hash $in }) | encode hex | str lowercase
     let out = merkle-root-path $target
     root-statement $root_hex | save --raw --force $out
