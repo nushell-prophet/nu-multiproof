@@ -22,9 +22,7 @@ use _key-helpers.nu with-signing-key
 #   4. ots stamp — timestamp the root statement (--no-stamp to skip)
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
-# context (message, scope, timing). Also avoids circularity: git-proof proves
-# files existed in a signed commit, but seal artifacts would need to be in
-# that commit — keeping them separate sidesteps the chicken-and-egg.
+# context (message, scope, timing).
 @example "full seal of the current repo" { seal }
 @example "seal without IPFS or timestamping" { seal --no-root-cid --no-stamp }
 export def main [

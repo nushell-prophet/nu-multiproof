@@ -30,9 +30,6 @@ def "one line per key: principal is the stem, the key is canonical" [] {
         $"alice namespaces=\"file\" ($ED25519)"
         $"bob namespaces=\"file\" ($RSA)"
     ]
-    # the comment is dropped, so the rendered line is the same on every machine
-    assert equal (allowed-signers-body $dir --namespace "git" --wildcard | lines | length) 2
-    assert (allowed-signers-body $dir --wildcard | lines | all {|l| $l | str starts-with "* " })
 }
 
 # One file, several principals: the stem is interpolated into the line, so a
@@ -59,15 +56,6 @@ def "a file name that would claim more than its own principal is refused" [] {
         rm --recursive --force $dir
         assert equal $outcome "refused" $"stem ($stem) was rendered into a principal"
     }
-}
-
-# `*` is the whole point of --wildcard: the collective statement is deliberate
-# there, so the stem is never read.
-@test
-def "wildcard mode does not care what the file is called" [] {
-    let dir = $in.tmp_dir
-    $"($ED25519)\n" | save --force $"($dir)/alice bob*.pub"
-    assert equal (allowed-signers-body $dir --wildcard) $"* namespaces=\"file\" ($ED25519)"
 }
 
 # A malformed key silently loses its own line (see the test below for what

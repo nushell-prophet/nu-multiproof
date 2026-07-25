@@ -1,6 +1,6 @@
 # Render an OpenSSH allowed_signers body from every *.pub in a directory.
-# Shared by ssh-sign verify (named principals so find-principals returns the
-# signer) and git-proof (wildcard principal for collective commit-signing trust).
+# Used by ssh-sign verify (named principals, so find-principals returns the
+# signer) and by merkle verify to resolve --signer.
 
 use _fs.nu list-files
 use _pubkey-helpers.nu canonical-file
@@ -19,9 +19,8 @@ use _pubkey-helpers.nu canonical-file
 # another directory where discovery never finds it again.
 const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!/\s]|\p{Cc}'
 
-# One line per pubkey: `<principal> namespaces="<namespace>" <key>`.
-# --wildcard uses "*" for every key (a collective trust statement); otherwise
-# each key's filename stem is its principal.
+# One line per pubkey: `<principal> namespaces="<namespace>" <key>`, where each
+# key's filename stem is its principal.
 #
 # Why every key goes through `pubkey canonical` rather than being copied
 # through: a key file holding two lines emitted a principal-less second line.
@@ -36,7 +35,6 @@ const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!/\s]|\p{Cc}'
 export def allowed-signers-body [
     pubkeys_dir: path
     --namespace: string = "file"
-    --wildcard # use "*" as the principal for every key instead of its stem
 ]: nothing -> string {
     # Why a `for` and not an `each`: an `error make` raised inside a closure
     # reaches the caller as "Eval block failed with pipeline input", with the
@@ -46,7 +44,7 @@ export def allowed-signers-body [
     for file in (list-files $pubkeys_dir --suffix ".pub") {
         # Name before content: a name this file cannot express is the operator's
         # to fix, and saying so beats whatever `open` reports about it.
-        let principal = if $wildcard { "*" } else { principal-for $file }
+        let principal = principal-for $file
         let key = canonical-file $file | str trim
         $lines = ($lines | append $"($principal) namespaces=\"($namespace)\" ($key)")
     }
@@ -65,9 +63,9 @@ def principal-for [file: path]: nothing -> string {
 # claim, and a verifier without alice's key cannot make it — the honest answer
 # is "I cannot tell". `merkle verify` used to fold the two together and return
 # `valid: false` with "no valid signature from signer alice", so a typo in the
-# verifier's OWN flag read as evidence against the artifact. Both verify
-# commands ask this before any other work. Shared here because the rule being
-# applied is this module's: a principal is the stem of a .pub file.
+# verifier's OWN flag read as evidence against the artifact. Asked before any
+# other work. Shared here because the rule being applied is this module's: a
+# principal is the stem of a .pub file.
 export def check-signer-known [signer: string pubkeys_dir: path]: nothing -> string {
     let known = list-files $pubkeys_dir --suffix ".pub" | each { principal-for $in }
     if (check-signer-name $signer "--signer") not-in $known {

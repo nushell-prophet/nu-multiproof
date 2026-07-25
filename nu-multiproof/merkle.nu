@@ -79,7 +79,7 @@ export def prove [
 }
 
 # Verify an inclusion proof against the SIGNED root statement. Returns a
-# result record (mirrors git-proof verify), not a bare pass/fail:
+# result record, not a bare pass/fail:
 #   valid            — structure ok AND the manifest (when present) rebuilding
 #                      to the signed root AND an accepted signature AND content
 #                      not contradicted. "Accepted" means >=1 valid signature from

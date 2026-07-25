@@ -8,17 +8,16 @@ Proof of concept: Composable cryptographic proofs for git repositories, written 
 
 | Claim | Proof type | Mechanism |
 |-------|-----------|-----------|
-| **This content existed in a signed commit** | Git merkle proof | SHA-256 merkle path from signed commit to blob, self-verifiable without the original repo |
 | **This content existed at a specific time** | OpenTimestamps | Hash chain anchored to a Bitcoin block header |
 | **This file was in the catalogued snapshot** | Merkle inclusion proof | RFC 6962-style binary tree over the manifest rows; one signed 32-byte root verifies a proof of ~log2(n) hashes |
 
-Each proof type is independent. Use one, two, or all three.
+Each proof type is independent. Use either or both.
 
-`ssh-sign` is not a fourth claim — it is the signing step under all three. It signs a file with an SSH key, and verifies every `.sig` beside a file against the keys in `multiproofs/pubkeys/`, separating "content changed" from "key not registered". `seal` uses it to sign the root statement, `merkle verify` to check that signature, and a git merkle proof is worth no more than the commit signature it ends at. It also runs standalone on any file.
+`ssh-sign` is not a third claim — it is the signing step under both. It signs a file with an SSH key, and verifies every `.sig` beside a file against the keys in `multiproofs/pubkeys/`, separating "content changed" from "key not registered". `seal` uses it to sign the root statement and `merkle verify` to check that signature. It also runs standalone on any file.
 
-None of them proves identity. A signer name here is the filename of a `.pub` in `multiproofs/pubkeys/` — chosen by whoever committed that key, and travelling inside the very thing under examination. Binding a key to a person is the verifier's own step: compare the fingerprint against a list you hold. See "Verifying commit signatures" below.
+Neither proves identity. A signer name here is the filename of a `.pub` in `multiproofs/pubkeys/` — chosen by whoever committed that key, and travelling inside the very thing under examination. Binding a key to a person is the verifier's own step: compare the fingerprint against a list you hold. See "Verifying commit signatures" below.
 
-Only the git merkle proof constrains the repo: `git-proof` requires SHA-256 object format (`extensions.objectFormat=sha256`) and refuses a SHA-1 repo. Not a technical limit — a SHA-1 source could produce a native SHA-1 bundle — but a SHA-1 path from a signed commit to a blob is not evidence: chosen-prefix collisions on SHA-1 have been practical since 2019, so the same path can be made to fit a second, different blob. Git's `sha1dc` detection catches known collision techniques, which is a patch, not collision resistance. The other proof types hash file contents themselves and work on any repo.
+Both hash file contents themselves, so neither constrains the repo: any git repo works, SHA-1 or SHA-256.
 
 ## Quick start
 
@@ -30,13 +29,6 @@ nu-multiproof init
 
 # Generate content manifest (SHA-256, git hash, IPFS CID v0)
 nu-multiproof tree-hashes
-
-# Extract a git merkle proof for specific files
-nu-multiproof git-proof extract src/main.nu README.md
-# Verify it (works without the original repo)
-nu-multiproof git-proof verify proof/
-# Render multiproofs/pubkeys/ into an allowed_signers file for `git verify-commit`
-nu-multiproof git-proof render-allowed-signers allowed_signers
 
 # Timestamp a file via OpenTimestamps
 nu-multiproof ots stamp multiproofs/tree-root.txt
@@ -63,7 +55,7 @@ nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.js
 ## Prerequisites
 
 - [Nushell](https://www.nushell.sh/) — developed and tested on 0.114.1; the minimum supported version has not been established
-- `git` (any repo; `git-proof` additionally needs SHA-256 object format — see above)
+- `git` (any repo)
 - `ssh-keygen` (for SSH signing)
 
 ### Testing
@@ -80,7 +72,7 @@ use toolkit.nu *; main test
 
 ## Merkle inclusion proofs
 
-`multiproofs/tree-hashes.csv` is a flat manifest: signing it whole would mean that proving one file's inclusion requires keeping the entire CSV. The merkle layer fixes that. The CSV stays the authoritative catalogue, but `seal` also derives a binary merkle tree over its rows and signs/stamps only the one-line root statement (`multiproofs/tree-root.txt`). A consumer then holds one row plus ~log2(n) sibling hashes — for a million files, ~20 hashes instead of a million rows. (The existing git merkle proofs don't cover this: git trees branch wide, so each proof level lists every sibling in the directory — it grows with directory width and leaks the neighbors' filenames.)
+`multiproofs/tree-hashes.csv` is a flat manifest: signing it whole would mean that proving one file's inclusion requires keeping the entire CSV. The merkle layer fixes that. The CSV stays the authoritative catalogue, but `seal` also derives a binary merkle tree over its rows and signs/stamps only the one-line root statement (`multiproofs/tree-root.txt`). A consumer then holds one row plus ~log2(n) sibling hashes — for a million files, ~20 hashes instead of a million rows. (Git's own trees cannot do this job: they branch wide, so a path through them lists every sibling in each directory — it grows with directory width and leaks the neighbors' filenames.)
 
 The root also authenticates the whole catalogue, indirectly: it is computed from every row, so anyone holding the full CSV can rebuild the tree and must land on the signed root — alter one row and the roots diverge. That is why the CSV itself carries no signature: earlier versions signed it too during a transition, and that legacy signature was dropped — git tag `pre-drop-manifest-sig` marks the last version that produced it, and `seal` now deletes any leftover live manifest sig it finds. One deliberate boundary: the root commits to the parsed row data, not the CSV's exact bytes (column order, quoting style) — leaf serialization uses parsed field values because CSV quoting is not canonical.
 
@@ -127,7 +119,6 @@ Pinned exactly, so an independent implementation reproduces the root from the sa
 
 This repository contains proofs of how it came to exist in [`multiproofs/origin-proofs/`](multiproofs/origin-proofs/). See that directory's README for the full story; in brief:
 
-- **`git-proof/`** — merkle proof that commit [`ff8545e`] in the source repository was signed with an ECDSA-SK hardware key and contained the exact files in `nu-multiproof/`
 - **`tree-hashes.CCA016A8/`** — Bitcoin block 939896 timestamp of the extracted subtree (source repo snapshot), with SSH signature
 - **`tree-hashes.93223B2F/`** — bridge stamp: first OTS made from inside this repo post-extraction, Bitcoin block 940583
 
@@ -143,13 +134,6 @@ An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is 
 - `<stem>.<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots` — a previous proof of the same content, archived by the re-stamp that replaced it. Same content, different nonce and calendar response, so it is an independent attestation worth keeping; the hash in the name makes the archive name collision-proof for two stamps in one second (pinned by the test "rapid re-stamps each keep their own proof")
 
 `seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. New seals produce only `tree-root.*` bundles: the manifest is neither signed nor stamped anymore, since the root statement is derived from every manifest row, so its signature and Bitcoin anchor cover the full CSV. Archival `tree-hashes.*` bundles (including `origin-proofs/`) stay valid as-is; the transition-era ones may also carry a CSV sig.
-
-Verify the git proof:
-
-```nushell no-run
-use nu-multiproof/
-nu-multiproof git-proof verify multiproofs/origin-proofs/git-proof
-```
 
 ## Verifying a timestamp
 
@@ -175,25 +159,27 @@ Commits in this repo are SSH-signed. Verifying an SSH-signed commit involves two
 
 Git conflates them: it refuses to verify SSH signatures unless `gpg.ssh.allowedSignersFile` is configured and points to an existing file. That file maps principals → keys → namespaces; it is your **local trust list**, not part of any commit. Setting it is a statement *you* make about which keys you trust — the repo cannot make it for you.
 
-`multiproofs/pubkeys/` is this project's source of truth for who can sign. `git-proof render-allowed-signers <path>` writes those keys into a correctly-formatted trust file. It does **not** mutate git config — wiring is the caller's choice.
+`multiproofs/pubkeys/` is this project's source of truth for who can sign. Nothing here writes the trust file for you: that file *is* your statement about which keys you accept, so building it is your step, not the repo's. The format is one line per key — `<principals> namespaces="git" <keytype> <base64>`. The `*` principal below is collective trust: the key is in this project's list, with no personal identity attached to it.
 
 ### One-shot inspection
 
 `git -c key=value` overrides config for a single invocation, no persisted state:
 
 ```nushell no-run
-use nu-multiproof/
-nu-multiproof git-proof render-allowed-signers /tmp/nu-multiproof-signers
-git -c gpg.ssh.allowedSignersFile=/tmp/nu-multiproof-signers log --show-signature -1
+let signers = "/tmp/nu-multiproof-signers"
+ls --all multiproofs/pubkeys | get name | where ($it | path parse | get extension) == "pub" | each {|f| $"* namespaces=\"git\" (open --raw $f | split row --regex '\s+' | first 2 | str join ' ')" } | str join "\n" | save --force $signers
+git -c $"gpg.ssh.allowedSignersFile=($signers)" log --show-signature -1
 ```
+
+`first 2` keeps the key type and the base64 blob and drops the trailing comment (`alice@laptop`) — it is not part of the trust statement and differs per machine.
 
 ### Per-clone setup
 
-For repeated inspection, render once and point this clone's **local** git config at the file:
+For repeated inspection, write the same file inside this clone's `.git/` and point its **local** git config at it:
 
 ```nushell no-run
 let signers = $"(git rev-parse --git-dir | str trim)/allowed_signers"
-nu-multiproof git-proof render-allowed-signers $signers
+ls --all multiproofs/pubkeys | get name | where ($it | path parse | get extension) == "pub" | each {|f| $"* namespaces=\"git\" (open --raw $f | split row --regex '\s+' | first 2 | str join ' ')" } | str join "\n" | save --force $signers
 git config gpg.ssh.allowedSignersFile $signers
 ```
 
@@ -206,15 +192,9 @@ Good "git" signature for * with ECDSA-SK key SHA256:7SOGNZ2C…
 ```
 
 - `Good` — both checks above passed.
-- `for *` — the matched principal is the wildcard from the rendered file: confirms the key is in the project's trust list, but does not attach a personal identity. This is the appropriate trust statement for a project's tracked signers — collective trust, not individual identification.
+- `for *` — the matched principal is the `*` you wrote into the file: confirms the key is in the project's trust list, but does not attach a personal identity. This is the appropriate trust statement for a project's tracked signers — collective trust, not individual identification.
 
-### Self-verifying proof bundles
-
-`git-proof verify <proof-bundle>` is the preferred verifier for historical commits packaged as proof bundles: it bundles its own pubkeys with the proof and verifies in a temp repo via `git -c`, with no `allowedSignersFile` setup needed. Independence from the verifier's local git config is the convenience; independence from the verifier's *trust* is not a feature, and the next paragraph is about that.
-
-What a bundled trust list establishes is exactly that and no more: the bundle agrees with itself — its objects, its commit signature and its keys. It cannot establish identity, because the keys travel inside the thing under examination. A bundle written from scratch — fresh key, any commit date, any author name, the key filed as `trusted-auditor.pub` — passes every check and prints `Proof is VALID`; the verdict line and the returned `trust` record say so (`from_bundle: true`).
-
-To make it an identity check, name a trust list from outside the bundle, the same way `merkle verify` does: `--pubkeys-dir <dir>` accepts a commit signed by any key in a directory you hold, and `--signer <name>` narrows that to the key material in `<dir>/<name>.pub` alone. `--signer` needs `--pubkeys-dir` and is refused without it — over the bundle's own list it would ask no more than "is there a file of that name in here", which the bundle's author chose. A `--signer` your own list has no key for is an error, not `valid: false`: without their key you cannot say they did *not* sign. (Pinned by the tests "verify against a trust list the verifier holds refuses a forged bundle", "signer flag against a bundle-supplied trust list is refused, not answered", "signer with no matching key in the trusted dir is an error, not invalid".)
+One caveat about where the keys come from: `multiproofs/pubkeys/` travels inside the repo under examination, so rendering the trust file from it and then verifying that repo's commits proves the repo agrees with itself. Anyone can fork, add their own key and re-sign. To make it an identity check, compare the fingerprint git reports against one you hold from elsewhere — the same verifier-side step `merkle verify --pubkeys-dir` exists for.
 
 ## License
 

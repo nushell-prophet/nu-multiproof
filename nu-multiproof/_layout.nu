@@ -5,7 +5,7 @@
 # Not everything under multiproofs/ is here yet. The OTS bundle grammar
 # (<stem>.<HASH8>/<stem>.ots) is built inline in ots.nu and re-derived by glob in
 # merkle.nu and seal.nu; `.pub`, `.sig` and `.multiproof.json` are spelled at
-# their use sites, and git-proof's bundle names are CWD-relative by design.
+# their use sites.
 # Anything moved in here should come with its readers.
 
 export const MULTIPROOFS_DIR = "multiproofs"

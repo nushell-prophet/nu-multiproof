@@ -7,10 +7,6 @@ Operational timestamps go to [`../ots-timestamps/`](../ots-timestamps/).
 
 ## What's here
 
-- `git-proof/` — merkle proof that commit `ff8545e` in the source repo
-  `open-knowledge-pack-sha256` was signed with an ECDSA-SK hardware key and
-  contained the 7 `nu-multiproof/*` files that seeded this standalone repo.
-
 - `tree-hashes.CCA016A8/` — OpenTimestamps proof that the `nu-multiproof/*`
   subtree, as of source commit `ff8545e`, was timestamped on Bitcoin block
   939896. The manifest covers the full source repo (59 entries); the 24 rows
@@ -21,6 +17,12 @@ Operational timestamps go to [`../ots-timestamps/`](../ots-timestamps/).
   standalone repo after extraction, confirmed on Bitcoin block 940583.
   Connects the cross-repo extraction proof above to this repo's ongoing
   operational timestamps in `../ots-timestamps/`.
+
+A third bundle used to sit here: `git-proof/`, a merkle proof that source
+commit `ff8545e` was signed with an ECDSA-SK hardware key and contained the 7
+`nu-multiproof/*` files that seeded this repo. It was removed together with the
+`git-proof` command, the only thing that could check it. Both are in this
+repo's git history if the claim is ever needed again.
 
 ## Why these are kept separate from ots-timestamps/
 

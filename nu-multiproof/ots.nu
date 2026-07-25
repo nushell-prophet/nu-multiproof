@@ -184,8 +184,8 @@ export def info [ots_file: path] {
     let parsed = open --raw $ots_file | into binary | parse-ots
     {
         # Why str lowercase: `encode hex` emits uppercase, but every persisted
-        # hash in this project (tree-hashes.csv, git-proof manifests) is
-        # lowercase — it comes from `hash sha256`/git. Lowercase is canonical.
+        # hash in this project (tree-hashes.csv, proof files) is lowercase —
+        # it comes from `hash sha256`/git. Lowercase is canonical.
         hash: ($parsed.hash | encode hex | str lowercase)
         ops: (
             $parsed.ops | each {|op|
@@ -434,7 +434,7 @@ export def upgrade [ots_file: path --response-file: path] {
 }
 
 # Print a human summary of a verify result and, under --fail, turn an invalid
-# proof into a non-zero exit (matching git-proof/ssh-sign verify).
+# proof into a non-zero exit (matching merkle/ssh-sign verify).
 def emit-verify [result: record, fail: bool]: nothing -> record {
     if $result.valid {
         print $"✓ Bitcoin block ($result.height) verified independently"

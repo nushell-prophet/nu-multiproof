@@ -24,7 +24,7 @@ def "seal produces manifest and signed root statement" [] {
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
 
-    # SHA-256 not required for seal (only git-proof requires it)
+    # seal works on a SHA-1 repo: it hashes file contents itself
     ^git -C $repo init -q
     ^git -C $repo config user.email "seal-test@example.com"
     ^git -C $repo config user.name "Seal Test"

@@ -38,8 +38,8 @@ export def validate-leaf [row: record]: nothing -> nothing {
     if $row.content_sha256 != "" and $row.content_sha256 !~ '^[0-9a-f]{64}$' {
         error make {msg: $"leaf content_sha256 must be empty or 64 lowercase hex chars: ($row.content_sha256)"}
     }
-    # 40 or 64: seal supports SHA-1 git repos (only git-proof requires SHA-256),
-    # so a manifest's git object hash is legitimately either digest length.
+    # 40 or 64: seal supports SHA-1 and SHA-256 git repos, so a manifest's git
+    # object hash is legitimately either digest length.
     if $row.content_git != "" and $row.content_git !~ '^([0-9a-f]{40}|[0-9a-f]{64})$' {
         error make {msg: $"leaf content_git must be empty or 40/64 lowercase hex chars: ($row.content_git)"}
     }

@@ -48,22 +48,3 @@ export def 'main root-cid' [
 
     tree-hashes root-cid --repo $repo --publish-to-ipfs=$publish_to_ipfs
 }
-
-export def 'main proof-extract' [
-    ...files: string # Target file paths to prove
-    --commit: string = "HEAD" # Commit to prove against
-    --out-dir: path = "proof" # Output directory
-] {
-    use nu-multiproof/git-proof.nu
-
-    git-proof extract ...$files --commit $commit --out-dir $out_dir
-}
-
-export def 'main proof-verify' [
-    proof_dir: path = "proof" # Proof bundle directory
-    --fail # Exit non-zero on an invalid proof (for CI)
-] {
-    use nu-multiproof/git-proof.nu
-
-    git-proof verify $proof_dir --fail=$fail
-}
