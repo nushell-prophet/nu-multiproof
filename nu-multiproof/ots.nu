@@ -201,8 +201,13 @@ export def info [ots_file: path] {
 }
 
 # Create an OTS timestamp proof for a file
+#
+# --response-file: read the calendar's answer from a local file instead of
+# posting the digest. Same seam as `upgrade --response-file`, and for the same
+# reason: without it the assemble/validate/write path can only be exercised
+# against a live calendar, so it was not exercised at all.
 @example "timestamp the manifest against the OTS calendar" { ots stamp multiproofs/tree-hashes.csv }
-export def stamp [file: path --out-dir: path] {
+export def stamp [file: path --out-dir: path --response-file: path] {
     let out_dir = if $out_dir != null { $out_dir } else {
         ots-dir (repo-root)
     }
@@ -210,19 +215,23 @@ export def stamp [file: path --out-dir: path] {
     let nonce = random binary 16
     let merkle_tip = $file_hash | bytes add --end $nonce | hash sha256 | decode hex
 
-    # Why http builtin (not curl): no external dep and no temp files. --full
-    # exposes the status, --allow-errors returns a non-200 instead of throwing
-    # raw, and /digest expects raw bytes (application/octet-stream).
-    let response = (
-        http post --full --allow-errors --max-time $NETWORK_TIMEOUT
-        --content-type "application/octet-stream"
-        $"($DEFAULT_CALENDAR)/digest"
-        $merkle_tip
-    )
-    if $response.status != 200 {
-        error make {msg: $"calendar returned status ($response.status)"}
+    let calendar_bytes = if $response_file != null {
+        open --raw $response_file | into binary
+    } else {
+        # Why http builtin (not curl): no external dep and no temp files. --full
+        # exposes the status, --allow-errors returns a non-200 instead of throwing
+        # raw, and /digest expects raw bytes (application/octet-stream).
+        let response = (
+            http post --full --allow-errors --max-time $NETWORK_TIMEOUT
+            --content-type "application/octet-stream"
+            $"($DEFAULT_CALENDAR)/digest"
+            $merkle_tip
+        )
+        if $response.status != 200 {
+            error make {msg: $"calendar returned status ($response.status)"}
+        }
+        $response.body
     }
-    let calendar_bytes = $response.body
 
     let nonce_len = ($nonce | bytes length) | encode-varint
     let ots = (
@@ -236,6 +245,28 @@ export def stamp [file: path --out-dir: path] {
         | bytes add --end 0x[08]
         | bytes add --end $calendar_bytes
     )
+
+    # Why parse what we just built, before anything is written: only the HTTP
+    # status was checked, so a calendar answering 200 with `b"x"` produced a
+    # full success record, exit 0, and an .ots that `info` rejects with
+    # "unknown op tag: 60". That proof is unrecoverable — the digest reached
+    # the calendar, and the local file can never be upgraded. `upgrade` has
+    # validated before writing since 2844626; `stamp` never did.
+    let validation = try {
+        let reparsed = $ots | parse-ots
+        if $reparsed.hash != $file_hash {
+            {ok: false reason: "the assembled proof does not commit to this file's hash"}
+        } else if $reparsed.attestation.type == "unknown" {
+            {ok: false reason: $"unknown attestation type ($reparsed.attestation.tag)"}
+        } else {
+            {ok: true}
+        }
+    } catch {|e|
+        {ok: false reason: $e.msg}
+    }
+    if not $validation.ok {
+        error make {msg: $"calendar response does not make a readable proof, nothing written: ($validation.reason)"}
+    }
 
     # Why uppercase here while every other hex in this project is lowercase:
     # `encode hex` emits uppercase and this prefix is only a directory name.

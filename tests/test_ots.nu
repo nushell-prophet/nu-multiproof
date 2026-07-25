@@ -3,7 +3,7 @@ use std/testing *
 
 use ../nu-multiproof/ots.nu
 use ../nu-multiproof/_ots-helpers.nu [copy-path-for check-block-header bits-to-target]
-use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG]
+use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots build-calendar-response OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG]
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -237,4 +237,61 @@ def "stamp and info round-trip" [] {
     let expected_hash = open --raw $test_file | hash sha256
     assert equal ($result.hash | str downcase) $expected_hash
     assert equal $result.attestation.type "pending"
+}
+
+# --- stamp: what gets written, and what does not ---
+
+@test
+def "stamp writes a proof its own parser can read" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
+
+    let result = (ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
+
+    let parsed = (ots info $result.ots)
+    assert equal $parsed.attestation.type "pending"
+    assert equal $parsed.hash (open --raw $file | hash sha256)
+    # the frozen copy is the content that was stamped
+    assert equal (open --raw $result.copy) "hello world"
+}
+
+# The failure this guard exists for: only the HTTP status was checked, so a
+# calendar answering 200 with a garbage body produced a success record, exit 0,
+# and an .ots that `info` cannot read — while the digest had already reached
+# the calendar, so the proof is unrecoverable.
+@test
+def "stamp writes nothing when the calendar body is not a timestamp" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    "x" | save --raw --force $"($tmp_dir)/garbage.bin"
+
+    let outcome = (try {
+        ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/garbage.bin"
+        "ok"
+    } catch {|e| $e.msg })
+    assert ($outcome | str contains "nothing written") $"expected a refusal, got: ($outcome)"
+    # no bundle directory, no frozen copy, no proof
+    assert equal (ls --all $tmp_dir | get name | each { path basename } | sort) ["doc.txt" "garbage.bin"]
+}
+
+# Validation runs before the archival rename, so a bad response cannot cost the
+# proof that is already there.
+@test
+def "a rejected stamp leaves the previous proof in place" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
+    "x" | save --raw --force $"($tmp_dir)/garbage.bin"
+
+    let first = (ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
+    let before = (open --raw $first.ots | into binary)
+
+    try { ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/garbage.bin" }
+
+    assert equal (open --raw $first.ots | into binary) $before
+    assert equal (ls --all $first.dir | get name | each { path basename } | sort) ["doc.ots" "doc.txt"]
 }

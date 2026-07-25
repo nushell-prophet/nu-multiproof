@@ -42,3 +42,16 @@ export def build-bitcoin-ots [--hash: binary = $ZERO_HASH] {
     | bytes add --end $ATT_BITCOIN_TAG
     | bytes add --end 0x[03 C0C407]
 }
+
+# What the calendar returns from POST /digest: the tail of the timestamp chain
+# that `stamp` appends after the nonce's sha256 op — here a bare pending
+# attestation naming the public calendar.
+export def build-calendar-response [] {
+    let url_bytes = "https://a.pool.opentimestamps.org" | into binary
+    let url_len = $url_bytes | bytes length
+    0x[00]
+    | bytes add --end $ATT_PENDING_TAG
+    | bytes add --end ($url_len + 1 | into binary | bytes at 0..0)
+    | bytes add --end ($url_len | into binary | bytes at 0..0)
+    | bytes add --end $url_bytes
+}
