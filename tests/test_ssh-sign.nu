@@ -364,3 +364,56 @@ def "a file whose name starts with a dash can be signed and verified" [] {
     assert equal ($result | get signer) ["alice"]
     assert equal ($result | get valid) [true]
 }
+
+# `ssh-keygen -Y sign <file>` writes to the fixed name `<file>.sig`, which every
+# process signing that file shares: two concurrent signs raced there and the
+# surviving `<file>.<signer>.sig` held the *other* signer's signature, while
+# `signer-from-sig` reads the filename as truth. Pinned without a race: a bare
+# `<file>.sig` left beside the target must come out untouched.
+@test
+def "signing never writes through the shared <file>.sig name" [] {
+    let tmp_dir = $in.tmp_dir
+    let test_file = $"($tmp_dir)/doc.txt"
+    let bare_sig = $"($test_file).sig"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let key_path = $"($tmp_dir)/alice_key"
+
+    mkdir $pubkeys_dir
+    "hello world" | save --force $test_file
+    "not a signature, and not ours to touch" | save --force $bare_sig
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    cp $"($key_path).pub" ($pubkeys_dir | path join "alice.pub")
+
+    ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
+
+    assert ($"($test_file).alice.sig" | path exists)
+    assert equal (open --raw $bare_sig) "not a signature, and not ours to touch"
+}
+
+# The same property under actual concurrency: each signature must end up under
+# its own signer's name. With the shared intermediate this either lost a
+# signature ("Not found" from the mv) or filed one under the other's name.
+@test
+def "concurrent signs of one file keep their own signatures" [] {
+    let tmp_dir = $in.tmp_dir
+    let test_file = $"($tmp_dir)/doc.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+
+    mkdir $pubkeys_dir
+    "hello world" | save --force $test_file
+    let signers = ["alice" "bob" "carol" "dave"]
+    for s in $signers {
+        ^ssh-keygen -t ed25519 -f $"($tmp_dir)/($s)_key" -N "" -q
+        cp $"($tmp_dir)/($s)_key.pub" ($pubkeys_dir | path join $"($s).pub")
+    }
+
+    $signers | par-each {|s|
+        ssh-sign sign $test_file --key $"($tmp_dir)/($s)_key" --pubkeys-dir $pubkeys_dir
+    }
+
+    # find-principals names the signer from the key inside the sig; the file
+    # name claims one too. They must agree for every signature.
+    let result = (ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir)
+    assert equal ($result | get signer | sort) $signers
+    assert equal ($result | get valid) [true true true true]
+}

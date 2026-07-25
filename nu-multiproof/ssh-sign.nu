@@ -61,32 +61,37 @@ export def sign [
             lookup-signer-name $key $dir
         }
 
-        # ssh-keygen takes no `--`, and a file name starting with `-` is read as
-        # an option: it falls back to signing standard input, writes no .sig, and
-        # the check below then reports a failed signing ceremony that never
-        # happened. An absolute path cannot start with `-`.
-        let sign_target = if ($path | str starts-with "-") { $path | path expand } else { $path }
-        ^ssh-keygen -Y sign -f $key -n $namespace $sign_target
-        let default_sig = (sig-path-for $path)
-        if not ($default_sig | path exists) {
-            error make {msg: $"signature file not created: ($default_sig)"}
-        }
-
-        # Why: Apple's ssh-keychain.dylib fail-opens — on a cancelled Touch ID
-        # prompt (or a wedged Secure Enclave stack) it reports success and
-        # ssh-keygen writes a sig whose ECDSA r/s are empty. A .sig file existing
-        # proves nothing; only a verify does. Delete the bad artifact so it can't
-        # be committed as if it were a signature.
-        let check = (do {
-            open --raw $path | ^ssh-keygen -Y check-novalidate -n $namespace -s $default_sig
+        # Why the content goes in over stdin instead of naming the file: given a
+        # file, ssh-keygen writes the signature to the fixed name `<path>.sig`,
+        # which every process signing that file shares. Two signs of one file
+        # with different keys raced there and the surviving
+        # `tree-root.txt.id_ed25519.sig` held id2's signature — the filename is
+        # what `signer-from-sig` reads as truth. Signing standard input returns
+        # the signature on stdout, so each call keeps its own, and a file name
+        # starting with `-` stops being an option (ssh-keygen has no `--`).
+        # -q silences the "Signing data on standard input" notice.
+        let signed = (do {
+            open --raw $path | into binary | ^ssh-keygen -Y sign -q -f $key -n $namespace
         } | complete)
-        if $check.exit_code != 0 {
-            rm $default_sig
-            error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony. Re-run and complete the prompt."}
+        if $signed.exit_code != 0 {
+            error make {msg: $"ssh-keygen could not sign ($path): ($signed.stderr | str trim)"}
         }
 
         let sig_path = (sig-path-for $path $signer_name)
-        mv $default_sig $sig_path
+        $signed.stdout | save --force $sig_path
+
+        # Why: Apple's ssh-keychain.dylib fail-opens — on a cancelled Touch ID
+        # prompt (or a wedged Secure Enclave stack) it reports success and
+        # ssh-keygen emits a sig whose ECDSA r/s are empty. A .sig file existing
+        # proves nothing; only a verify does. Delete the bad artifact so it can't
+        # be committed as if it were a signature.
+        let check = (do {
+            open --raw $path | into binary | ^ssh-keygen -Y check-novalidate -n $namespace -s $sig_path
+        } | complete)
+        if $check.exit_code != 0 {
+            rm $sig_path
+            error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony. Re-run and complete the prompt."}
+        }
 
         print $"Signed: ($sig_path)"
         $sig_path
