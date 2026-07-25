@@ -13,10 +13,9 @@ use _key-helpers.nu with-signing-key
 # Operations order:
 #   1. Upgrade pending OTS — opportunistic; tries all .ots files, silent on failure
 #      (Bitcoin confirmation takes hours/days, so this progresses previous seals)
-#   2. tree-hashes — regenerate the manifest from current worktree files. With a
-#      root CID, one `ipfs add -r` pass emits per-file, per-dir and the root "."
-#      row together, so the manifest is written once, complete (--no-root-cid
-#      uses the pure-nu path with no root row). Then derive the merkle root
+#   2. tree-hashes — regenerate the manifest from current worktree files: one
+#      in-process pass emits per-file, per-dir and the root "." row together, so
+#      the manifest is written once, complete. Then derive the merkle root
 #      statement (multiproofs/tree-root.txt) from the fresh manifest
 #   3. ssh-sign — sign the root statement (--no-sign to skip)
 #   4. ots stamp — timestamp the root statement (--no-stamp to skip)
@@ -24,14 +23,12 @@ use _key-helpers.nu with-signing-key
 # Committing is deliberately outside this pipeline. It's a user decision with
 # context (message, scope, timing).
 @example "full seal of the current repo" { seal }
-@example "seal without IPFS or timestamping" { seal --no-root-cid --no-stamp }
+@example "seal without timestamping" { seal --no-stamp }
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --key: path # SSH private key (default: from git config user.signingKey)
-    --no-root-cid # Skip IPFS root CID (on by default — opt out when ipfs CLI unavailable)
     --no-sign # Skip SSH signing (on by default — seal should be complete)
     --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
-    --publish-to-ipfs # Publish root CID to local IPFS daemon (default: only-hash, no daemon needed)
 ] {
     let root = repo-root $repo
     let manifest_path = manifest-path $root
@@ -63,19 +60,13 @@ export def main [
         }
     }
 
-    # 2. Regenerate the manifest in one pass. With a root CID, --ipfs computes
-    #    per-file, per-dir AND the root "." row together (build-tree/B2); the
-    #    manifest is written once, complete, before any signature exists.
-    #    --no-root-cid falls back to the pure-nu path (no daemon).
-    mut result = {manifest: $manifest_path}
-    if $no_root_cid {
-        tree-hashes --repo $root
-    } else {
-        let root_cid = tree-hashes root-cid --repo $root --publish-to-ipfs=$publish_to_ipfs
-        print $"Root CID: ($root_cid)"
-        $result = ($result | insert root_cid $root_cid)
-    }
+    # 2. Regenerate the manifest in one pass: per-file, per-dir AND the root "."
+    #    row together (build-tree/B2), so the manifest is written once,
+    #    complete, before any signature exists.
+    let root_cid = tree-hashes root-cid --repo $root
+    print $"Root CID: ($root_cid)"
     print $"Manifest: ($manifest_path)"
+    mut result = {manifest: $manifest_path root_cid: $root_cid}
 
     # Derive the merkle root statement from the fresh manifest — the compact
     # signing target: consumers verify per-file inclusion proofs against this

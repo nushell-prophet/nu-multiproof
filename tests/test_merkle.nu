@@ -158,8 +158,8 @@ def "golden root for the fixed mini-manifest, statement byte-exact" [] {
 # The IPFS root CID rides in the manifest as the "." row (tree-hashes.nu), and
 # nothing signs the CSV any more — so the only thing authenticating that CID is
 # its being a leaf under the signed root. Pinned by a hand-written manifest, not
-# by an --ipfs build: the point is what the leaf set covers, and the assertion
-# must not depend on an ipfs daemon.
+# by a tree-hashes build: the point is what the leaf set covers, so the rows are
+# hostile input, not this repo's own output.
 @test
 def "the root-CID row is a covered leaf" [] {
     let tmp_dir = $in.tmp_dir

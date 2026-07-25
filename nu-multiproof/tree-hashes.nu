@@ -1,23 +1,55 @@
 #!/usr/bin/env nu
 
 # Generate a CSV manifest of content hashes (SHA-256, git object, IPFS CID v0)
-# for all git-tracked files and their parent directories.
+# for all git-tracked files, their parent directories and the repo root ".".
+#
+# Every hash is computed in-process: the CIDs come from _cid-helpers.nu, which
+# reproduces `ipfs add` byte for byte, so no ipfs daemon or CLI is involved and
+# there is only ever one manifest shape to sign.
 
-use cid-v0.nu
-use cid-v0.nu MAX_SINGLE_CHUNK
+use _cid-helpers.nu [file-node dir-node node-cid]
 use _repo.nu repo-root
 use _layout.nu [MULTIPROOFS_DIR multiproofs-dir manifest-path]
-use _temp-helpers.nu [with-temp-dir with-temp-file]
+use _temp-helpers.nu with-temp-file
 
-# IPFS CID parameters shared by the pure-nu reproduction (cid-v0.nu) and the
-# ipfs CLI, so the two agree. To reproduce a name hash: printf '%s' 'name' | ipfs add ...
-# --only-hash is the default (no daemon needed); --publish-to-ipfs drops it to
-# actually store the content so the shared root CID is retrievable.
-const IPFS_CID_FLAGS = ["--progress=false" "--cid-version=0" "--raw-leaves=false" "--hash=sha2-256" $"--chunker=size-($MAX_SINGLE_CHUNK)"]
+# Fold file nodes up into directory nodes, keyed by manifest row name — "." is
+# the repo root, whose node is the CID the "." row publishes.
+#
+# A UnixFS directory commits to its entries by name and CID, so every child must
+# exist before its parent: walking the directories deepest-first gives that in
+# one pass.
+def cid-nodes [file_entries: table, dir_entries: table]: nothing -> record {
+    let child_index = (
+        ($file_entries | select rel) ++ ($dir_entries | select rel)
+        | each {|e|
+            let parent = $e.rel | path dirname
+            {parent: (if ($parent | is-empty) { "." } else { $parent }) name: ($e.rel | path basename) rel: $e.rel}
+        }
+        | group-by parent
+    )
+    let deepest_first = (
+        ($dir_entries | get rel) ++ ["."]
+        | each {|rel| {rel: $rel depth: (if $rel == "." { 0 } else { $rel | path split | length })} }
+        | sort-by depth --reverse
+        | get rel
+    )
+    mut nodes = $file_entries | reduce --fold {} {|e acc| $acc | insert $e.rel $e.node }
+    for d in $deepest_first {
+        let built = $nodes # a closure cannot capture a mutable variable
+        # Why sort by name: `ipfs add` walks directory entries in byte-wise name
+        # order, and the link order is part of what the directory CID commits
+        # to. Nushell compares strings byte-wise, so a plain sort-by is it.
+        let links = $child_index
+            | get --optional $d
+            | default []
+            | sort-by name
+            | each {|c| {name: $c.name node: ($built | get $c.rel)} }
+        $nodes = ($nodes | insert $d (dir-node $links))
+    }
+    $nodes
+}
 
 def build-tree [
-    --ipfs # Compute CIDs using ipfs CLI (records per-file, per-dir and the root "." CID)
-    --publish-to-ipfs # With --ipfs: store content in the local IPFS daemon (default: only-hash)
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> table {
     let root = repo-root $repo
@@ -97,75 +129,24 @@ def build-tree [
         | each {|d| {rel: $d is_dir: true content_sha256: ""} }
     )
 
-    # Read each file once and derive both the sha256 and (in default mode) the
-    # CID from that single read — not one read per hash.
+    # Read each file once and derive both the sha256 and the CID node from that
+    # single read — not one read per hash.
     let file_entries = (
         $tracked_files
         | each {|f|
             let content = open --raw ($root | path join $f) | into binary
-            let size = $content | bytes length
             {
                 rel: $f
                 is_dir: false
                 content_sha256: ($content | hash sha256)
-                # Empty in --ipfs mode (the add pass fills CIDs) and for files
-                # over the single-chunk limit; otherwise the pure-nu CID.
-                content_cid: (
-                    if $ipfs { "" } else if $size > $MAX_SINGLE_CHUNK {
-                        print $"skip: ($f) \(($size) bytes\) exceeds 256 KB single-chunk limit"
-                        ""
-                    } else { $content | cid-v0 }
-                )
+                node: ($content | file-node)
             }
         }
     )
 
-    let entries = $dir_entries ++ $file_entries | sort-by rel
+    let entries = ($dir_entries ++ ($file_entries | reject node)) | sort-by rel
 
-    # Content CIDs. In --ipfs mode a single `ipfs add -r` pass yields per-file,
-    # per-dir AND the root "." CID together; default mode already computed
-    # per-file CIDs above (pure Nushell, no daemon) and has no directory/root CID.
-    let cid_result = if $ipfs {
-        # Stage tracked files into a temp dir and ipfs-add that — so the CIDs
-        # cover exactly the manifest file set. Not `ipfs add -r $root` because:
-        # it walks .git/ and ignored files, polluting directory CIDs.
-        with-temp-dir "build-tree-ipfs" {|tmp|
-            $tracked_files | each {|f|
-                let dest = $tmp | path join $f
-                mkdir ($dest | path dirname)
-                cp ($root | path join $f) $dest
-            }
-            let tmp_basename = $tmp | path basename
-            let publish_flags = if $publish_to_ipfs { [] } else { ["--only-hash"] }
-            # Why complete: on failure (notably `ipfs` repo-lock contention when
-            # another add runs concurrently) stdout is empty and the root-row lookup
-            # below would crash with a cryptic index error. Surface the ipfs stderr.
-            # Why --hidden: ipfs add skips dotfiles by default, silently dropping
-            # tracked dotfiles (.gitignore) from the add — and thus from the dir and
-            # root CIDs the seal signs. Safe here: the staging dir holds only
-            # tracked files, so there is no .git/ or ignored noise to pick up.
-            # Not in IPFS_CID_FLAGS because: that const is the hashing parameters
-            # shared with cid-v0.nu; --hidden is a traversal flag.
-            let add = ^ipfs add --recursive --hidden ...$publish_flags ...$IPFS_CID_FLAGS $tmp | complete
-            if $add.exit_code != 0 {
-                error make {msg: $"ipfs add failed: ($add.stderr | str trim)"}
-            }
-            let rows = $add.stdout | lines | parse "added {cid} {path}"
-            # The row whose path is the bare staging basename (no slash) is the root.
-            let root_cid = $rows | where path == $tmp_basename | get cid.0
-            let table = $rows
-                | where path != $tmp_basename
-                | reduce --fold {} {|row acc|
-                    let rel = $row.path | str replace $"($tmp_basename)/" ""
-                    $acc | insert $rel $row.cid
-                }
-            {table: $table root_cid: $root_cid}
-        }
-    } else {
-        {table: {} root_cid: null}
-    }
-    let content_cid_table = $cid_result.table
-    let root_cid = $cid_result.root_cid
+    let nodes = cid-nodes $file_entries $dir_entries
 
     # Git hashes: build a temp index from working-tree files, then ls-tree the
     # resulting tree. Gives blob AND tree hashes from the same snapshot, so a
@@ -191,67 +172,43 @@ def build-tree [
         | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
     }
 
-    # Join lookup tables into final CSV structure. In --ipfs mode CIDs (files and
-    # dirs — A3) come from the add pass's table; default mode uses the per-file
-    # CID computed during the single read (dirs stay empty).
+    # Join lookup tables into final CSV structure. Every row carries a CID —
+    # files from their own node, directories from the node folded above.
     let rows = $entries
         | each {|e|
             {
                 filepath: $e.rel
                 content_sha256: $e.content_sha256
                 content_git: ($git_hashes | get --optional $e.rel | default "")
-                content_cid: (
-                    if $ipfs {
-                        # Why an error, not `default ""`: every staged path must
-                        # come back from the add pass — a miss means the add
-                        # disagrees with the manifest file set. The silent empty
-                        # fallback is what hid ipfs add skipping dotfiles.
-                        let cid = $content_cid_table | get --optional $e.rel
-                        if $cid == null {
-                            error make {msg: $"ipfs add returned no CID for staged path ($e.rel)"}
-                        }
-                        $cid
-                    } else {
-                        $e | get --optional content_cid | default ""
-                    }
-                )
+                content_cid: ($nodes | get $e.rel | node-cid)
             }
         }
 
-    # Append the root "." row when we have a root CID (only --ipfs computes one),
-    # so the manifest is written once, complete — no reopen-and-rewrite (B2).
+    # The root "." row goes in during this same pass, so the manifest is written
+    # once, complete — no reopen-and-rewrite (B2).
     # Why re-sort: the "." row must obey the manifest's own byte-wise order
     # ("." sorts before ".woodpecker.yaml"), not sit appended last — merkle
-    # leaf ordering will depend on the CSV honoring its own rule.
-    if $root_cid != null {
-        $rows
-        | append {filepath: "." content_sha256: "" content_git: "" content_cid: $root_cid}
-        | sort-by filepath
-    } else {
-        $rows
-    }
+    # leaf ordering depends on the CSV honoring its own rule.
+    $rows
+    | append {filepath: "." content_sha256: "" content_git: "" content_cid: ($nodes | get "." | node-cid)}
+    | sort-by filepath
 }
 
-# Regenerate the manifest with IPFS CIDs and return the root CID (CID v0).
+# Regenerate the manifest and return the root CID (CID v0) it records.
 #
-# One `ipfs add -r` pass over the staged worktree yields per-file, per-dir and
-# the root "." CID together (build-tree does this in --ipfs mode), so the
-# manifest is written once, complete — no reopen-and-rewrite and no
-# stale-signature guard (B2). The root CID lands in the manifest as the "." row,
-# so it becomes a merkle leaf like any other row and the signed root statement
-# covers it — the whole-CSV signature that used to cover it was dropped in
-# 6bcfa24. Not a separate file/git tag/provenance
-# bundle because: the "." row collapses the root CID into the existing manifest
-# — no new artifact to track. tree-hashes.csv is excluded from its own manifest
-# (build-tree filters multiproofs/ out), so the root CID covers all listed files
-# but not the CSV itself.
+# The root CID lands in the manifest as the "." row, so it becomes a merkle leaf
+# like any other row and the signed root statement covers it — the whole-CSV
+# signature that used to cover it was dropped in 6bcfa24. Not a separate
+# file/git tag/provenance bundle because: the "." row collapses the root CID
+# into the existing manifest — no new artifact to track. tree-hashes.csv is
+# excluded from its own manifest (build-tree filters multiproofs/ out), so the
+# root CID covers all listed files but not the CSV itself.
 @example "compute and record the IPFS root CID" { tree-hashes root-cid }
 export def root-cid [
     --repo: path # Target git repo root (default: git root of current directory)
-    --publish-to-ipfs # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
 ]: nothing -> string {
     let root = repo-root $repo
-    main --ipfs --publish-to-ipfs=$publish_to_ipfs --repo $repo
+    main --repo $repo
     open (manifest-path $root) | where filepath == "." | get content_cid.0
 }
 
@@ -260,11 +217,9 @@ export def root-cid [
 @example "preview the manifest without saving" { tree-hashes --echo }
 export def main [
     --echo # Output as nushell table instead of saving to file
-    --ipfs # Compute CIDs using ipfs CLI (records per-file, per-dir and the root "." CID)
-    --publish-to-ipfs # With --ipfs: store content in the local IPFS daemon (default: only-hash)
     --repo: path # Target git repo root (default: git root of current directory)
 ] {
-    let table = (build-tree --ipfs=$ipfs --publish-to-ipfs=$publish_to_ipfs --repo $repo)
+    let table = (build-tree --repo $repo)
     let target_root = repo-root $repo
     if $echo {
         $table

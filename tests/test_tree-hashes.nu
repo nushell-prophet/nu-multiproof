@@ -42,13 +42,10 @@ def "small files have non-empty content_cid" [] {
 }
 
 @test
-def "directories have empty content_sha256 and content_cid" [] {
+def "every row carries a CID, directories included" [] {
     let result = tree-hashes --echo
-    let dirs = $result | where content_sha256 == ""
-    if ($dirs | length) > 0 {
-        let bad = $dirs | where content_cid != ""
-        assert equal ($bad | length) 0
-    }
+    let missing = $result | where content_cid == ""
+    assert equal ($missing | length) 0 $"rows without a CID: ($missing.filepath?)"
 }
 
 @test
@@ -81,38 +78,34 @@ def "hidden tracked files are included" [] {
     }
 }
 
-# B2: one `ipfs add -r` pass yields per-file, per-dir AND the root "." CID, so
-# `tree-hashes --ipfs` writes a complete manifest in a single pass and `root-cid`
-# is a thin wrapper returning that "." CID.
-#
-# Why one combined test (not several): `ipfs add` takes a lock on the shared
-# ~/.ipfs repo, so two ipfs-gated tests running in parallel (nutest's default)
-# collide. Keeping all ipfs assertions in a single test means the suite only
-# ever runs one `ipfs add` at a time. See todo note on lock contention.
+# B2: one in-process pass yields per-file, per-dir AND the root "." CID, so the
+# manifest is written complete in a single pass and `root-cid` is a thin wrapper
+# returning that "." CID. The CIDs themselves are pinned against the reference
+# client in tests/test_cid-v0.nu; this test pins the manifest shape.
 @test
-def "ipfs pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
-    # Gated on the ipfs binary (mirrors OTS_NETWORK_TEST in spirit — don't fail
-    # on a missing optional dep).
-    if (which ipfs | is-empty) { return }
-
+def "one pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $"($repo)/sub"
     ^git -C $repo init -q
     "hello\n" | save --force $"($repo)/file.txt"
     "world\n" | save --force $"($repo)/sub/inner.txt"
-    # Hidden tracked file: ipfs add skips dotfiles without --hidden, which
-    # dropped it from per-file CIDs and from the dir/root CIDs the seal signs
+    # Hidden tracked file: `ipfs add` used to skip dotfiles without --hidden,
+    # which dropped it from per-file CIDs and from the dir/root CIDs the seal
+    # signs. The file set now comes from git, so nothing can skip it silently.
     "hidden\n" | save --force $"($repo)/.hidden"
     ^git -C $repo add . o+e>| ignore
     ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
 
-    let table = tree-hashes --echo --ipfs --repo $repo
+    let table = tree-hashes --echo --repo $repo
 
-    # Root "." row present and a CID v0
+    # Root "." row present, and it is the CID `ipfs add -r` reports for exactly
+    # this tree (recorded in tests/test_cid-v0.nu from ipfs 0.42.0) — the whole
+    # manifest fold, from git file set to root, checked against the client.
     let dot = $table | where filepath == "."
     assert equal ($dot | length) 1
-    assert ($dot.0.content_cid | str starts-with "Qm") $"expected CIDv0 for . row, got ($dot.0.content_cid)"
+    assert equal $dot.0.content_cid "Qme53cg5u81Hh13JAU57drw7Rpm391Pwi2PkbAhF7k3pMS"
+    assert equal ($table | where filepath == "sub" | get content_cid.0) "QmQV8kBgwwShkLLLvEej44qvbwTncKJmbwfz5E8e4ApNkj"
 
     # The "." row participates in the sort (first byte-wise), not appended last —
     # the manifest must honor its own ordering rule

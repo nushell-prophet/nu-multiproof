@@ -42,9 +42,8 @@ export def 'main hash' [
 
 export def 'main root-cid' [
     --repo: path # Target git repo root (default: git root of current directory)
-    --publish-to-ipfs # Publish content to local IPFS daemon (default: only-hash, no daemon needed)
 ] {
     use nu-multiproof/tree-hashes.nu
 
-    tree-hashes root-cid --repo $repo --publish-to-ipfs=$publish_to_ipfs
+    tree-hashes root-cid --repo $repo
 }

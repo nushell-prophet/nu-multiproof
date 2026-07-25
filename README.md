@@ -70,6 +70,14 @@ git clone https://github.com/vyadh/nutest ../nutest
 use toolkit.nu *; main test
 ```
 
+## Content manifest
+
+`nu-multiproof tree-hashes` writes `multiproofs/tree-hashes.csv`: one row per git-tracked file, one per parent directory, and one for the repo root `.`. Each row names the same content three ways — `content_sha256` (raw bytes), `content_git` (git's blob or tree object, from a temp index over the working tree, not from HEAD) and `content_cid` (IPFS CID v0). Rows under `multiproofs/` are excluded, so the manifest never describes its own proofs.
+
+CIDs are computed in-process, in Nushell — no `ipfs` daemon or CLI is involved, and there is only one manifest shape to sign. Content over 256 KB is chunked and folded into a UnixFS DAG the same way the reference client does it, so `content_cid` is the CID `ipfs add` reports for that file, at any size, and the `.` row is the CID of the whole tracked tree. Reference: `nu-multiproof/_cid-helpers.nu`; conformance vectors recorded from ipfs 0.42.0 in `tests/test_cid-v0.nu`, covering a single chunk, a multi-chunk file, a two-level DAG (175 chunks), a directory tree and the empty directory.
+
+The root CID names content, it does not publish it. Nothing here talks to IPFS, so the tree is retrievable through the network only if you add it yourself. Over a directory holding exactly the tracked files, `ipfs add -r --hidden --cid-version=0 --raw-leaves=false --hash=sha2-256 --chunker=size-262144` reproduces the `.` row (`--hidden` because `ipfs add` skips dotfiles otherwise).
+
 ## Merkle inclusion proofs
 
 `multiproofs/tree-hashes.csv` is a flat manifest: signing it whole would mean that proving one file's inclusion requires keeping the entire CSV. The merkle layer fixes that. The CSV stays the authoritative catalogue, but `seal` also derives a binary merkle tree over its rows and signs/stamps only the one-line root statement (`multiproofs/tree-root.txt`). A consumer then holds one row plus ~log2(n) sibling hashes — for a million files, ~20 hashes instead of a million rows. (Git's own trees cannot do this job: they branch wide, so a path through them lists every sibling in each directory — it grows with directory width and leaks the neighbors' filenames.)
