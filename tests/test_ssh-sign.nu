@@ -315,3 +315,27 @@ def "the signer lookup compares key material, not the spacing around it" [] {
     assert ($"($test_file).alice.sig" | path exists)
     assert (not ($"($test_file).bob.sig" | path exists))
 }
+
+# A bare `<file>.sig` — what plain `ssh-keygen -Y sign` writes, and what an
+# older seal left behind. Verifying it by name used to strip `.txt.sig` and
+# look for `doc`: "cannot find original file", or a silent verify of a sibling
+# actually named `doc`.
+@test
+def "verify resolves the bare sig form of a file with an extension" [] {
+    let tmp_dir = $in.tmp_dir
+    let test_file = $"($tmp_dir)/doc.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let key_path = $"($tmp_dir)/alice_key"
+
+    mkdir $pubkeys_dir
+    "hello world" | save --force $test_file
+    # A decoy with the name the old grammar resolved to.
+    "not this one" | save --force $"($tmp_dir)/doc"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    cp $"($key_path).pub" ($pubkeys_dir | path join "alice.pub")
+    ^ssh-keygen -Y sign -f $key_path -n file $test_file
+
+    let result = (ssh-sign verify $"($test_file).sig" --pubkeys-dir $pubkeys_dir)
+    assert equal ($result | get signer) ["alice"]
+    assert equal ($result | get valid) [true]
+}

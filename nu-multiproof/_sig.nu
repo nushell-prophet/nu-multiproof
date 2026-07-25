@@ -32,6 +32,32 @@ export def sig-files-for [path: path]: nothing -> list<path> {
     $named ++ ($entries | where {|f| ($f | path basename) == $bare_base })
 }
 
+# Name of the signature file for <path>: bare when no signer is named.
+export def sig-path-for [path: path signer?: string]: nothing -> path {
+    if $signer == null { $"($path).sig" } else { $"($path).($signer).sig" }
+}
+
+# The file a `.sig` covers, given only the signature's name.
+#
+# The two forms are ambiguous on their own: `doc.txt.sig` is the bare sig of
+# `doc.txt` and also the "txt"-named sig of `doc`. Only the filesystem can say
+# which, so both candidates are tried, bare first — `ssh-sign verify` used to
+# re-implement this and always chose the named reading, so verifying
+# `doc.txt.sig` failed with "cannot find original file", or silently verified a
+# sibling named `doc`.
+export def original-for-sig [sig_path: path]: nothing -> path {
+    if not ($sig_path | str ends-with ".sig") {
+        error make {msg: $"not a signature file name: ($sig_path)"}
+    }
+    let bare = $sig_path | str replace --regex '\.sig$' ''
+    if ($bare | path exists) { return $bare }
+    let named = $bare | str replace --regex '\.[^./]+$' ''
+    if $named == $bare or not ($named | path exists) {
+        error make {msg: $"cannot find the file ($sig_path) signs — tried ($bare) and ($named)"}
+    }
+    $named
+}
+
 # Signer label carried by a sig filename, given the file it signs.
 # Bare `<file>.sig` -> null; named `<file>.<signer>.sig` -> <signer>.
 # Needs the signed file to disambiguate: `a.b.sig` is bare-for-`a.b`, not

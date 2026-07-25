@@ -1,7 +1,7 @@
 use std/assert
 use std/testing *
 
-use ../nu-multiproof/_sig.nu [sig-files-for signer-from-sig]
+use ../nu-multiproof/_sig.nu [sig-files-for signer-from-sig sig-path-for original-for-sig]
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -110,4 +110,51 @@ def "signer-from-sig agrees with discovery" [] {
         {sig: "w[1]?x*y.txt.maxim-uvarov2.sig" signer: "maxim-uvarov2"}
         {sig: "w[1]?x*y.txt.sig" signer: null}
     ]
+}
+
+# The inverse of discovery: given only the sig's name, which file does it
+# cover? `doc.txt.sig` is the bare sig of `doc.txt` and also the "txt"-named
+# sig of `doc`, so only the filesystem decides. ssh-sign verify's own copy of
+# this grammar always read it as the named form.
+@test
+def "the file a sig covers is found for both forms" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "content" | save --force $file
+    "sig" | save --force $"($file).sig"
+    "sig" | save --force $"($file).alice.sig"
+
+    assert equal (original-for-sig $"($file).sig") $file
+    assert equal (original-for-sig $"($file).alice.sig") $file
+}
+
+# The ambiguous name resolved the other way: here `doc` exists and `doc.txt`
+# does not, so `doc.txt.sig` really is the "txt"-named sig of `doc`.
+@test
+def "the named form wins only when the bare original is absent" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc"
+    "content" | save --force $file
+    "sig" | save --force $"($file).txt.sig"
+
+    assert equal (original-for-sig $"($file).txt.sig") $file
+}
+
+@test
+def "a sig covering nothing on disk is an error, not a guess" [] {
+    let tmp_dir = $in.tmp_dir
+    assert error {|| original-for-sig $"($tmp_dir)/gone.txt.sig" }
+    assert error {|| original-for-sig $"($tmp_dir)/doc.txt" }
+}
+
+# Naming and discovery are the same grammar read in two directions.
+@test
+def "sig-path-for names what discovery finds" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "content" | save --force $file
+    "sig" | save --force (sig-path-for $file)
+    "sig" | save --force (sig-path-for $file "alice")
+
+    assert equal (sig-files-for $file | each {|f| $f | path basename } | sort) ["doc.txt.alice.sig" "doc.txt.sig"]
 }

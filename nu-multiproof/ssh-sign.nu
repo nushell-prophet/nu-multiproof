@@ -2,7 +2,7 @@
 
 use _repo.nu repo-root
 use _layout.nu pubkeys-dir
-use _sig.nu [sig-files-for signer-from-sig]
+use _sig.nu [sig-files-for signer-from-sig sig-path-for original-for-sig]
 use _key-helpers.nu with-signing-key
 use _temp-helpers.nu with-temp-file
 use _fs.nu list-files
@@ -62,7 +62,7 @@ export def sign [
         }
 
         ^ssh-keygen -Y sign -f $key -n $namespace $path
-        let default_sig = $"($path).sig"
+        let default_sig = (sig-path-for $path)
         if not ($default_sig | path exists) {
             error make {msg: $"signature file not created: ($default_sig)"}
         }
@@ -80,7 +80,7 @@ export def sign [
             error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony. Re-run and complete the prompt."}
         }
 
-        let sig_path = $"($path).($signer_name).sig"
+        let sig_path = (sig-path-for $path $signer_name)
         mv $default_sig $sig_path
 
         print $"Signed: ($sig_path)"
@@ -102,21 +102,10 @@ export def verify [
     --fail # Exit non-zero if any signature is invalid (for CI)
 ] {
     # A positional .sig names both the signature to check and, by inference, the
-    # original it covers.
+    # original it covers. The grammar lives in _sig.nu — reading it here is what
+    # made `doc.txt.sig` resolve to `doc`.
     let target = if ($path | str ends-with ".sig") {
-        # Strip .{name}.sig or .sig suffix to find original
-        let p = $path | into string
-        # Why: signer names can contain `-` (e.g. `maxim-uvarov2`), which `\w` excludes.
-        # Match anything between the last two dots that isn't a dot or slash.
-        let original = if ($p =~ '\.[^./]+\.sig$') {
-            $p | str replace --regex '\.[^./]+\.sig$' ''
-        } else {
-            $p | str replace --regex '\.sig$' ''
-        }
-        if not ($original | path exists) {
-            error make {msg: $"cannot find original file for ($path) — tried ($original)"}
-        }
-        {file: $original sig: $p}
+        {file: (original-for-sig $path) sig: ($path | into string)}
     } else {
         {file: $path sig: null}
     }
