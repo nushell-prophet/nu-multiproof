@@ -207,9 +207,11 @@ Good "git" signature for * with ECDSA-SK key SHA256:7SOGNZ2C…
 
 ### Self-verifying proof bundles
 
-`git-proof verify <proof-bundle>` is the preferred verifier for historical commits packaged as proof bundles: it bundles its own pubkeys with the proof and verifies in a temp repo via `git -c`, with no `allowedSignersFile` setup needed and no dependence on the verifier's local trust at all.
+`git-proof verify <proof-bundle>` is the preferred verifier for historical commits packaged as proof bundles: it bundles its own pubkeys with the proof and verifies in a temp repo via `git -c`, with no `allowedSignersFile` setup needed. Independence from the verifier's local git config is the convenience; independence from the verifier's *trust* is not a feature, and the next paragraph is about that.
 
-What a bundled trust list establishes is exactly that and no more: the bundle agrees with itself — its objects, its commit signature and its keys. It cannot establish identity, because the keys travel inside the thing under examination. To read the result as "this person signed it", check the bundled key against a list you hold yourself: `ssh-keygen -lf <bundle>/pubkeys/<signer>.pub` and compare fingerprints.
+What a bundled trust list establishes is exactly that and no more: the bundle agrees with itself — its objects, its commit signature and its keys. It cannot establish identity, because the keys travel inside the thing under examination. A bundle written from scratch — fresh key, any commit date, any author name, the key filed as `trusted-auditor.pub` — passes every check and prints `Proof is VALID`; the verdict line and the returned `trust` record say so (`from_bundle: true`).
+
+To make it an identity check, name a trust list from outside the bundle, the same way `merkle verify` does: `--pubkeys-dir <dir>` accepts a commit signed by any key in a directory you hold, and `--signer <name>` narrows that to the key material in `<dir>/<name>.pub` alone. `--signer` needs `--pubkeys-dir` and is refused without it — over the bundle's own list it would ask no more than "is there a file of that name in here", which the bundle's author chose. A `--signer` your own list has no key for is an error, not `valid: false`: without their key you cannot say they did *not* sign. (Pinned by the tests "verify against a trust list the verifier holds refuses a forged bundle", "signer flag against a bundle-supplied trust list is refused, not answered", "signer with no matching key in the trusted dir is an error, not invalid".)
 
 ## License
 

@@ -13,7 +13,7 @@ use _repo.nu repo-root
 use _layout.nu pubkeys-dir
 use _temp-helpers.nu with-temp-dir
 use _fs.nu [list-files list-dirs]
-use _allowed-signers.nu allowed-signers-body
+use _allowed-signers.nu [allowed-signers-body check-signer-name]
 
 # --- Shared helpers ---
 
@@ -365,16 +365,45 @@ export def "render-allowed-signers" [
     print $"  git -c gpg.ssh.allowedSignersFile=($out) verify-commit HEAD"
 }
 
-# Verify commit signature against bundled pubkeys
+# The trust list `verify` checks the commit signature against, rendered from
+# whichever directory the caller decided counts. Separated from the check below
+# so the decision is made once, before any work, and an operator error (a
+# --signer nobody in the list can answer for) throws before the temp repo exists.
+def trust-list [
+    trusted_dir: path
+    signer: string # "" for collective trust: every key in the list counts
+]: nothing -> string {
+    # Why the list narrows to one file rather than checking which principal git
+    # reports: a principal is the *stem of a .pub*, so `--signer alice` asks
+    # about the key material in <trusted_dir>/alice.pub and nothing else.
+    # Rendering only that key makes git's exit code the whole answer — no
+    # parsing of "Good \"git\" signature for ..." to decide who signed.
+    if $signer != "" {
+        let named = allowed-signers-body $trusted_dir --namespace "git"
+            | lines
+            # The principal grammar forbids whitespace, so a trailing space is
+            # an exact match on the field this module itself just wrote.
+            | where {|line| $line | str starts-with $"($signer) " }
+        if ($named | is-empty) {
+            error make {msg: $"no key for signer ($signer) in ($trusted_dir)/ — --signer names a ($signer).pub there, and this verifier cannot say whether ($signer) signed a commit without holding their key"}
+        }
+        return ($named | str join "\n")
+    }
+    # No --signer: a collective statement — the key is in the list, without
+    # attaching a personal identity (the wildcard principal, as
+    # `render-allowed-signers` writes it).
+    allowed-signers-body $trusted_dir --namespace "git" --wildcard
+}
+
+# Verify commit signature against a rendered trust list
 def verify-signature [
-    proof_dir: path
+    signers: string # allowed_signers body, from trust-list
+    trusted_dir: path # named in the error only
     manifest: record
     tmp_repo: path
 ]: nothing -> record<valid: bool> {
-    let signers = (allowed-signers-body ($proof_dir | path join "pubkeys") --namespace "git" --wildcard)
-
     if ($signers | str trim | is-empty) {
-        return {valid: false error: "no public keys in proof bundle"}
+        return {valid: false error: $"no public keys in ($trusted_dir)/"}
     }
 
     let signers_file = ($tmp_repo | path dirname | path join "allowed_signers")
@@ -401,13 +430,31 @@ def verify-signature [
 
 # Verify a proof bundle autonomously (without access to original repo).
 # Returns a uniform record {valid, structure_valid, commit, files, signature,
-# error}. --fail turns an invalid proof into a non-zero exit (for CI), instead
-# of returning {valid: false} with exit 0 that a caller might not inspect.
+# trust, error}. --fail turns an invalid proof into a non-zero exit (for CI),
+# instead of returning {valid: false} with exit 0 that a caller might not inspect.
+#
+# The default trust list ships inside the bundle under examination, so a default
+# `valid: true` states "this bundle agrees with itself" — its objects, its commit
+# signature and its keys — never "the signer I expect made this commit". Anyone
+# can author a bundle from a fresh key and file it as <anyone>.pub. --pubkeys-dir
+# and --signer are how the verifier states, from outside the bundle, which keys
+# it actually trusts; `trust` in the returned record says which of the two the
+# verdict rests on.
 @example "verify a bundle, failing on invalid (for CI)" { git-proof verify proof --fail }
 export def verify [
     proof_dir: path = "proof" # Proof bundle directory
+    --pubkeys-dir: path # Trusted *.pub directory (default: the bundle's own pubkeys/ — i.e. a list the bundle carries)
+    --signer: string # Require the commit to be signed by this principal (pubkey stem). Needs --pubkeys-dir
     --fail # Exit non-zero on an invalid proof (for CI)
 ] {
+    # Why --signer needs --pubkeys-dir: same rule as `merkle verify`. A principal
+    # is the stem of a .pub file, so it names a key only as strongly as the
+    # directory that file came from. Over the bundle's own list, `--signer alice`
+    # asks no more than "is there an alice.pub in here that signed this" — and
+    # the attacker who wrote the bundle chose both the key and the filename.
+    if $signer != null and $pubkeys_dir == null {
+        error make {msg: $"--signer ($signer) needs --pubkeys-dir: a principal is a .pub filename stem, and the default trust list travels inside the bundle — anyone can author one and file their own key as ($signer).pub. Point --pubkeys-dir at a list you control."}
+    }
     let manifest_path = ($proof_dir | path join "manifest.json")
     if not ($manifest_path | path exists) {
         error make {msg: $"manifest.json not found in ($proof_dir)/"}
@@ -455,9 +502,22 @@ export def verify [
     }
     let objects_dir = ($proof_dir | path join "objects")
 
+    # Decided before any work: a --signer the caller's own list cannot answer for
+    # is an operator error, not a proof that failed.
+    let from_bundle = ($pubkeys_dir == null)
+    let trusted_dir = $pubkeys_dir | default ($proof_dir | path join "pubkeys")
+    # Checked against the trust list's own grammar, not just used: `--signer ""`
+    # is not a principal, and left alone it would fall through to the collective
+    # reading below while `trust.signer` still reported a narrowing that never
+    # happened.
+    let signers = (trust-list $trusted_dir (
+        if $signer != null { check-signer-name $signer "--signer" } else { "" }
+    ))
+
     print "Verifying proof bundle..."
     print $"  Commit: ($manifest.commit | str substring 0..12)..."
     print $"  Files: ($manifest.files | length)"
+    print $"  Trust: ($trusted_dir)(if $from_bundle { ' — keys carried by the bundle' } else if $signer != null { $' — signer ($signer)' } else { '' })"
 
     # Set up isolated SHA-256 repo with proof objects. Why with-temp-dir: a
     # thrown error inside the checks (e.g. cat-file on a malformed object) used
@@ -475,7 +535,15 @@ export def verify [
 
         # Uniform record shape across every exit (kinder to scripts than the old
         # structure-fail returns that lacked commit/files/signature).
-        let base = {commit: $manifest.commit files: $manifest.files signature: null error: null}
+        let base = {
+            commit: $manifest.commit
+            files: $manifest.files
+            signature: null
+            # What `valid` rests on. from_bundle: true means the keys came from
+            # inside the artifact — internal consistency, not identity.
+            trust: {pubkeys_dir: $trusted_dir from_bundle: $from_bundle signer: $signer}
+            error: null
+        }
         if ($invalid | length) > 0 {
             print $"   FAIL: ($invalid | length) objects have invalid hashes"
             $invalid | each {|r| print $"     ($r.hash | str substring 0..12)...: ($r.error)" }
@@ -497,7 +565,7 @@ export def verify [
 
                 # Step 3: Signature — commit was signed by one of the bundled pubkeys
                 print "\n3. Verifying commit signature..."
-                let sig_result = (verify-signature $proof_dir $manifest $tmp_repo)
+                let sig_result = (verify-signature $signers $trusted_dir $manifest $tmp_repo)
                 if $sig_result.valid {
                     print $"   OK: ($sig_result.detail)"
                 } else {
@@ -510,8 +578,17 @@ export def verify [
 
     # Why: callers checking only `.valid` must reject unsigned/wrongly-signed
     # bundles. `structure_valid` is exposed for callers that want each leg.
+    # Why the verdict names its trust source: the caveat was true before this
+    # flag existed and lived only in README.md, so the one line an operator
+    # actually reads said "VALID" for a bundle that only agreed with itself.
     if $outcome.valid {
-        print "\nProof is VALID."
+        if $from_bundle {
+            print "\nProof is VALID — internally consistent (objects, commit signature and keys all from inside the bundle). Pass --pubkeys-dir to check it against keys you hold."
+        } else if $signer != null {
+            print $"\nProof is VALID — signed by ($signer), per ($trusted_dir)/."
+        } else {
+            print $"\nProof is VALID — signed by a key in ($trusted_dir)/."
+        }
     } else if $outcome.structure_valid {
         print "\nProof is INVALID (structure ok, signature failed)."
     } else {

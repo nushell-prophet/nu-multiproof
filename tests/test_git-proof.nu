@@ -454,6 +454,107 @@ def "extract and verify a file with a quote in its name" [] {
     assert equal $verified.structure_valid true
 }
 
+# A bundle nobody in this repo produced: a fresh repo, a fresh key, and the key
+# filed under a name the verifier is meant to recognise. Round-tripping our own
+# `extract` would only show the bundle agrees with itself — which is exactly the
+# property under test, so it has to be built from scratch.
+def forge-bundle [
+    tmp_dir: path
+    signing_key: path # private key the commit is signed with
+    bundled_as: string # stem the bundle files the matching pubkey under
+]: nothing -> path {
+    let repo = (mktemp --directory --tmpdir-path $tmp_dir)
+    let proof = (mktemp --directory --tmpdir-path $tmp_dir | path join "proof")
+    ^git -C $repo init --object-format=sha256 -q
+    ^git -C $repo config user.email "auditor@example.com"
+    ^git -C $repo config user.name "Trusted Auditor"
+    ^git -C $repo config gpg.format ssh
+    ^git -C $repo config user.signingkey $signing_key
+
+    "AUDITED CONTENT\n" | save --force $"($repo)/report.txt"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo commit -S -m "audited" o+e>| ignore
+
+    # The bundle's trust list is the bundle author's to write.
+    let bundled_keys = ($repo | path join "multiproofs" "pubkeys")
+    mkdir $bundled_keys
+    cp $"($signing_key).pub" ($bundled_keys | path join $"($bundled_as).pub")
+
+    git-proof extract report.txt --repo $repo --out-dir $proof | ignore
+    $proof
+}
+
+# The forgery the bundled trust list cannot catch: everything inside the bundle
+# agrees — objects, commit signature, keys — because one person wrote all of it.
+# Only a list the verifier holds separates it from a genuine bundle.
+@test
+def "verify against a trust list the verifier holds refuses a forged bundle" [] {
+    let tmp_dir = $in.tmp_dir
+    let trusted = $"($tmp_dir)/trusted"
+    mkdir $trusted
+
+    ^ssh-keygen -t ed25519 -f $"($tmp_dir)/real" -N "" -q -C "the real auditor"
+    ^ssh-keygen -t ed25519 -f $"($tmp_dir)/evil" -N "" -q -C "not the auditor"
+    cp $"($tmp_dir)/real.pub" ($trusted | path join "trusted-auditor.pub")
+
+    let forged = (forge-bundle $tmp_dir $"($tmp_dir)/evil" "trusted-auditor")
+
+    # The default answers only "this bundle agrees with itself".
+    let inside = (git-proof verify $forged)
+    assert equal $inside.valid true
+    assert equal $inside.trust.from_bundle true
+
+    # Same bundle, trust list from outside: the name matches, the key does not.
+    let outside = (git-proof verify $forged --pubkeys-dir $trusted)
+    assert equal $outside.valid false
+    assert equal $outside.structure_valid true
+    assert equal $outside.trust.from_bundle false
+    let pinned = (git-proof verify $forged --pubkeys-dir $trusted --signer "trusted-auditor")
+    assert equal $pinned.valid false
+
+    # ... and the genuine article still passes both, so the checks above are not
+    # simply refusing everything.
+    let honest = (forge-bundle $tmp_dir $"($tmp_dir)/real" "trusted-auditor")
+    assert equal (git-proof verify $honest --pubkeys-dir $trusted | get valid) true
+    assert equal (git-proof verify $honest --pubkeys-dir $trusted --signer "trusted-auditor" | get valid) true
+}
+
+# --signer over the bundle's own keys would ask no more than "is there a file of
+# that name in here", which the bundle's author chose. Refuse the combination
+# rather than answer it — same rule as `merkle verify`.
+@test
+def "signer flag against a bundle-supplied trust list is refused, not answered" [] {
+    let tmp_dir = $in.tmp_dir
+    ^ssh-keygen -t ed25519 -f $"($tmp_dir)/evil" -N "" -q -C "not the auditor"
+    let forged = (forge-bundle $tmp_dir $"($tmp_dir)/evil" "trusted-auditor")
+
+    let outcome = (try {
+        git-proof verify $forged --signer "trusted-auditor" | ignore
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str contains "needs --pubkeys-dir") $"got: ($outcome)"
+}
+
+# A --signer the verifier's own list has no key for cannot be answered either
+# way: "not signed by alice" is a claim, and we do not hold alice's key to make
+# it. An operator error, not a proof that failed.
+@test
+def "signer with no matching key in the trusted dir is an error, not invalid" [] {
+    let tmp_dir = $in.tmp_dir
+    let trusted = $"($tmp_dir)/trusted"
+    mkdir $trusted
+    ^ssh-keygen -t ed25519 -f $"($tmp_dir)/evil" -N "" -q -C "not the auditor"
+    ^ssh-keygen -t ed25519 -f $"($tmp_dir)/other" -N "" -q -C "someone else"
+    cp $"($tmp_dir)/other.pub" ($trusted | path join "bob.pub")
+
+    let forged = (forge-bundle $tmp_dir $"($tmp_dir)/evil" "trusted-auditor")
+    let outcome = (try {
+        git-proof verify $forged --pubkeys-dir $trusted --signer "trusted-auditor" | ignore
+        "ok"
+    } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str contains "no key for signer trusted-auditor") $"got: ($outcome)"
+}
+
 @test
 def "render-allowed-signers writes one wildcard line per pubkey" [] {
     let tmp_dir = $in.tmp_dir
