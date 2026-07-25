@@ -564,3 +564,25 @@ def "extract refuses a commit that is an option" [] {
     assert error {|| git-proof extract LICENSE --commit "--help" --out-dir $proof_dir }
     assert (not (($proof_dir | path join "manifest.json") | path exists))
 }
+
+# The shape of the manifest is untrusted too, not just its values. `files`
+# holding bare strings reached `get --optional hash` and failed there as
+# "only supports list, table, record" — a nushell error about the verifier
+# where the operator needed one naming the bundle.
+@test
+def "verify refuses a manifest whose files are not records" [] {
+    let proof_dir = $in.tmp_dir
+    let signed = (^git log --format='%H %G?' | lines | parse "{hash} {status}" | where status != "N" | first | get hash)
+    git-proof extract LICENSE --commit $signed --out-dir $proof_dir
+
+    let manifest_path = ($proof_dir | path join "manifest.json")
+    let manifest = open $manifest_path
+
+    $manifest | merge {files: ["--help"]} | to json | save --force $manifest_path
+    let outcome = (try { git-proof verify $proof_dir; "ok" } catch {|e| $e.msg })
+    assert ($outcome | str contains "files entry is not a record") $"got: ($outcome)"
+
+    $manifest | merge {files: "LICENSE"} | to json | save --force $manifest_path
+    let outcome = (try { git-proof verify $proof_dir; "ok" } catch {|e| $e.msg })
+    assert ($outcome | str contains "files is not a list") $"got: ($outcome)"
+}

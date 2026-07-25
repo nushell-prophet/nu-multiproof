@@ -433,13 +433,24 @@ export def verify [
     # commit->tree link holds, the commit signature is genuine), so it used to
     # report `valid: true` for a proof of nothing. `extract` already refuses an
     # empty file list; the verifier must not accept what the producer can't emit.
-    if ($manifest.files | is-empty) {
+    # The shape before the values: a manifest is untrusted input, and `files`
+    # holding a bare string reached `$entry | get --optional hash` as a raw
+    # "only supports list, table, record" failure — a nushell error about the
+    # verifier, where the operator needed one about the bundle.
+    let files = ($manifest | get --optional files)
+    if ($files | describe --detailed | get type) != "list" {
+        error make {msg: $"($proof_dir)/manifest.json: files is not a list, it is ($files | describe)"}
+    }
+    if ($files | is-empty) {
         error make {msg: $"($proof_dir)/manifest.json lists no files — the bundle proves nothing"}
     }
     # Every manifest value that reaches git as an argument, checked once, here.
     check-oid ($manifest | get --optional commit) "commit"
     check-oid ($manifest | get --optional tree) "tree"
-    for entry in $manifest.files {
+    for entry in $files {
+        if ($entry | describe --detailed | get type) != "record" {
+            error make {msg: $"($proof_dir)/manifest.json: files entry is not a record: ($entry | to nuon)"}
+        }
         check-oid ($entry | get --optional hash) $"files hash for ($entry | get --optional path | default '?')"
     }
     let objects_dir = ($proof_dir | path join "objects")
