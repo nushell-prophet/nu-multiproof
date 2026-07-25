@@ -410,6 +410,59 @@ def "signer flag pins the principal, not just any registered key" [] {
     assert (merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer mallory).valid
 }
 
+# A whole artifact set written by hand — attacker's key, attacker's root
+# statement, attacker's proof JSON — with no call to write-root or prove.
+# Round-tripping our own builder can only show self-consistency; the leaf
+# guard on the verify path is about what someone else may ship.
+def forge-bundle [dir: path leaf: record key: path]: nothing -> path {
+    mkdir $"($dir)/multiproofs/pubkeys"
+    cp $"($key).pub" $"($dir)/multiproofs/pubkeys/attacker.pub"
+    # Leaf and root serialized here from the README spec, not via leaf-hash/mth:
+    # a single-leaf tree's root IS the leaf hash.
+    let leaf_bytes = [$leaf.filepath $leaf.content_sha256 $leaf.content_git $leaf.content_cid]
+        | str join "\n" | into binary
+    let root = 0x[00] | bytes add --end $leaf_bytes | hash sha256
+    $"multiproof-merkle-v1 ($root)\n" | save --force $"($dir)/multiproofs/tree-root.txt"
+    ssh-sign sign $"($dir)/multiproofs/tree-root.txt" --key $key --pubkeys-dir $"($dir)/multiproofs/pubkeys"
+    let proof_file = $"($dir)/proof.json"
+    {schema: "multiproof-merkle-v1" leaf: $leaf path: [] root: $root} | to json | save --force $proof_file
+    $proof_file
+}
+
+@test
+def "verify refuses a forged proof whose leaf points outside the bundle" [] {
+    let tmp_dir = $in.tmp_dir
+    let key = $"($tmp_dir)/attacker"
+    ^ssh-keygen -t ed25519 -f $key -N "" -q
+    "secret\n" | save --force $"($tmp_dir)/outside.txt"
+
+    # Control: the same hand-built shape with a contained leaf verifies. So
+    # the refusal below is the leaf guard, not a malformed bundle.
+    let honest_dir = $"($tmp_dir)/honest"
+    mkdir $honest_dir
+    "inside\n" | save --force $"($honest_dir)/inside.txt"
+    let honest = forge-bundle $honest_dir {
+        filepath: "inside.txt" content_sha256: ("inside\n" | hash sha256)
+        content_git: "" content_cid: ""
+    } $key
+    let ok = merkle verify $honest --repo $honest_dir
+    assert $ok.valid "the hand-built bundle must otherwise verify"
+    assert equal $ok.content_verified true
+
+    # The attack: a leaf naming a file outside the bundle. verify joins the
+    # filepath onto the target dir and hashes what it lands on, so this reads
+    # the verifier's own file and reports whether it has the attested hash.
+    let evil_dir = $"($tmp_dir)/evil"
+    mkdir $evil_dir
+    let evil = forge-bundle $evil_dir {
+        filepath: "../outside.txt" content_sha256: ("secret\n" | hash sha256)
+        content_git: "" content_cid: ""
+    } $key
+    let err = try { merkle verify $evil --repo $evil_dir; null } catch {|e| $e.msg }
+    assert ($err != null) "a proof for a file outside the bundle was verified"
+    assert ($err | str contains "must stay inside the repo")
+}
+
 @test
 def "signer flag against a bundle-supplied trust list is refused, not answered" [] {
     let tmp_dir = $in.tmp_dir
