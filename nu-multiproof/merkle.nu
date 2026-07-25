@@ -80,11 +80,17 @@ export def prove [
 
 # Verify an inclusion proof against the SIGNED root statement. Returns a
 # result record (mirrors git-proof verify), not a bare pass/fail:
-#   valid            — structure ok AND an accepted signature AND content not
-#                      contradicted. "Accepted" means >=1 valid signature from
+#   valid            — structure ok AND the manifest (when present) rebuilding
+#                      to the signed root AND an accepted signature AND content
+#                      not contradicted. "Accepted" means >=1 valid signature from
 #                      any key in --pubkeys-dir, or — with --signer — a valid
 #                      signature from that principal.
 #   structure_valid  — leaf hash folds up the path to the signed root
+#   manifest_root    — the root rebuilt from tree-hashes.csv, or null when the
+#                      manifest does not travel with the artifact (the portable
+#                      bundle layout carries no CSV). A value differing from
+#                      `root` means catalogue and signed statement are from
+#                      different seals — blocks valid
 #   content_verified — on-disk file matches leaf.content_sha256; null when the
 #                      leaf attests no sha256 (directory rows and oversized
 #                      files attest only content_git); "missing" when the leaf
@@ -151,6 +157,26 @@ export def verify [
     let folded = fold-path (leaf-hash $proof.leaf) $proof.path | encode hex | str lowercase
     let structure_valid = $folded == $signed_root
 
+    # The signed statement is a claim ABOUT the manifest, and nothing checked
+    # the two against each other — verify read the root out of tree-root.txt and
+    # trusted it. `seal` writes the CSV and the statement in two steps, so an
+    # interrupt between them (or a bare `tree-hashes` run afterwards) leaves a
+    # catalogue no signature covers, while proofs of the PREVIOUS seal still
+    # fold to the still-present old statement: valid: true, content_verified:
+    # true, error: null. Not tighter writes in seal, because: two files cannot
+    # be renamed in one step, so a verifier must not assume the writer finished.
+    # null is "not here to check" — the portable bundle layout (README
+    # "Verifying without the origin repo") carries no CSV. A manifest
+    # load-leaves refuses (duplicate rows, control bytes, uppercase hex) throws
+    # instead: an unreadable catalogue compares to nothing.
+    # Pinned by tests/test_merkle.nu "a manifest that no longer yields the
+    # signed root is caught".
+    let manifest = manifest-path $target
+    let manifest_root = if ($manifest | path exists) {
+        mth (load-leaves $manifest | each { leaf-hash $in }) | encode hex | str lowercase
+    } else { null }
+    let manifest_matches = $manifest_root == null or $manifest_root == $signed_root
+
     # Signatures over the root statement (the authority). A consumer holding
     # only the structural proof gets a reported absence, not a crash — but
     # valid stays false without at least one valid signature.
@@ -214,9 +240,11 @@ export def verify [
         {status: (if $pick.type == "bitcoin" { "anchored" } else { "pending" }) ots: $pick.file}
     }
 
-    let valid = $structure_valid and $signed_ok and ($content_verified == true or $content_verified == null)
+    let valid = $structure_valid and $manifest_matches and $signed_ok and ($content_verified == true or $content_verified == null)
     let error = if not $structure_valid {
         "proof path does not fold to the signed root"
+    } else if not $manifest_matches {
+        $"($manifest) rebuilds to ($manifest_root), but the signed statement holds ($signed_root) — manifest and signed root are from different seals, so the signature covers neither this catalogue nor what a consumer would re-derive from it"
     } else if $content_verified == false {
         $"on-disk ($proof.leaf.filepath) does not match the proven content_sha256"
     } else if $content_verified == "missing" {
@@ -232,6 +260,7 @@ export def verify [
     } else { null }
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
+    print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
     print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', null => 'not checked' })"
     print $"ots:       ($ots_status.status)"
 
@@ -242,6 +271,7 @@ export def verify [
         valid: $valid
         structure_valid: $structure_valid
         root: $signed_root
+        manifest_root: $manifest_root
         leaf: $proof.leaf
         content_verified: $content_verified
         signatures: $sig_check.sigs

@@ -513,6 +513,58 @@ def "verify refuses a forged proof whose leaf points outside the bundle" [] {
     assert ($err | str contains "must stay inside the repo")
 }
 
+# The manifest and the statement signed over it were never compared: verify read
+# the root out of tree-root.txt and trusted it. Every artifact here is written by
+# hand — CSV, statement, signature, proof JSON — because a seal round-trip can
+# only produce the consistent case, which is exactly the one this checks against.
+@test
+def "a manifest that no longer yields the signed root is caught" [] {
+    let tmp_dir = $in.tmp_dir
+    let key = $"($tmp_dir)/signer"
+    ^ssh-keygen -t ed25519 -f $key -N "" -q
+    let dir = $"($tmp_dir)/bundle"
+    mkdir $dir
+    "inside\n" | save --force $"($dir)/inside.txt"
+    let leaf = {
+        filepath: "inside.txt" content_sha256: ("inside\n" | hash sha256)
+        content_git: "" content_cid: ""
+    }
+    let proof = forge-bundle $dir $leaf $key
+    let manifest = $"($dir)/multiproofs/tree-hashes.csv"
+
+    # Control: a one-row catalogue whose tree IS the signed root
+    [$leaf] | to csv | save --force $manifest
+    let ok = merkle verify $proof --repo $dir
+    assert $ok.valid "a manifest matching the signed root must verify"
+    assert equal $ok.manifest_root $ok.root
+
+    # The desync: one more catalogued row, same signed statement. The proof
+    # still folds — it is a valid proof of the older seal — so nothing but the
+    # rebuild can see that the CSV beside it is a different tree.
+    [
+        $leaf
+        {filepath: "later.txt" content_sha256: ("later\n" | hash sha256) content_git: "" content_cid: ""}
+    ] | to csv | save --force $manifest
+    let desynced = merkle verify $proof --repo $dir
+    assert $desynced.structure_valid "the proof itself still folds to the signed root"
+    assert not $desynced.valid "a manifest/root desync was reported valid"
+    assert not ($desynced.manifest_root == $desynced.root) "the rebuilt root must differ"
+    assert ($desynced.error | str contains "different seals")
+    assert error {|| merkle verify $proof --repo $dir --fail }
+
+    # A manifest that cannot be read at all is not a verdict about the proof
+    [$leaf $leaf] | to csv | save --force $manifest
+    let err = try { merkle verify $proof --repo $dir; null } catch {|e| $e.msg }
+    assert ($err != null) "an equivocating manifest got a verdict"
+    assert ($err | str contains "duplicate filepaths")
+
+    # No manifest is not a desync — the portable bundle layout carries none
+    rm $manifest
+    let portable = merkle verify $proof --repo $dir
+    assert $portable.valid "a bundle without a manifest must still verify"
+    assert equal $portable.manifest_root null
+}
+
 @test
 def "signer flag against a bundle-supplied trust list is refused, not answered" [] {
     let tmp_dir = $in.tmp_dir

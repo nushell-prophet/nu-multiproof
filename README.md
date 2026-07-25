@@ -90,6 +90,8 @@ The trust list it checks against is, by default, the one inside the target — f
 
 `merkle verify` folds the proof to the signed root, checks the SSH signatures over the root statement, re-hashes the on-disk file against the proven `content_sha256` when present, and reports the OTS anchor as a status (`absent`/`pending`/`anchored` — a fresh seal stays pending until Bitcoin confirms, hours or days). A proof whose embedded root differs from the signed root is for a different seal and fails loudly rather than reporting invalid.
 
+When `multiproofs/tree-hashes.csv` is there, `merkle verify` also rebuilds the root from it and reports it as `manifest_root`; a value differing from the signed `root` blocks `valid`. The statement is a claim about that catalogue, and the two are written in separate steps — an interrupted `seal`, or a bare `tree-hashes` run afterwards, leaves a CSV no signature covers while old proofs still fold to the old statement. A portable bundle carries no CSV, so `manifest_root` is `null` there and nothing is cross-checked. (Pinned by the test "a manifest that no longer yields the signed root is caught".)
+
 ### Verifying without the origin repo
 
 The artifact set is portable. Lay it out in a plain directory — no git, no clone of the origin repo — mirroring the `multiproofs/` layout, and point `merkle verify` at it with `--repo`:
