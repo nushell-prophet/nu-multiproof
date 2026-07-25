@@ -164,15 +164,22 @@ def resolve-pubkey-file [key_path: path]: nothing -> path {
     }
 }
 
-# Derive a short name from an SSH public key string
+# Derive a short name from an SSH public key string. The result becomes a file
+# name under pubkeys/ and, through that stem, a principal in the trust list.
+# Split on `\s+`, not on a single space: `ssh-ed25519  AAAA…` (two spaces, no
+# comment) otherwise parses as three fields and names the file after the whole
+# base64 blob.
 def resolve-key-name [key: string]: nothing -> string {
-    let parts = $key | str trim | split row " "
-    # 3+ fields = type, base64, comment — use comment
+    let parts = $key | str trim | split row --regex '\s+'
+    # 3+ fields = type, base64, comment — use comment. It is free text from
+    # another machine, so strip it to alphanumeric/hyphen/underscore.
     if ($parts | length) >= 3 {
-        # Sanitize: take alphanumeric/hyphen/underscore only
         $parts | last | str replace --all --regex '[^a-zA-Z0-9_-]' '' | str replace --regex '^$' 'signer'
     } else {
-        # No comment — derive from key type
+        # No comment — derive from the key type. Not sanitized because it can
+        # only be one of the types `pubkey canonical` accepts; the caller has
+        # already run it. That is what stops `key::ssh-../../../../pwned Zm9v`,
+        # which used to name a path outside pubkeys/.
         $parts | first | str replace "@openssh.com" "" | str replace "sk-ecdsa-sha2-nistp256" "ecdsa-sk" | str replace "ssh-" ""
     }
 }

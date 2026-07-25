@@ -275,3 +275,44 @@ def "init refuses a different inline key that derives the same name" [] {
 
     assert equal (open --raw $"($repo)/multiproofs/pubkeys/alicehost.pub") $registered
 }
+
+# The key type reaches a file name when the key carries no comment, so a type
+# that is a path used to write outside pubkeys/: `key::ssh-../../../../pwned
+# Zm9v` created /tmp/pwned.pub. The refusal lives in `pubkey canonical`, which
+# only accepts the types OpenSSH writes.
+@test
+def "init refuses an inline key whose type names a path" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    # One level up, into a directory that exists: the write lands unless the
+    # type itself is refused.
+    let escape = $"($repo)/multiproofs/pwned.pub"
+    ^git -C $repo config user.signingKey "key::ssh-../pwned Zm9v"
+
+    let outcome = (try { init --repo $repo; "ok" } catch {|e| $"err:($e.msg)" })
+    assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
+    assert (not ($escape | path exists)) "init wrote outside pubkeys/"
+    assert equal (ls $"($repo)/multiproofs/pubkeys" | length) 0
+}
+
+# A key with no comment is named after its type. Splitting on a single space
+# made `ssh-ed25519  AAAA…` look like three fields, so the "comment" the name
+# came from was the base64 blob itself.
+@test
+def "a commentless key is named after its type, whatever the spacing" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -C "" -q
+    let spaced = (open --raw $"($key_path).pub" | str trim | str replace " " "  ")
+    ^git -C $repo config user.signingKey $"key::($spaced)"
+
+    init --repo $repo
+    assert equal (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename }) ["ed25519.pub"]
+}
