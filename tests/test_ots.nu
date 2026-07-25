@@ -188,6 +188,53 @@ def "bits-to-target decodes the compact difficulty field" [] {
     assert equal ($target | encode hex | str downcase) "00000000000000000001f0cc0000000000000000000000000000000000000000"
 }
 
+@test
+def "bits-to-target refuses encodings that are not a 256-bit target" [] {
+    # Measured before the guard: exp=2 returned 33 bytes, exp=0 → 35,
+    # exp=255 → 255 — silently breaking the fixed-width compare that decides
+    # whether a block met its target.
+    for bad in [0x0200ffff 0x0000ffff 0xff00ffff 0x2100ffff] {
+        let err = try { bits-to-target $bad; null } catch {|e| $e.msg }
+        assert ($err != null) $"out-of-range exponent accepted: ($bad)"
+        assert ($err | str contains "exponent")
+    }
+    # The sign flag, which read as coefficient value and inflated the target
+    let neg = try { bits-to-target 0x1d80ffff; null } catch {|e| $e.msg }
+    assert ($neg != null) "the negative bit was accepted"
+    assert ($neg | str contains "negative bit")
+
+    # powLimit itself decodes, and every real header is at least this hard
+    assert equal (bits-to-target 0x1d00ffff | bytes length) 32
+}
+
+@test
+def "check-block-header rejects a header below mainnet minimum difficulty" [] {
+    # Hand-built, not mined, and not from any chain: version 1, zero
+    # prev-hash, an arbitrary merkle root, regtest bits 0x207fffff (target
+    # ~2^255, so roughly every other nonce wins) and nonce 4, which does. The
+    # audit's PoC shape — before the floor this returned a full result record,
+    # i.e. `ots verify` would have called a forged block "verified
+    # independently" on a compromised explorer's word, with zero work behind
+    # the header.
+    let root = "forged" | hash sha256 --binary
+    let header = 0x[01000000]
+        | bytes add --end (0..<32 | each { 0x[00] } | bytes collect)
+        | bytes add --end $root
+        | bytes add --end 0x[00000000]
+        | bytes add --end 0x[ffff7f20]
+        | bytes add --end 0x[04000000]
+    assert equal ($header | bytes length) 80
+    let block_hash = $header | hash sha256 | decode hex | hash sha256 | decode hex
+        | bytes reverse | encode hex | str downcase
+
+    let err = try { check-block-header $header $root $block_hash; null } catch {|e| $e.msg }
+    assert ($err != null) "a zero-work regtest header was accepted"
+    # Naming the difficulty message, not just "some error": the block-hash and
+    # merkle-root checks run first and have their own wording, so this pins
+    # that the header got past them and died on the floor alone.
+    assert ($err | str contains "below the Bitcoin mainnet minimum")
+}
+
 # --- Network-dependent tests ---
 
 @test

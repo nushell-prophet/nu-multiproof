@@ -445,7 +445,9 @@ def esplora-get [url: string]: nothing -> any {
 # block hash, then fetches the raw 80-byte header and self-verifies the
 # merkle-root binding, the block hash, and the proof-of-work. The explorers are
 # trusted only for the height->hash mapping; every cryptographic claim is
-# recomputed locally. If only one explorer answers there is no cross-check at
+# recomputed locally — with one measured limit: the work check is a floor at
+# mainnet's powLimit, not the difficulty expected at that height. See
+# _ots-helpers.nu check-block-header and README "Verifying a timestamp". If only one explorer answers there is no cross-check at
 # all — `sources_confirmed` names the single source relied on, and the printed
 # output labels it as such rather than claiming agreement.
 #
