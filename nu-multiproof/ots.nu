@@ -472,12 +472,12 @@ def esplora-get [url: string]: nothing -> any {
 # nothing checks it against Bitcoin. This does. It looks the height up on
 # independent explorers, requires every explorer that answers to agree on the
 # block hash, then fetches the raw 80-byte header and self-verifies the
-# merkle-root binding, the block hash, and the proof-of-work. The explorers are
-# trusted only for the height->hash mapping; every cryptographic claim is
-# recomputed locally — with one measured limit: the work check is a floor at
-# mainnet's powLimit, not the difficulty expected at that height. See
-# _ots-helpers.nu check-block-header and README "Verifying a timestamp". If only one explorer answers there is no cross-check at
-# all — `sources_confirmed` names the single source relied on, and the printed
+# merkle-root binding and the block hash. The explorers are trusted only for
+# the height->hash mapping; both cryptographic claims are recomputed locally.
+# Nothing here bounds the work behind the header — see _ots-helpers.nu
+# check-block-header and README "Verifying a timestamp". So the cross-check is
+# the whole defence: if only one explorer answers there is none at all —
+# `sources_confirmed` names the single source relied on, and the printed
 # output labels it as such rather than claiming agreement.
 #
 # Returns a uniform record {valid, height, block_hash, block_time, merkle_root,
