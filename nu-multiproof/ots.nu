@@ -309,16 +309,45 @@ export def stamp [file: path --out-dir: path --response-file: path] {
     # Why: bundle dir is keyed by file hash, so re-stamping unchanged content
     # reuses the directory. The new .ots has a different nonce + calendar
     # response — both are independent attestations worth keeping. Rename the
-    # existing one to <stem>.<timestamp>.ots so the prior proof survives.
+    # existing one to <stem>.<timestamp>-<proof-hash-prefix>.ots so the prior
+    # proof survives.
+    #
+    # Why the name also carries the archived proof's own hash: `mv` overwrites
+    # its destination (measured on 0.114.1, no flag needed) and
+    # %Y%m%d-%H%M%S repeats for two stamps in the same second — three stamps
+    # inside one second left two files, one proof gone with every run exiting 0.
+    # Binding the name to the bytes means a collision can only be the same
+    # proof, so it costs nothing. Pinned by tests/test_ots.nu "rapid re-stamps
+    # each keep their own proof".
+    let now = date now | format date "%Y%m%d-%H%M%S"
     if ($ots_path | path exists) {
-        let stamp = (date now | format date "%Y%m%d-%H%M%S")
-        let archived = $"($bundle_dir)/($stem).($stamp).ots"
+        let previous_tag = open --raw $ots_path | into binary | hash sha256 | str substring 0..<8
+        let archived = $"($bundle_dir)/($stem).($now)-($previous_tag).ots"
         mv $ots_path $archived
         print $"Archived previous: ($archived)"
     }
 
     cp $file $copy_path
-    $ots | save --raw --force $ots_path
+    # Why save without --force: the `path exists` test above and this write are
+    # two steps, so two stamps racing on one bundle both saw no incumbent, both
+    # wrote through --force, and one proof was gone with both runs exiting 0.
+    # Refusing an occupied destination keeps what is there, and this run's bytes
+    # go beside it rather than nowhere — the nonce binding them to this file
+    # exists only in this run (same reasoning as the rejected-response path
+    # above), and a proof under the archival name is what `merkle verify`
+    # already discovers by content. Measured limit: nushell's `save` tests for
+    # the file and then creates it, so this narrows the race, it does not close
+    # it.
+    try {
+        $ots | save --raw $ots_path
+    } catch {|e|
+        let parked = $"($bundle_dir)/($stem).($now)-($ots | hash sha256 | str substring 0..<8).ots"
+        $ots | save --raw --force $parked
+        error make {msg: ([
+            $"could not write ($ots_path): ($e.msg)"
+            $"this run's assembled proof \(nonce included\) is at ($parked)"
+        ] | str join "\n")}
+    }
     print $"Frozen copy: ($copy_path)"
     print $"Timestamped: ($ots_path)"
 

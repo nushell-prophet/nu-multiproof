@@ -371,3 +371,37 @@ def "a rejected stamp leaves the previous proof in place" [] {
     assert equal (open --raw $first.ots | into binary) $before
     assert equal (ls --all $first.dir | get name | each { path basename } | sort) ["doc.ots" "doc.txt"]
 }
+
+# Re-stamping the same content reuses the bundle dir and archives the incumbent
+# proof. The archive name was only <stem>.<YYYYmmdd-HHMMSS>.ots and `mv`
+# overwrites, so two stamps inside one second collided: three proofs, two files,
+# every run exit 0 and no "Archived previous" line for the one that vanished.
+@test
+def "rapid re-stamps each keep their own proof" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
+
+    let made = 1..3 | each {
+        let result = (ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
+        {dir: $result.dir hash: (open --raw $result.ots | hash sha256)}
+    }
+    # Each run draws a fresh nonce, so these are three independent proofs
+    assert equal ($made | get hash | uniq | length) 3
+
+    let bundle = $made.0.dir
+    let on_disk = (ls --all $bundle | get name | where {|f| $f | str ends-with ".ots"})
+    assert equal ($on_disk | length) 3 "an archived proof was overwritten"
+    assert equal ($on_disk | each { open --raw $in | hash sha256 } | sort) ($made | get hash | sort)
+
+    # Why assert the naming rule and not just the count: three stamps could
+    # straddle a second boundary, and then distinct timestamps would carry the
+    # test on their own. The archive name binds to the archived proof's own
+    # bytes, which is what makes a same-second collision impossible rather than
+    # unlikely.
+    for archived in ($on_disk | where {|f| ($f | path basename) != "doc.ots"}) {
+        let tag = (open --raw $archived | hash sha256 | str substring 0..<8)
+        assert ($archived | path basename | str ends-with $"-($tag).ots") $"archive name is not bound to its bytes: ($archived)"
+    }
+}

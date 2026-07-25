@@ -140,6 +140,7 @@ An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is 
 - `<stem>.<ext>` — frozen content snapshot (the stamped file's bytes at stamp time)
 - `<stem>.ots` — Bitcoin-anchored timestamp over the snapshot's hash
 - `<stem>.<ext>.<signer>.sig` (when signing is on) — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig)
+- `<stem>.<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots` — a previous proof of the same content, archived by the re-stamp that replaced it. Same content, different nonce and calendar response, so it is an independent attestation worth keeping; the hash in the name makes the archive name collision-proof for two stamps in one second (pinned by the test "rapid re-stamps each keep their own proof")
 
 `seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. New seals produce only `tree-root.*` bundles: the manifest is neither signed nor stamped anymore, since the root statement is derived from every manifest row, so its signature and Bitcoin anchor cover the full CSV. Archival `tree-hashes.*` bundles (including `origin-proofs/`) stay valid as-is; the transition-era ones may also carry a CSV sig.
 
