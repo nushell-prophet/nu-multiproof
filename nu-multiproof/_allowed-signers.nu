@@ -3,7 +3,7 @@
 # signer) and git-proof (wildcard principal for collective commit-signing trust).
 
 use _fs.nu list-files
-use pubkey.nu
+use _pubkey-helpers.nu canonical-file
 
 # Characters a principal may not hold. The file's syntax is whitespace-
 # separated with a comma-separated principal list, and principals are matched
@@ -37,11 +37,7 @@ export def allowed-signers-body [
         # Name before content: a name this file cannot express is the operator's
         # to fix, and saying so beats whatever `open` reports about it.
         let principal = if $wildcard { "*" } else { principal-for $file }
-        let key = try {
-            open --raw $file | pubkey canonical | str trim
-        } catch {|e|
-            error make {msg: $"($file) is not an SSH public key: ($e.msg)"}
-        }
+        let key = canonical-file $file | str trim
         $lines = ($lines | append $"($principal) namespaces=\"($namespace)\" ($key)")
     }
     $lines | str join "\n"

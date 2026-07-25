@@ -3,6 +3,7 @@
 use _repo.nu repo-root
 use _layout.nu [multiproofs-dir pubkeys-dir]
 use _fs.nu list-files
+use _pubkey-helpers.nu canonical-file
 use pubkey.nu
 
 # Initialize multiproofs/ structure in a git repo.
@@ -118,17 +119,6 @@ def check-registration [
         error make {msg: $"this key \((fingerprint $canon)\) is already registered as ($twins | first | path relative-to $root) — a second copy under another name makes the signer ambiguous when signing"}
     }
     true
-}
-
-# Canonical bytes of an already-registered pubkey file, naming the file when it
-# is not one. Fail loudly: a file in pubkeys/ that is not a public key is a
-# broken trust list, not something to skip over.
-def canonical-file [file: path]: nothing -> string {
-    try {
-        open --raw $file | pubkey canonical
-    } catch {|e|
-        error make {msg: $"($file) is not an SSH public key: ($e.msg)"}
-    }
 }
 
 # SSH fingerprint of a canonical key line, for operator-facing messages only.

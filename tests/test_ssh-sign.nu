@@ -288,3 +288,30 @@ def "verify with a positional sig file checks only that signature" [] {
     let all = (ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir)
     assert equal ($all | get signer | sort) ["alice" "bob"]
 }
+
+# A hand-written trust list, not one `init` produced: keys stored with two
+# spaces between type and material. The old key comparison split on a single
+# space and took the first two fields, so both keys reduced to `ssh-ed25519 `
+# — equal to each other, and the lookup refused with "multiple pubkeys match".
+@test
+def "the signer lookup compares key material, not the spacing around it" [] {
+    let tmp_dir = $in.tmp_dir
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let alice_key = $"($tmp_dir)/alice_key"
+    let bob_key = $"($tmp_dir)/bob_key"
+
+    mkdir $pubkeys_dir
+    "hello world" | save --force $test_file
+    ^ssh-keygen -t ed25519 -f $alice_key -N "" -q
+    ^ssh-keygen -t ed25519 -f $bob_key -N "" -q
+    for pair in [[src, stem]; [$alice_key, "alice"], [$bob_key, "bob"]] {
+        open --raw $"($pair.src).pub"
+        | str replace " " "  "
+        | save --force ($pubkeys_dir | path join $"($pair.stem).pub")
+    }
+
+    ssh-sign sign $test_file --key $alice_key --pubkeys-dir $pubkeys_dir
+    assert ($"($test_file).alice.sig" | path exists)
+    assert (not ($"($test_file).bob.sig" | path exists))
+}

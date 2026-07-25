@@ -7,11 +7,7 @@ use _key-helpers.nu with-signing-key
 use _temp-helpers.nu with-temp-file
 use _fs.nu list-files
 use _allowed-signers.nu allowed-signers-body
-
-# Extract algorithm + base64 blob from a public key line, dropping the trailing comment.
-def pubkey-material []: string -> string {
-    str trim | split row " " | first 2 | str join " "
-}
+use _pubkey-helpers.nu canonical-file
 
 # Match the signing key against registered pubkeys; return the registered stem.
 # Why: signer identity = filename in multiproofs/pubkeys/, not the private-key filename.
@@ -23,14 +19,16 @@ def lookup-signer-name [key: path pubkeys_dir: path]: nothing -> string {
         }
         $candidate
     }
-    let signing = open --raw $pub_path | pubkey-material
+    let signing = canonical-file $pub_path
 
-    let matches = list-files $pubkeys_dir --suffix ".pub"
-        | each {|file|
-            let registered = open --raw $file | pubkey-material
-            if $registered == $signing { $file | path parse | get stem } else { null }
+    # A `for` so that a broken file in pubkeys/ reports its own name, instead of
+    # the closure wrapper's "Eval block failed with pipeline input".
+    mut matches = []
+    for file in (list-files $pubkeys_dir --suffix ".pub") {
+        if (canonical-file $file) == $signing {
+            $matches = ($matches | append ($file | path parse | get stem))
         }
-        | where $it != null
+    }
 
     if ($matches | is-empty) {
         error make {msg: $"signing key not registered in ($pubkeys_dir)/ — add its pubkey or pass --name explicitly"}
