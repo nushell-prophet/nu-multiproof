@@ -91,6 +91,47 @@ def "audit path folds to the root for every leaf of a 7-leaf tree" [] {
     }
 }
 
+# Externally pinned audit paths — PATH(0, D[8]) and PATH(5, D[8]) from the
+# RFC 6962 / CT reference test data, hashes copied in as literals. Why this
+# test and not another fold-round-trip: every other path test folds a path
+# this same code produced, so the `side` convention can be flipped in
+# audit-path AND fold-path together and all of them stay green (measured).
+# The sides below are read off the tree, not off our output: for a balanced
+# 8-leaf tree, leaf 0 sits leftmost so every sibling is to its right; leaf 5
+# is the right child of the (4,5) pair (sibling left), that pair is the left
+# child of the (4..7) subtree (sibling right), and that subtree is the right
+# half of the root (sibling left).
+const CT_ROOT_D8 = "5dc9da79a70659a9ad559cb701ded9a2ab9d823aad2f4960cfe370eff4604328"
+const CT_PATH_0_D8 = [
+    [side hash];
+    [right "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7"]
+    [right "5f083f0a1a33ca076a95279832580db3e0ef4584bdff1f54c8a360f50de3031e"]
+    [right "6b47aaf29ee3c2af9af889bc1fb9254dabd31177f16232dd6aab035ca39bf6e4"]
+]
+const CT_PATH_5_D8 = [
+    [side hash];
+    [left "bc1a0643b12e4d2d7c77918f44e0f4f79a838b6cf9ec5b5c283e1f4d88599e6b"]
+    [right "ca854ea128ed050b41b35ffc1b87b8eb2bde461e9e3b5596ece6b9d5975a0ae0"]
+    [left "d37ee418976dd95753c1c73862b9398fa2a2cf9b4ff0fdfe8b30cd95209614b7"]
+]
+
+@test
+def "CT reference audit paths for 8 leaves, sides included" [] {
+    let leaves = vector-leaf-hashes
+    assert equal (mth $leaves | as-hex) $CT_ROOT_D8
+
+    # Builder side: our path must equal the published one, step for step
+    let path_0 = audit-path $leaves 0 | each {|s| {side: $s.side hash: ($s.hash | as-hex)} }
+    let path_5 = audit-path $leaves 5 | each {|s| {side: $s.side hash: ($s.hash | as-hex)} }
+    assert equal $path_0 $CT_PATH_0_D8
+    assert equal $path_5 $CT_PATH_5_D8
+
+    # Verifier side: fold the PUBLISHED steps, not ours, up to the published
+    # root — a flipped side rule reaches a different hash here
+    assert equal (fold-path ($leaves | get 0) $CT_PATH_0_D8 | as-hex) $CT_ROOT_D8
+    assert equal (fold-path ($leaves | get 5) $CT_PATH_5_D8 | as-hex) $CT_ROOT_D8
+}
+
 @test
 def "single-leaf tree: empty path, root is the leaf hash" [] {
     let leaves = vector-leaf-hashes | first 1
