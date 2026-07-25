@@ -151,10 +151,12 @@ def "verify fails when bundled pubkey tampered" [] {
     assert equal $result.structure_valid true
 }
 
-# A bundle is untrusted input, so its pubkeys/ can hold anything. ssh-keygen
-# rejects a whole allowed_signers file over one bad entry, so rendering it
-# anyway would turn "this key is junk" into "no principal matched" for every
-# other signer in the bundle.
+# A bundle is untrusted input, so its pubkeys/ can hold anything. Rendering a
+# junk key anyway would not fail loudly: ssh-keygen skips the bad line with a
+# warning nobody sees (tests/test_allowed-signers.nu "ssh-keygen skips a
+# malformed entry rather than failing"), so a bundle carrying a broken key for
+# its actual signer would verify as "unrecognized signer" — a signature
+# problem, where the truth is a bundle problem.
 @test
 def "verify refuses a bundle whose pubkey is not a public key" [] {
     let proof_dir = $in.tmp_dir

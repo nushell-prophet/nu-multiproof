@@ -19,10 +19,15 @@ const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!\s]|\p{Cc}'
 # each key's filename stem is its principal.
 #
 # Why every key goes through `pubkey canonical` rather than being copied
-# through: a key file holding two lines emitted a principal-less second line,
-# and ssh-keygen rejects the *whole* file for one bad entry — a single
-# malformed `.pub` turned every verification in the repo into "No principal
-# matched". A broken trust list is an error, not something to render anyway.
+# through: a key file holding two lines emitted a principal-less second line.
+# ssh-keygen does not reject the file over it — it writes "<file>:1: invalid
+# key" to stderr, skips that line and carries on (measured on OpenSSH 10.2p1;
+# pinned by tests/test_allowed-signers.nu "ssh-keygen skips a malformed entry
+# rather than failing"). Skipping is the worse outcome: the rendered trust
+# list no longer says what pubkeys/ says, the warning is swallowed by the
+# `complete` wrapped around every ssh-keygen call here, and the signer whose
+# key is broken comes back as an unrecognized signer with nothing pointing at
+# the cause. A broken trust list is an error, raised at the file that broke it.
 export def allowed-signers-body [
     pubkeys_dir: path
     --namespace: string = "file"
