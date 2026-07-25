@@ -31,13 +31,18 @@
 # list, so what this accepts and what OpenSSH accepts must be the same set
 # (tests/test_pubkey.nu "canonical and ssh-keygen accept the same keys").
 #
+# No `ssh-dss`: OpenSSH 10 removed DSA, so `ssh-keygen` here neither generates
+# such a key nor reads one back. Keeping the type would have meant accepting
+# into pubkeys/ a key that no `ssh-keygen -Y verify` on this machine can use —
+# a trust-list entry that verifies nothing — and no vector could be generated
+# to hold it to the same standard as every other type.
+#
 #   fields  — exact number of length-prefixed fields, the type field included
 #   curve   — required text of the curve field, for the types that name one
 #   key_at  — index of the field whose length is fixed, with key_len its size
 const KEY_SHAPES = [
     [type fields curve key_at key_len];
     ["ssh-rsa" 3 null null null]
-    ["ssh-dss" 5 null null null]
     ["ssh-ed25519" 2 null 1 32]
     ["ecdsa-sha2-nistp256" 3 "nistp256" 2 65]
     ["ecdsa-sha2-nistp384" 3 "nistp384" 2 97]
@@ -94,10 +99,10 @@ export def canonical []: string -> string {
         }
     }
     # The types whose key field is a fixed size: an ed25519 point is 32 bytes
-    # and an EC point is `04 || x || y` at the curve's width. RSA and DSA
-    # carry mpints whose length is the key's, so only their field count is
-    # fixed. Nothing here proves the point is *on* the curve — that check
-    # lives in OpenSSH, and this module never claims a key is usable.
+    # and an EC point is `04 || x || y` at the curve's width. RSA carries
+    # mpints whose length is the key's, so only its field count is fixed.
+    # Nothing here proves the point is *on* the curve — that check lives in
+    # OpenSSH, and this module never claims a key is usable.
     if $shape.key_at != null {
         let actual = $fields | get $shape.key_at | bytes length
         if $actual != $shape.key_len {

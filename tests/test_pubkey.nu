@@ -96,8 +96,7 @@ def "canonical and ssh-keygen accept the same keys" [] {
     let ed_blob = ($ED25519 | split row " " | get 1 | decode base64)
     let ed_type = ($ed_blob | bytes at 0..<15)
 
-    # Real keys of every type ssh-keygen here can still generate. ssh-dss is in
-    # the allowlist but OpenSSH 10 dropped DSA, so no vector for it exists.
+    # Real keys of every type ssh-keygen here can still generate.
     let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
         | each {|args|
             let path = $"($tmp_dir)/gen-($args | str join '-')"
@@ -120,6 +119,11 @@ def "canonical and ssh-keygen accept the same keys" [] {
         # The type says nistp256, the blob says nistp384.
         ($generated | where {|k| $k | str starts-with "ecdsa-sha2-nistp384" } | first
             | str replace "ecdsa-sha2-nistp384" "ecdsa-sha2-nistp256")
+        # A structurally sound ssh-dss line — 5 length-prefixed fields, the
+        # shape OpenSSH wrote before it dropped DSA. Refused for the type
+        # alone, on both sides: a key ssh-keygen will not read is a trust-list
+        # entry that verifies nothing.
+        $"ssh-dss ((0x[00000007] | bytes add --end ("ssh-dss" | into binary) | bytes add --end 0x[00000001 01 00000001 02 00000001 03 00000001 04]) | encode base64)"
         "ssh-rsa A"
         "ssh-rsa Zm9v"
         "ssh-../../../../tmp/pwn Zm9v"
