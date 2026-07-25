@@ -147,10 +147,11 @@ def fingerprint [key: string]: nothing -> string {
 # private key (multi-line, no pubkey type prefix) can never land — that much is
 # pinned by the private-key refusal tests.
 #
-# It is not a full validity check: `pubkey canonical` only matches shape
-# (`<type> <base64>`), never decodes the base64 and never compares the key type
-# against the blob, so `ssh-rsa A` passes. What lands here is well-formed, not
-# necessarily a usable key.
+# `pubkey canonical` also decodes the key material and checks that the blob's
+# own type field matches the declared one (tests/test_pubkey.nu "canonical
+# rejects key material that is not a key"), so `ssh-rsa A` no longer passes.
+# What it does not check is whether the key is *usable* — a well-formed blob
+# with a garbage public point still lands.
 
 # Resolve an SSH key path to its public-key file.
 # Why: --pubkey and the user.signingKey file-path branch must never copy a
