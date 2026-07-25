@@ -1,5 +1,7 @@
 # nu-multiproof
 
+The software is in pre-alpha stage. There's no consumers. We do not need any backward compability. We need a working copy.
+
 ## Module layout
 
 - `nu-multiproof/mod.nu` defines the public API. It re-exports the non-`_`
