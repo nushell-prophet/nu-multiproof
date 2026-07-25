@@ -78,19 +78,28 @@ export def sign [
         }
 
         let sig_path = (sig-path-for $path $signer_name)
-        $signed.stdout | save --force $sig_path
 
         # Why: Apple's ssh-keychain.dylib fail-opens — on a cancelled Touch ID
         # prompt (or a wedged Secure Enclave stack) it reports success and
         # ssh-keygen emits a sig whose ECDSA r/s are empty. A .sig file existing
-        # proves nothing; only a verify does. Delete the bad artifact so it can't
-        # be committed as if it were a signature.
-        let check = (do {
-            open --raw $path | into binary | ^ssh-keygen -Y check-novalidate -n $namespace -s $sig_path
-        } | complete)
-        if $check.exit_code != 0 {
-            rm $sig_path
-            error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony. Re-run and complete the prompt."}
+        # proves nothing; only a verify does.
+        #
+        # Why the check runs at a temp path and the move comes last: saving
+        # straight to $sig_path first meant a cancelled ceremony overwrote and
+        # then deleted a previously valid `<file>.<signer>.sig`. `seal` clears
+        # sigs only when the signed bytes changed, so on an unchanged
+        # tree-root.txt it deliberately keeps the good sig and then re-signs —
+        # one cancelled prompt destroyed exactly the signature it kept. Same
+        # validate-then-write shape as `ots upgrade`.
+        with-temp-file "sig" {|tmp_sig|
+            $signed.stdout | save --force $tmp_sig
+            let check = (do {
+                open --raw $path | into binary | ^ssh-keygen -Y check-novalidate -n $namespace -s $tmp_sig
+            } | complete)
+            if $check.exit_code != 0 {
+                error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony. Re-run and complete the prompt."}
+            }
+            mv --force $tmp_sig $sig_path
         }
 
         print $"Signed: ($sig_path)"

@@ -417,3 +417,33 @@ def "concurrent signs of one file keep their own signatures" [] {
     assert equal ($result | get signer | sort) $signers
     assert equal ($result | get valid) [true true true true]
 }
+
+# A cancelled signing ceremony must not cost the signature already on disk.
+# Saving the new sig straight to `<file>.<signer>.sig` and deleting it when the
+# check failed did exactly that — and `seal` re-signs an unchanged
+# tree-root.txt whose sig it deliberately kept, so one cancelled Touch ID
+# prompt was enough. A stubbed ssh-keygen stands in for the fail-open: it
+# reports success for `-Y sign` and emits bytes that are not a signature.
+@test
+def "a failed signing ceremony leaves the previous signature alone" [] {
+    let tmp_dir = $in.tmp_dir
+    let test_file = $"($tmp_dir)/doc.txt"
+    let sig_path = $"($test_file).alice.sig"
+    let stub_dir = $"($tmp_dir)/stub"
+
+    mkdir $stub_dir
+    "hello world" | save --force $test_file
+    "THE SIGNATURE FROM AN EARLIER GOOD RUN" | save --force $sig_path
+    [
+        "#!/bin/sh"
+        # `-Y sign` succeeds and writes junk; check-novalidate then refuses it.
+        'for a in "$@"; do case "$a" in sign) m=sign ;; check-novalidate) m=check ;; esac; done'
+        'if [ "$m" = sign ]; then echo NOT-A-SIGNATURE; exit 0; fi'
+        'exit 1'
+    ] | str join "\n" | save --force $"($stub_dir)/ssh-keygen"
+    ^chmod +x $"($stub_dir)/ssh-keygen"
+    $env.PATH = ([$stub_dir] ++ $env.PATH)
+
+    assert error {|| ssh-sign sign $test_file --key $"($tmp_dir)/nokey" --name alice }
+    assert equal (open --raw $sig_path) "THE SIGNATURE FROM AN EARLIER GOOD RUN"
+}
