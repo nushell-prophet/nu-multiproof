@@ -59,3 +59,85 @@ def "canonical rejects a truncated or padded blob" [] {
     let padded = ($ED25519 | split row " " | get 1 | decode base64 | bytes add --end 0x[00] | encode base64)
     assert error {|| $"ssh-ed25519 ($padded)" | pubkey canonical }
 }
+
+# The outside oracle. Every check above is this codebase reading its own
+# fixtures, so the `side` of each rule could be wrong in the code and in the
+# test at once. `ssh-keygen -lf` is the parser that actually decides whether a
+# key in pubkeys/ can verify anything, so the two must accept the same set —
+# a key this accepts and OpenSSH refuses is a trust-list entry that silently
+# verifies nothing.
+#
+# Not in the list, and deliberately: certificates
+# (`ssh-ed25519-cert-v01@openssh.com`) and authorized_keys option prefixes,
+# which ssh-keygen reads and this module refuses on purpose.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
+def ssh-keygen-accepts [dir: path line: string]: nothing -> bool {
+    let file = $"($dir)/candidate.pub"
+    $line | save --force $file
+    (do { ^ssh-keygen -lf $file } | complete | get exit_code) == 0
+}
+
+def canonical-accepts [line: string]: nothing -> bool {
+    try { $line | pubkey canonical; true } catch { false }
+}
+
+@test
+def "canonical and ssh-keygen accept the same keys" [] {
+    let tmp_dir = $in.tmp_dir
+    let ed_blob = ($ED25519 | split row " " | get 1 | decode base64)
+    let ed_type = ($ed_blob | bytes at 0..<15)
+
+    # Real keys of every type ssh-keygen here can still generate. ssh-dss is in
+    # the allowlist but OpenSSH 10 dropped DSA, so no vector for it exists.
+    let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
+        | each {|args|
+            let path = $"($tmp_dir)/gen-($args | str join '-')"
+            ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
+            open --raw $"($path).pub" | str trim
+        }
+
+    let candidates = $generated ++ [
+        $ED25519
+        $RSA
+        $SK
+        # An ed25519 point that is not 32 bytes — the field walk alone took it.
+        $"ssh-ed25519 (($ed_type | bytes add --end 0x[00000010] | bytes add --end 0x[41414141414141414141414141414141]) | encode base64)"
+        # ...and one with no point at all.
+        $"ssh-ed25519 (($ed_type | bytes add --end 0x[00000000]) | encode base64)"
+        # A valid key with one extra length-prefixed field appended.
+        $"ssh-ed25519 (($ed_blob | bytes add --end 0x[00000001] | bytes add --end 0x[41]) | encode base64)"
+        # ssh-rsa carrying only its exponent, no modulus.
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB"
+        # The type says nistp256, the blob says nistp384.
+        ($generated | where {|k| $k | str starts-with "ecdsa-sha2-nistp384" } | first
+            | str replace "ecdsa-sha2-nistp384" "ecdsa-sha2-nistp256")
+        "ssh-rsa A"
+        "ssh-rsa Zm9v"
+        "ssh-../../../../tmp/pwn Zm9v"
+        "ecdsa-anything Zm9v"
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5"
+        "hello world"
+    ]
+
+    let disagreements = $candidates | each {|line|
+        {
+            line: ($line | str substring 0..48)
+            canonical: (canonical-accepts $line)
+            ssh_keygen: (ssh-keygen-accepts $tmp_dir $line)
+        }
+    # A closure, not `where canonical != ssh_keygen`: the bare word on the
+    # right of a `where` shorthand is a string literal, so that form compares
+    # every row against "ssh_keygen" and reports all of them as disagreeing.
+    } | where {|r| $r.canonical != $r.ssh_keygen }
+
+    assert equal $disagreements []
+}

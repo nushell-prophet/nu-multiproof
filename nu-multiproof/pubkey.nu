@@ -16,21 +16,34 @@
 # drifts across machines and re-saves) and would silently fork one key into
 # several identities. The human label lives in the pubkey's file *name*.
 
-# The key types accepted here. An allowlist and not a `ssh-`/`sk-`/`ecdsa-`
-# prefix test because the type string travels: it is written into
-# `allowed_signers` lines, and `init` derives a *filename* from it for a key
-# with no comment. `ssh-../../../../tmp/pwn Zm9v` passes any prefix test and
-# named a path outside pubkeys/. A key type OpenSSH grows later is a one-line
-# addition here; until then, unknown type is a refusal.
-const KEY_TYPES = [
-    "ssh-rsa"
-    "ssh-dss"
-    "ssh-ed25519"
-    "ecdsa-sha2-nistp256"
-    "ecdsa-sha2-nistp384"
-    "ecdsa-sha2-nistp521"
-    "sk-ssh-ed25519@openssh.com"
-    "sk-ecdsa-sha2-nistp256@openssh.com"
+# The key types accepted here, and the blob each one must hold. An allowlist
+# and not a `ssh-`/`sk-`/`ecdsa-` prefix test because the type string travels:
+# it is written into `allowed_signers` lines, and `init` derives a *filename*
+# from it for a key with no comment. `ssh-../../../../tmp/pwn Zm9v` passes any
+# prefix test and named a path outside pubkeys/. A key type OpenSSH grows later
+# is a one-line addition here; until then, unknown type is a refusal.
+#
+# Why the shape and not just the field walk: counting length-prefixed fields
+# only proves the bytes divide evenly. `ssh-keygen -lf` refused five lines this
+# accepted — an ed25519 point of 16 bytes and of 0 bytes, a valid key with one
+# extra field appended, an `ssh-rsa` missing its modulus, and an
+# `ecdsa-sha2-nistp256` whose curve field says nistp384. pubkeys/ is the trust
+# list, so what this accepts and what OpenSSH accepts must be the same set
+# (tests/test_pubkey.nu "canonical and ssh-keygen accept the same keys").
+#
+#   fields  — exact number of length-prefixed fields, the type field included
+#   curve   — required text of the curve field, for the types that name one
+#   key_at  — index of the field whose length is fixed, with key_len its size
+const KEY_SHAPES = [
+    [type fields curve key_at key_len];
+    ["ssh-rsa" 3 null null null]
+    ["ssh-dss" 5 null null null]
+    ["ssh-ed25519" 2 null 1 32]
+    ["ecdsa-sha2-nistp256" 3 "nistp256" 2 65]
+    ["ecdsa-sha2-nistp384" 3 "nistp384" 2 97]
+    ["ecdsa-sha2-nistp521" 3 "nistp521" 2 133]
+    ["sk-ssh-ed25519@openssh.com" 3 null 1 32]
+    ["sk-ecdsa-sha2-nistp256@openssh.com" 4 "nistp256" 2 65]
 ]
 
 # Reduce an SSH public key line to canonical form: `<type> <base64>\n`.
@@ -45,9 +58,11 @@ export def canonical []: string -> string {
         error make {msg: "does not look like an SSH public key (`<type> <base64> [comment]`)"}
     }
     let key_type = $parts.0
-    if $key_type not-in $KEY_TYPES {
+    let shape = $KEY_SHAPES | where type == $key_type
+    if ($shape | is-empty) {
         error make {msg: $"not a known SSH public key type: ($key_type)"}
     }
+    let shape = $shape | first
     let blob = try { $parts.1 | decode base64 } catch {
         error make {msg: "SSH pubkey key material is not base64"}
     }
@@ -56,8 +71,11 @@ export def canonical []: string -> string {
     # accepted `ssh-rsa A`. A blob that is not an exact sequence of
     # length-prefixed fields is truncated or padded — not a key.
     let fields = ssh-blob-fields $blob
-    if $fields == null or ($fields | length) < 2 {
+    if $fields == null {
         error make {msg: $"SSH pubkey blob is not a sequence of length-prefixed fields: ($key_type)"}
+    }
+    if ($fields | length) != $shape.fields {
+        error make {msg: $"($key_type) holds ($shape.fields) blob fields, this one has ($fields | length)"}
     }
     # The type appears twice — outside the blob and as its first field. OpenSSH
     # reads the inner one, so a mismatch means the line lies about what the key
@@ -65,6 +83,26 @@ export def canonical []: string -> string {
     let blob_type = try { $fields.0 | decode } catch { "" }
     if $blob_type != $key_type {
         error make {msg: $"SSH pubkey says ($key_type) but its blob holds ($blob_type)"}
+    }
+    # The curve is named twice for the same reason, and OpenSSH again reads the
+    # inner one: `ecdsa-sha2-nistp256` over a nistp384 field is not a key it
+    # will load.
+    if $shape.curve != null {
+        let curve = try { $fields.1 | decode } catch { "" }
+        if $curve != $shape.curve {
+            error make {msg: $"($key_type) must name curve ($shape.curve), its blob names ($curve)"}
+        }
+    }
+    # The types whose key field is a fixed size: an ed25519 point is 32 bytes
+    # and an EC point is `04 || x || y` at the curve's width. RSA and DSA
+    # carry mpints whose length is the key's, so only their field count is
+    # fixed. Nothing here proves the point is *on* the curve — that check
+    # lives in OpenSSH, and this module never claims a key is usable.
+    if $shape.key_at != null {
+        let actual = $fields | get $shape.key_at | bytes length
+        if $actual != $shape.key_len {
+            error make {msg: $"($key_type) key material is ($shape.key_len) bytes, this one has ($actual)"}
+        }
     }
     $"($key_type) ($parts.1)\n"
 }
@@ -79,9 +117,11 @@ def ssh-blob-fields [blob: binary]: nothing -> any {
     mut offset = 0
     while $offset < $total {
         if ($total - $offset) < 4 { return null }
+        # 4 bytes read big-endian are unsigned (0xffffffff -> 4294967295), so an
+        # oversized length can only overshoot the buffer, never wrap negative.
         let len = $blob | bytes at $offset..<($offset + 4) | into int --endian big
         let start = $offset + 4
-        if $len < 0 or ($total - $start) < $len { return null }
+        if ($total - $start) < $len { return null }
         $fields = ($fields | append [($blob | bytes at $start..<($start + $len))])
         $offset = $start + $len
     }
