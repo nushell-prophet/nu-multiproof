@@ -12,7 +12,12 @@ use _pubkey-helpers.nu canonical-file
 # space or comma claimed two principals, and a file named `*.pub` would have
 # trusted its key for every signer. Reject, never normalize: the file name is
 # the operator's to fix.
-const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!\s]|\p{Cc}'
+#
+# `/` is here for the other half of the grammar: a filename stem can never
+# hold one, but `ssh-sign sign --name` reaches the same rule and its value is
+# interpolated into `<file>.<name>.sig`, so a slash writes the signature into
+# another directory where discovery never finds it again.
+const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!/\s]|\p{Cc}'
 
 # One line per pubkey: `<principal> namespaces="<namespace>" <key>`.
 # --wildcard uses "*" for every key (a collective trust statement); otherwise
@@ -51,12 +56,20 @@ export def allowed-signers-body [
 # The principal a pubkey file claims: its filename stem, refused when the stem
 # cannot be written as one.
 def principal-for [file: path]: nothing -> string {
-    let stem = $file | path parse | get stem
-    if ($stem | is-empty) {
-        error make {msg: $"($file) has no name to use as a principal"}
+    check-signer-name ($file | path parse | get stem) $"($file)"
+}
+
+# A signer name, refused unless the trust list can express it. Exported
+# because `ssh-sign sign` is the other end of the same grammar: it takes the
+# name from `--name` or from a pubkey stem and writes it into a `.sig` file
+# name, and a name this rejects makes every later `verify` in that repo throw
+# while rendering the list. Better to refuse it where it enters.
+export def check-signer-name [name: string context: string]: nothing -> string {
+    if ($name | is-empty) {
+        error make {msg: $"($context): there is no signer name to use"}
     }
-    if ($stem =~ $FORBIDDEN_IN_PRINCIPAL) {
-        error make {msg: $"($file): a signer name cannot hold whitespace, quotes, `#`, `,`, `\\` or the pattern characters `*?!` — rename the file"}
+    if ($name =~ $FORBIDDEN_IN_PRINCIPAL) {
+        error make {msg: $"($context): a signer name cannot hold whitespace, quotes, `#`, `,`, `/`, `\\` or the pattern characters `*?!` — got ($name | to nuon)"}
     }
-    $stem
+    $name
 }

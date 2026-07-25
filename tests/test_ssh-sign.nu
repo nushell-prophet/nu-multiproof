@@ -447,3 +447,36 @@ def "a failed signing ceremony leaves the previous signature alone" [] {
     assert error {|| ssh-sign sign $test_file --key $"($tmp_dir)/nokey" --name alice }
     assert equal (open --raw $sig_path) "THE SIGNATURE FROM AN EARLIER GOOD RUN"
 }
+
+# The two ends of one grammar. A signer name becomes a principal in the trust
+# list, so a name the renderer refuses signs a file that can then never be
+# verified — `al ice.pub` signed fine and made every later verify in that repo
+# throw. And `--name` is interpolated into the sig's file name, so a slash put
+# the signature in another directory, out of discovery's reach.
+@test
+def "sign refuses a signer name the trust list cannot express" [] {
+    let tmp_dir = $in.tmp_dir
+    let test_file = $"($tmp_dir)/doc.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let key_path = $"($tmp_dir)/alice_key"
+
+    mkdir $pubkeys_dir
+    "hello world" | save --force $test_file
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+
+    for bad in ["al ice" "a/../b" "*" "ali,ce" 'ali"ce'] {
+        let outcome = (try {
+            ssh-sign sign $test_file --key $key_path --name $bad --pubkeys-dir $pubkeys_dir
+            "signed"
+        } catch {|e| $e.msg })
+        assert ($outcome | str contains "signer name") $"name ($bad) got: ($outcome)"
+    }
+    # nothing was written under any of them
+    assert equal (ls --all $tmp_dir | get name | each { path basename } | sort) ["alice_key" "alice_key.pub" "doc.txt" "pubkeys"]
+
+    # the lookup path is the same grammar: a pubkey stem the renderer refuses
+    # must fail at signing time, not at the next verify
+    cp $"($key_path).pub" ($pubkeys_dir | path join "al ice.pub")
+    let outcome = (try { ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir; "signed" } catch {|e| $e.msg })
+    assert ($outcome | str contains "signer name") $"got: ($outcome)"
+}

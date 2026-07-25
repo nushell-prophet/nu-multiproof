@@ -6,7 +6,7 @@ use _sig.nu [sig-files-for signer-from-sig sig-path-for original-for-sig]
 use _key-helpers.nu with-signing-key
 use _temp-helpers.nu with-temp-file
 use _fs.nu list-files
-use _allowed-signers.nu allowed-signers-body
+use _allowed-signers.nu [allowed-signers-body check-signer-name]
 use _pubkey-helpers.nu canonical-file
 
 # Match the signing key against registered pubkeys; return the registered stem.
@@ -54,12 +54,20 @@ export def sign [
     # The closure form bounds the key's lifetime: an inline `key::` config is
     # materialized to a temp file, which with-signing-key deletes on the way out.
     with-signing-key --key $key {|key|
-        let signer_name = if $name != null { $name } else {
-            let dir = if $pubkeys_dir != null { $pubkeys_dir } else {
-                pubkeys-dir (repo-root)
+        # Checked against the trust list's own grammar, not just used: the name
+        # ends up as a principal there, and `sign` accepted names the renderer
+        # refuses — a key filed as `al ice.pub` signed fine and then made every
+        # later `verify` in that repo throw while rendering allowed_signers.
+        # It also keeps `--name` from putting the sig outside the target's
+        # directory, where `sig-files-for` would never find it.
+        let signer_name = check-signer-name (
+            if $name != null { $name } else {
+                let dir = if $pubkeys_dir != null { $pubkeys_dir } else {
+                    pubkeys-dir (repo-root)
+                }
+                lookup-signer-name $key $dir
             }
-            lookup-signer-name $key $dir
-        }
+        ) "signer name"
 
         # Why the content goes in over stdin instead of naming the file: given a
         # file, ssh-keygen writes the signature to the fixed name `<path>.sig`,
