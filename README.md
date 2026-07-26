@@ -112,6 +112,8 @@ nu-multiproof merkle verify bundle/proof.multiproof.json --repo bundle/
 
 This is a supported contract, pinned by a test — not an accident of path handling: an explicit `--repo` is taken as-is (no git required), and every lookup is layout-relative to it. One caveat: `seal`'s opportunistic OTS upgrade only walks the target repo's own `multiproofs/ots-timestamps/`, so a bundle's `pending` stamp stays pending until you run `ots upgrade` on it yourself.
 
+A proof of a **directory row** (or of `.`) is the exception: it needs a git repo. A directory's `content_cid` commits to every tracked entry under it, so re-deriving it means walking the tracked tree the way `tree-hashes` did — a plain bundle has no such tree. There `content_verified` is `"unverifiable"` and `valid` is `false`, because a row whose only commitment cannot be checked must not read as one that was. File rows are unaffected. (Pinned by the test "a directory row in a non-git bundle reports unverifiable, not valid".)
+
 ### Tree specification
 
 Pinned exactly, so an independent implementation reproduces the root from the same CSV (reference: `nu-multiproof/_merkle-helpers.nu`, test vectors: `tests/test_merkle.nu`).

@@ -8,6 +8,8 @@
 
 use _repo.nu repo-root
 use _fs.nu [list-files list-dirs]
+use _tracked.nu content-tree
+use _cid-helpers.nu node-cid
 use _layout.nu [manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir MERKLE_ROOT_FILE]
 use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
@@ -53,6 +55,41 @@ def resolve-leaf-file [target: path, filepath: string]: nothing -> record {
         return {status: "missing" path: $joined}
     }
     {status: "ok" path: $joined}
+}
+
+# Content check for a row that attests no sha256 — a directory, or "." itself.
+#
+# These rows carry only a content_cid, and nothing ever recomputed it: the
+# branch returned null and `valid` stayed true. So the strongest configuration
+# this tool offers answered `valid: true` for a bundle carrying alice's genuine
+# root, her genuine signature and her genuine proof of the `src` row, with the
+# attacker's own files written into src/. A directory absent from disk entirely
+# gave the same answer. Four of this repo's own 42 rows are that shape,
+# including "." — the CID of the whole repo.
+#
+# The enumeration must come from disk, not from the manifest: a UnixFS
+# directory commits to its entries, so a file the attacker ADDED is exactly
+# what has to be noticed, and it is by definition not in the catalogue. That
+# means git — content-tree walks `git ls-files`, the same walk tree-hashes
+# used to build the row.
+#
+# Hence "unverifiable" when the target is not a git repo. A portable bundle
+# (README "Verifying without the origin repo") carries no working tree, so a
+# directory row has nothing to check against — and a row whose only commitment
+# cannot be checked must not read as verified. Returning null there would
+# restore the exact hole this closes, since an attacker can ship a plain
+# directory as easily as a repo.
+def derive-dir-cid [target: path, leaf: record]: nothing -> any {
+    if $leaf.content_cid == "" { return null }
+    let git_check = do { ^git -C $target rev-parse --is-inside-work-tree } | complete
+    if $git_check.exit_code != 0 { return "unverifiable" }
+    # A directory CID is a function of the whole subtree, so this reads every
+    # tracked file. Only rows that attest no sha256 reach it — file rows keep
+    # the single-file hash.
+    let nodes = (content-tree $target).nodes
+    let node = $nodes | get --optional $leaf.filepath
+    if $node == null { return "missing" }
+    ($node | node-cid) == $leaf.content_cid
 }
 
 # Build the tree from the manifest and write the root statement file
@@ -129,13 +166,17 @@ export def prove [
 #                      bundle layout carries no CSV). A value differing from
 #                      `root` means catalogue and signed statement are from
 #                      different seals — blocks valid
-#   content_verified — on-disk file matches leaf.content_sha256; null when the
-#                      leaf attests no sha256 (directory rows attest only
-#                      content_cid). Anything else is a divergence from the
+#   content_verified — the on-disk content matches what the leaf attests: a
+#                      file row against content_sha256, a directory row (and
+#                      ".") against content_cid re-derived from the tracked
+#                      files under it. null only when the leaf attests nothing
+#                      checkable. Anything else is a divergence from the
 #                      catalogue and blocks valid, same as a mismatch:
 #                      "missing" (absent on disk), "symlink" (a link where the
 #                      catalogue describes a regular file), "outside"
-#                      (resolves out of the repo through a symlinked parent)
+#                      (resolves out of the repo through a symlinked parent),
+#                      "unverifiable" (a directory row with no git repo to
+#                      re-derive its CID from)
 #   signatures       — ssh-sign results over the root statement file
 #   ots              — {status: absent|pending|anchored, ots} — a status, NOT
 #                      pass/fail: a fresh seal stays pending for hours/days
@@ -240,7 +281,7 @@ export def verify [
     let target_file = $target | path join $proof.leaf.filepath
     let resolved = resolve-leaf-file $target $proof.leaf.filepath
     let content_verified = if $proof.leaf.content_sha256 == "" {
-        null
+        derive-dir-cid $target $proof.leaf
     } else if $resolved.status != "ok" {
         # Why a status and not null: null means "nothing to check" (directory
         # rows). Every status here is a real divergence from the sealed
@@ -286,8 +327,14 @@ export def verify [
         "proof path does not fold to the signed root"
     } else if not $manifest_matches {
         $"($manifest) rebuilds to ($manifest_root), but the signed statement holds ($signed_root) — manifest and signed root are from different seals, so the signature covers neither this catalogue nor what a consumer would re-derive from it"
+    } else if $content_verified == false and $proof.leaf.content_sha256 == "" {
+        $"($proof.leaf.filepath) on disk does not reproduce the proven content_cid — the directory's tracked contents differ from the sealed catalogue"
     } else if $content_verified == false {
         $"on-disk ($proof.leaf.filepath) does not match the proven content_sha256"
+    } else if $content_verified == "unverifiable" {
+        $"($proof.leaf.filepath) attests only a content_cid, and ($target) is not a git repository — a directory CID commits to every tracked entry under it, so there is nothing here to re-derive it from"
+    } else if $content_verified == "missing" and $proof.leaf.content_sha256 == "" {
+        $"($proof.leaf.filepath) is proven as a directory but no tracked files sit under it"
     } else if $content_verified == "missing" {
         $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"
     } else if $content_verified == "symlink" {
@@ -306,7 +353,7 @@ export def verify [
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', null => 'not checked' })"
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'unverifiable' => 'UNVERIFIABLE (directory CID needs the tracked tree)', null => 'not checked' })"
     print $"ots:       ($ots_status.status)"
 
     if $fail and not $valid {

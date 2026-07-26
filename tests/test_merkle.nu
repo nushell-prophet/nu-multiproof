@@ -303,11 +303,86 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
     assert equal ($result.signatures | where valid | length) 1
     assert equal $result.ots.status "absent"
 
-    # Directory row: attests only content_git, so content check is null —
-    # but with structure + signature good, the proof is still valid
+    # Directory row: attests only a content_cid, which verify re-derives from
+    # the tracked files under it. This assertion used to read `null` — that was
+    # the hole, not a property: null meant "nothing checked" and still counted
+    # as valid.
     let dir_result = merkle verify (merkle prove sub --repo $repo) --repo $repo
     assert $dir_result.valid
-    assert equal $dir_result.content_verified null
+    assert equal $dir_result.content_verified true
+
+    # The "." row is the same shape over the whole repo.
+    let root_row = merkle verify (merkle prove "." --repo $repo) --repo $repo
+    assert $root_row.valid
+    assert equal $root_row.content_verified true
+}
+
+# The attack the null branch allowed: alice's genuine root, her genuine
+# signature and her genuine proof of the `sub` row, shipped with the attacker's
+# own files inside sub/. Every other check passes — it is her seal — and the
+# one thing that would notice is the directory's content, which nothing
+# recomputed. This repo's own manifest has four such rows, "." among them.
+@test
+def "a directory row does not verify against a directory that was rewritten" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle write-root --repo $repo
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let dir_proof = merkle prove sub --repo $repo
+    let root_proof = merkle prove "." --repo $repo
+
+    # Control: untouched, both verify.
+    assert (merkle verify $dir_proof --repo $repo).valid
+    assert (merkle verify $root_proof --repo $repo).valid
+
+    # A file ADDED under sub/ — invisible to any check driven by the manifest,
+    # since it is by definition not catalogued. Tracked, because the CID is a
+    # function of the tracked tree.
+    "backdoor\n" | save --force $"($repo)/sub/backdoor.sh"
+    ^git -C $repo add sub/backdoor.sh
+
+    let tampered = merkle verify $dir_proof --repo $repo
+    assert not $tampered.valid "an added file left the directory row verifying"
+    assert equal $tampered.content_verified false
+    assert ($tampered.error | str contains "content_cid")
+
+    # "." covers it too — the added file is inside the repo root.
+    let tampered_root = merkle verify $root_proof --repo $repo
+    assert not $tampered_root.valid
+    assert equal $tampered_root.content_verified false
+}
+
+# A directory CID commits to every tracked entry under it, so re-deriving one
+# needs the tracked tree. A plain directory carrying only the proof artifacts
+# has none — and "nothing to check" must not read as "checked and fine", or the
+# attacker just ships a directory instead of a repo.
+@test
+def "a directory row in a non-git bundle reports unverifiable, not valid" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle write-root --repo $repo
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let dir_proof = merkle prove sub --repo $repo
+
+    let bundle = $"($tmp_dir)/bundle"
+    mkdir $"($bundle)/multiproofs/pubkeys" $"($bundle)/sub"
+    "anything at all\n" | save --force $"($bundle)/sub/inner.txt"
+    cp $"($repo)/multiproofs/tree-root.txt" $"($bundle)/multiproofs/"
+    cp $"($repo)/multiproofs/tree-root.txt.sshkey.sig" $"($bundle)/multiproofs/"
+    cp $"($repo)/multiproofs/pubkeys/sshkey.pub" $"($bundle)/multiproofs/pubkeys/"
+
+    let result = merkle verify $dir_proof --repo $bundle
+    assert $result.structure_valid "structure is genuine — this is alice's real proof"
+    assert not $result.valid "a directory row was called valid with nothing to check it against"
+    assert equal $result.content_verified "unverifiable"
 }
 
 # Every discovery step here (pubkeys for the allowed_signers body, the signer
