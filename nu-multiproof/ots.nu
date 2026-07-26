@@ -69,6 +69,25 @@ def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
     {bytes: ($buf | bytes at $start..($end)) offset: ($end + 1)}
 }
 
+# The URI of a pending attestation, as bytes read out of the .ots file.
+#
+# Why check the bytes and not the decoded string: `decode utf-8` is lossy —
+# invalid bytes become U+FFFD — so `ots info` would print a URL that is not
+# what the file holds, and that silently-normalized string is what `upgrade`
+# would then contact. Reject, never normalize. The limit and the character set
+# are the reference client's (notary.py:165-186), so a URI this refuses is one
+# no OTS implementation should have written.
+def check-uri [raw: binary]: nothing -> string {
+    if ($raw | bytes length) > 1000 {
+        error make {msg: "malformed OTS file: pending attestation URI exceeds 1000 bytes"}
+    }
+    let uri = $raw | decode utf-8
+    if not ($uri =~ '^[A-Za-z0-9\-._/:]*$') {
+        error make {msg: "malformed OTS file: pending attestation URI holds characters the format does not allow"}
+    }
+    $uri
+}
+
 # Parse one operation given the tag byte already read
 def parse-op [tag: int offset: int]: binary -> record<op: record, offset: int> {
     let buf = $in
@@ -109,11 +128,26 @@ def parse-timestamp [offset: int] {
             let vb = $buf | parse-varbytes $pos
             $pos = $vb.offset
 
+            # Why the payload must be fully consumed: the reference
+            # deserializer wraps each attestation payload in its own context and
+            # ends it with assert_eof (notary.py:92). Without that, trailing
+            # bytes inside the payload parse here and are rejected everywhere
+            # else — and `stamp`/`upgrade` validate by calling this parser, so a
+            # looser parser makes the validate-before-write guard pass bytes the
+            # format refuses. Pinned by test_ots.nu "attestation payload with
+            # trailing bytes is refused".
+            let payload_len = $vb.bytes | bytes length
             let attestation = if $att_tag == $ATT_PENDING {
                 let inner = $vb.bytes | parse-varbytes 0
-                {type: "pending" url: ($inner.bytes | decode utf-8)}
+                if $inner.offset != $payload_len {
+                    error make {msg: "malformed OTS file: trailing bytes inside the pending attestation payload"}
+                }
+                {type: "pending" url: (check-uri $inner.bytes)}
             } else if $att_tag == $ATT_BITCOIN {
                 let height = $vb.bytes | parse-varuint 0
+                if $height.offset != $payload_len {
+                    error make {msg: "malformed OTS file: trailing bytes inside the bitcoin attestation payload"}
+                }
                 {type: "bitcoin" height: $height.value}
             } else {
                 {type: "unknown" tag: ($att_tag | encode hex | str lowercase)}
@@ -152,6 +186,18 @@ def parse-ots []: binary -> record {
     let file_hash = $buf | bytes at $hash_start..($hash_end)
 
     let ts = $buf | parse-timestamp ($hash_end + 1)
+
+    # Why: parse-timestamp returns at the first attestation, so without this a
+    # file carrying anything after it parses clean here and is
+    # TrailingGarbageError to the reference deserializer (timestamp.py:339
+    # ctx.assert_eof). `stamp` and `upgrade` validate what they are about to
+    # write by calling this parser — a parser looser than the format turns that
+    # guard into a rubber stamp, and a calendar answering with 4 junk bytes
+    # appended produced an unreadable .ots and exit 0. Pinned by test_ots.nu
+    # "a proof with bytes after the attestation is refused".
+    if $ts.offset != ($buf | bytes length) {
+        error make {msg: $"malformed OTS file: ($buf | bytes length) bytes, but the proof ends at ($ts.offset)"}
+    }
 
     {
         hash: $file_hash

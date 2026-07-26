@@ -248,6 +248,96 @@ def "verify rejects a pending proof" [] {
     assert ($result | str contains "pending")
 }
 
+# --- format conformance: bytes this parser used to read past ---
+#
+# Every proof below is built by hand, not by this repo's writer. Round-tripping
+# the writer proves self-consistency; these pin conformance, which is what
+# "the reference client can read what we wrote" actually means.
+
+@test
+def "a proof with bytes after the attestation is refused" [] {
+    let tmp_dir = $in.tmp_dir
+    let path = $"($tmp_dir)/trailing.ots"
+    # 4 junk bytes after a well-formed bitcoin attestation. parse-timestamp
+    # returns at the first attestation, so without an end-of-buffer assert this
+    # parsed clean here and was TrailingGarbageError to the reference
+    # deserializer — and `stamp`/`upgrade` validate by calling this parser, so
+    # the validate-before-write guard passed it too.
+    build-bitcoin-ots | bytes add --end 0x[deadbeef] | save --raw --force $path
+
+    let outcome = try { ots info $path; "accepted" } catch {|e| $e.msg }
+    assert ($outcome | str contains "the proof ends at") $"expected a refusal, got: ($outcome)"
+}
+
+@test
+def "an attestation payload with trailing bytes is refused" [] {
+    let tmp_dir = $in.tmp_dir
+    let path = $"($tmp_dir)/fat-payload.ots"
+    # Payload length 5: the 3-byte height varint for 123456, then 2 junk bytes
+    # inside the attestation's own length-prefixed field. The reference wraps
+    # each payload in its own context and ends it with assert_eof.
+    $OTS_HEADER
+    | bytes add --end 0x[01 08]
+    | bytes add --end $ZERO_HASH
+    | bytes add --end 0x[08]
+    | bytes add --end 0x[00]
+    | bytes add --end $ATT_BITCOIN_TAG
+    | bytes add --end 0x[05 C0C407 ffff]
+    | save --raw --force $path
+
+    let outcome = try { ots info $path; "accepted" } catch {|e| $e.msg }
+    assert ($outcome | str contains "trailing bytes inside") $"expected a refusal, got: ($outcome)"
+}
+
+@test
+def "a pending attestation payload with trailing bytes is refused" [] {
+    let tmp_dir = $in.tmp_dir
+    let path = $"($tmp_dir)/fat-pending.ots"
+    # The pending branch of the same rule. Two separate asserts in the parser,
+    # so two tests: mutating the pending one off left the bitcoin test green.
+    let uri = "https://a.calendar.opentimestamps.org" | into binary
+    let uri_len = $uri | bytes length
+    $OTS_HEADER
+    | bytes add --end 0x[01 08]
+    | bytes add --end $ZERO_HASH
+    | bytes add --end 0x[08]
+    | bytes add --end 0x[00]
+    | bytes add --end 0x[83dfe30d2ef90c8e]
+    | bytes add --end ($uri_len + 3 | into binary | bytes at 0..0)
+    | bytes add --end ($uri_len | into binary | bytes at 0..0)
+    | bytes add --end $uri
+    | bytes add --end 0x[ffff]
+    | save --raw --force $path
+
+    let outcome = try { ots info $path; "accepted" } catch {|e| $e.msg }
+    assert ($outcome | str contains "trailing bytes inside the pending") $"expected a refusal, got: ($outcome)"
+}
+
+@test
+def "a pending URI holding characters the format forbids is refused" [] {
+    let tmp_dir = $in.tmp_dir
+    let path = $"($tmp_dir)/bad-uri.ots"
+    # A URI carrying bytes outside the reference's ALLOWED_URI_CHARS. Decoding
+    # it with `decode utf-8` first would have normalized them away, so `info`
+    # printed a URL that was not what the file held — and that string is what
+    # `upgrade` contacts.
+    let uri = 0x[68747470733a2f2f61 2e 63616c656e6461722e6f70656e74696d657374616d70732e6f7267 3f 78]
+    let uri_len = $uri | bytes length
+    $OTS_HEADER
+    | bytes add --end 0x[01 08]
+    | bytes add --end $ZERO_HASH
+    | bytes add --end 0x[08]
+    | bytes add --end 0x[00]
+    | bytes add --end 0x[83dfe30d2ef90c8e]
+    | bytes add --end ($uri_len + 1 | into binary | bytes at 0..0)
+    | bytes add --end ($uri_len | into binary | bytes at 0..0)
+    | bytes add --end $uri
+    | save --raw --force $path
+
+    let outcome = try { ots info $path; "accepted" } catch {|e| $e.msg }
+    assert ($outcome | str contains "characters the format does not allow") $"expected a refusal, got: ($outcome)"
+}
+
 # --- stamp: what gets written, and what does not ---
 
 @test
