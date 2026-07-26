@@ -8,9 +8,15 @@ export const ZERO_HASH = 0x[0000000000000000000000000000000000000000000000000000
 export const ATT_PENDING_TAG = 0x[83dfe30d2ef90c8e]
 export const ATT_BITCOIN_TAG = 0x[0588960d73d71901]
 
-# Pending attestation over --hash, pointing at the public calendar URL.
-export def build-pending-ots [--hash: binary = $ZERO_HASH --with-ops] {
-    let url_bytes = "https://a.pool.opentimestamps.org" | into binary
+# Pending attestation over --hash, pointing at --url.
+# --url exists so a test can build the hostile case: the URL is bytes read out
+# of the proof, so it is attacker input, and `upgrade` fetches it.
+export def build-pending-ots [
+    --hash: binary = $ZERO_HASH
+    --url: string = "https://a.pool.opentimestamps.org"
+    --with-ops
+] {
+    let url_bytes = $url | into binary
     mut ots = ($OTS_HEADER | bytes add --end 0x[01 08] | bytes add --end $hash)
     if $with_ops {
         $ots = (

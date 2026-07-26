@@ -338,6 +338,26 @@ def "a pending URI holding characters the format forbids is refused" [] {
     assert ($outcome | str contains "characters the format does not allow") $"expected a refusal, got: ($outcome)"
 }
 
+# --- upgrade: the URL in the file is attacker input ---
+
+@test
+def "upgrade refuses a calendar URL the proof chose" [] {
+    let tmp_dir = $in.tmp_dir
+    let path = $"($tmp_dir)/evil.ots"
+    # The reproduction from the audit: this made the repo GET
+    # /SECRET-EXFIL-PATH/timestamp/<digest> on a host of the proof's choosing,
+    # while telling the user only "not yet confirmed by Bitcoin". The host
+    # learns the digest of private content, out of band and unlogged.
+    build-pending-ots --url "http://127.0.0.1:18777/SECRET-EXFIL-PATH" | save --raw --force $path
+
+    let outcome = try { ots upgrade $path; "fetched" } catch {|e| $e.msg }
+    assert ($outcome | str contains "refusing to contact") $"expected a refusal, got: ($outcome)"
+}
+
+# The other half — that the allowlist still admits the calendar the live pool
+# actually names — cannot be asserted offline without making the fetch it
+# guards. It is pinned in tests-network/test_ots_network.nu instead.
+
 # --- stamp: what gets written, and what does not ---
 
 @test

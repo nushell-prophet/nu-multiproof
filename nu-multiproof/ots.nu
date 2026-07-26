@@ -21,6 +21,19 @@ const TAG_FORK = 0xff
 const ATT_PENDING = 0x[83dfe30d2ef90c8e]
 const ATT_BITCOIN = 0x[0588960d73d71901]
 const DEFAULT_CALENDAR = "https://a.pool.opentimestamps.org"
+# Parent domains of the calendars `upgrade` may contact. The URL it fetches is
+# read out of the .ots file, which is attacker-controlled input: a proof
+# carrying `http://127.0.0.1:18777/EXFIL` made this repo GET that path and tell
+# the user only "not yet confirmed by Bitcoin", handing the host the digest of
+# private content out of band. The reference client gates the same URL through
+# UrlWhitelist (otsclient/cmds.py:284); this list is its DEFAULT_CALENDAR_WHITELIST
+# (python-opentimestamps calendar.py:150-154) with the `*.` written as a
+# suffix rather than a glob. `--calendar` is the override for anything else.
+const CALENDAR_ALLOWLIST = [
+    "calendar.opentimestamps.org"
+    "calendar.eternitywall.com"
+    "calendar.catallaxy.com"
+]
 # Every outbound call is bounded. Without it a black-holed connection hangs
 # `stamp`, `upgrade` and `verify` with no output and no way back but Ctrl-C —
 # and `seal` runs `upgrade` over every archived stamp in a loop. 30s is well
@@ -414,13 +427,44 @@ export def stamp [file: path --out-dir: path --response-file: path] {
     {dir: $bundle_dir copy: $copy_path ots: $ots_path sigs: $bundled_sigs}
 }
 
+# Refuse to contact a calendar URL the proof named unless it is one of ours.
+#
+# Matches the reference's UrlWhitelist rules (calendar.py:131-145): scheme and
+# path must equal the pattern's, the host is matched against `*.<domain>`, and
+# a URL carrying params, a query or a fragment never matches. The extra port /
+# userinfo rejections are the same rule stated directly — the reference globs
+# the whole netloc, so `evil.com:8080` and `x@evil.com` fail there too.
+#
+# Not a glob here: `str ends-with` on a value that came from a file. This repo
+# has already been bitten by feeding data-derived text to glob.
+def check-calendar-url [url: string] {
+    let u = try { $url | url parse } catch {
+        error make {msg: $"refusing to contact the calendar named in the proof: ($url) is not a URL"}
+    }
+    let allowed = (
+        $u.scheme == "https"
+        and ($CALENDAR_ALLOWLIST | any {|d| $u.host | str ends-with $".($d)" })
+        and $u.port == "" and $u.username == "" and $u.password == ""
+        and $u.path in ["" "/"] and $u.query == "" and $u.fragment == ""
+    )
+    if not $allowed {
+        error make {
+            msg: $"refusing to contact the calendar named in the proof: ($url)"
+            help: $"the URL comes from the .ots file itself. Allowed: https://*.($CALENDAR_ALLOWLIST | str join ', https://*.'). Pass --calendar <url> to contact another one deliberately."
+        }
+    }
+}
+
 # Upgrade a pending OTS attestation to a Bitcoin block header attestation.
 # Returns {status: "upgraded" | "already-verified", path}.
 # --response-file: read the calendar response from a local file instead of
 # fetching it. Why: enables offline tests of the splice/validate/write logic
 # without a real calendar; also lets callers pre-fetch responses.
+# --calendar: contact this calendar instead of the one named in the proof.
+# Why an override and not a wider allowlist: the URL in the file is attacker
+# input, the URL on the command line is the operator's decision.
 @example "upgrade a pending proof once Bitcoin confirms it" { ots upgrade proof.ots }
-export def upgrade [ots_file: path --response-file: path] {
+export def upgrade [ots_file: path --response-file: path --calendar: string] {
     let buf = open --raw $ots_file | into binary
     let parsed = $buf | parse-ots
 
@@ -437,7 +481,11 @@ export def upgrade [ots_file: path --response-file: path] {
         # but this is the one hash this project sends off the machine — it
         # should not ride on another server's undocumented tolerance.
         let hash_hex = $current_hash | encode hex | str lowercase
-        let url = $"($parsed.attestation.url)/timestamp/($hash_hex)"
+        let base_url = if $calendar != null { $calendar } else {
+            check-calendar-url $parsed.attestation.url
+            $parsed.attestation.url
+        }
+        let url = $"($base_url)/timestamp/($hash_hex)"
         let response = (
             http get --full --allow-errors --max-time $NETWORK_TIMEOUT
             --headers {Accept: "application/vnd.opentimestamps.v1"}
