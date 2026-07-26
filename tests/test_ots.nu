@@ -219,19 +219,11 @@ def "check-block-header does not bound the work behind a header" [] {
     assert equal $r.merkle_root ($root | encode hex | str downcase)
 }
 
-# --- Network-dependent tests ---
-
-@test
-def "verify confirms a real Bitcoin-anchored bundle" [] {
-    if ($env.OTS_NETWORK_TEST? | default "false") != "true" { return }
-
-    let bundle = "tests/../multiproofs/origin-proofs/tree-hashes.CCA016A8"
-    let result = ots verify $"($bundle)/tree-hashes.ots" --file $"($bundle)/tree-hashes.csv"
-    assert $result.valid
-    assert equal $result.height 939896
-    assert $result.content_verified
-    assert (($result.sources_confirmed | length) >= 1)
-}
+# --- Bitcoin-anchored bundle, without the network ---
+#
+# The two tests that needed a live network moved to tests-network/, which
+# nutest does not discover. They were gated on OTS_NETWORK_TEST and so reported
+# PASS with nothing executed on every run.
 
 @test
 def "verify reports content mismatch without touching the network" [] {
@@ -254,20 +246,6 @@ def "verify rejects a pending proof" [] {
     let result = try { ots verify /tmp/test_ots_verify_pending.ots; null } catch { $in.msg }
     assert ($result != null)
     assert ($result | str contains "pending")
-}
-
-@test
-def "stamp and info round-trip" [] {
-    if ($env.OTS_NETWORK_TEST? | default "false") != "true" { return }
-
-    let test_file = "/tmp/test_ots_stamp_input.txt"
-    "hello opentimestamps" | save --raw --force $test_file
-    ots stamp $test_file
-
-    let result = ots info $"($test_file).ots"
-    let expected_hash = open --raw $test_file | hash sha256
-    assert equal ($result.hash | str downcase) $expected_hash
-    assert equal $result.attestation.type "pending"
 }
 
 # --- stamp: what gets written, and what does not ---
