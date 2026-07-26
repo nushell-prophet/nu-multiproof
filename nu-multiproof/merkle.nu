@@ -17,6 +17,44 @@ use _allowed-signers.nu check-signer-known
 use ssh-sign.nu
 use ots.nu
 
+# Where a leaf's filepath actually lands on disk, and whether that object is
+# the kind of thing the catalogue can describe.
+#
+# validate-leaf constrains the path *text* — no leading "/", no ".." — but the
+# text is not the object. `open --raw` follows links, so a bundle shipping
+# `leaked.txt -> /home/victim/secret` alongside a row whose content_sha256 is
+# the hash of the guessed content got `content_verified: true, valid: true`:
+# the bundle "proved" it contains a file it does not contain, and doubled as a
+# confirmation oracle for the verifier's own files. README's tree spec says
+# "Symlinks: refused, never followed", but that refusal lived only in
+# tree-hashes, the builder — a verifier must not assume the builder ran.
+#
+# Two distinct invariants, so two checks:
+#   symlink — a manifest row describes one object, and a link is two (the link
+#             and its target). tree-hashes refuses to catalogue one, so finding
+#             one here means disk diverges from the catalogue. Checked before
+#             existence: `path exists` is false for a broken link, which would
+#             otherwise report the vaguer "missing".
+#   outside — an intermediate component can be a link even when the final one
+#             is a regular file (`a/b.txt` with `a -> /etc`). `path expand`
+#             resolves the whole chain, so containment is checked on the
+#             resolved path, not on the text validate-leaf already saw.
+def resolve-leaf-file [target: path, filepath: string]: nothing -> record {
+    let joined = $target | path join $filepath
+    if ($joined | path type) == "symlink" {
+        return {status: "symlink" path: $joined}
+    }
+    let real = $joined | path expand
+    let root = $target | path expand
+    if $real != $root and not ($real | str starts-with ($root + "/")) {
+        return {status: "outside" path: $joined}
+    }
+    if not ($joined | path exists) {
+        return {status: "missing" path: $joined}
+    }
+    {status: "ok" path: $joined}
+}
+
 # Build the tree from the manifest and write the root statement file
 # (multiproofs/tree-root.txt) — the artifact seal signs and stamps.
 @example "derive and record the merkle root" { merkle write-root }
@@ -92,10 +130,12 @@ export def prove [
 #                      `root` means catalogue and signed statement are from
 #                      different seals — blocks valid
 #   content_verified — on-disk file matches leaf.content_sha256; null when the
-#                      leaf attests no sha256 (directory rows and oversized
-#                      files attest only content_git); "missing" when the leaf
-#                      attests one but the file is absent on disk — blocks
-#                      valid, same as a mismatch
+#                      leaf attests no sha256 (directory rows attest only
+#                      content_cid). Anything else is a divergence from the
+#                      catalogue and blocks valid, same as a mismatch:
+#                      "missing" (absent on disk), "symlink" (a link where the
+#                      catalogue describes a regular file), "outside"
+#                      (resolves out of the repo through a symlinked parent)
 #   signatures       — ssh-sign results over the root statement file
 #   ots              — {status: absent|pending|anchored, ots} — a status, NOT
 #                      pass/fail: a fresh seal stays pending for hours/days
@@ -198,14 +238,15 @@ export def verify [
     # Content binding: without this the proof only shows the ROW was
     # catalogued, not that the on-disk FILE matches it.
     let target_file = $target | path join $proof.leaf.filepath
+    let resolved = resolve-leaf-file $target $proof.leaf.filepath
     let content_verified = if $proof.leaf.content_sha256 == "" {
         null
-    } else if not ($target_file | path exists) {
-        # Why "missing", not null: null means "nothing to check" (directory
-        # rows). A deleted/renamed file is a real divergence from the sealed
-        # catalogue — folded into null it yielded `valid: true` for a proof
-        # whose file is gone, misleading consumers keying only on .valid.
-        "missing"
+    } else if $resolved.status != "ok" {
+        # Why a status and not null: null means "nothing to check" (directory
+        # rows). Every status here is a real divergence from the sealed
+        # catalogue — folded into null they yielded `valid: true`, misleading
+        # consumers keying only on .valid.
+        $resolved.status
     } else {
         (open --raw $target_file | hash sha256) == $proof.leaf.content_sha256
     }
@@ -249,6 +290,10 @@ export def verify [
         $"on-disk ($proof.leaf.filepath) does not match the proven content_sha256"
     } else if $content_verified == "missing" {
         $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"
+    } else if $content_verified == "symlink" {
+        $"($proof.leaf.filepath) is a symlink on disk, and the catalogue describes regular files only — following it would verify content this bundle does not carry"
+    } else if $content_verified == "outside" {
+        $"($proof.leaf.filepath) resolves outside ($target) through a symlinked parent — a proof cannot verify against content the bundle does not contain"
     } else if not $signed_ok {
         $sig_check.error | default (
             if $signer != null {
@@ -261,7 +306,7 @@ export def verify [
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', null => 'not checked' })"
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', null => 'not checked' })"
     print $"ots:       ($ots_status.status)"
 
     if $fail and not $valid {

@@ -513,6 +513,57 @@ def "verify refuses a forged proof whose leaf points outside the bundle" [] {
     assert ($err | str contains "must stay inside the repo")
 }
 
+# validate-leaf constrains the path text, so `../outside.txt` is caught above.
+# A symlink is the same attack with the traversal moved out of the text and
+# onto the filesystem, where the path guard cannot see it: `open --raw` follows
+# it. The bundle then "proves" it carries a file it does not carry, and any
+# verifier can be asked whether their own file has a guessed hash.
+@test
+def "a leaf that is a symlink, or reaches out through one, is not content-verified" [] {
+    let tmp_dir = $in.tmp_dir
+    let key = $"($tmp_dir)/attacker"
+    ^ssh-keygen -t ed25519 -f $key -N "" -q
+    "secret\n" | save --force $"($tmp_dir)/outside.txt"
+
+    # 1. the leaf itself is a link to the verifier's file
+    let link_dir = $"($tmp_dir)/link"
+    mkdir $link_dir
+    ^ln -s $"($tmp_dir)/outside.txt" $"($link_dir)/leaked.txt"
+    let link_proof = forge-bundle $link_dir {
+        filepath: "leaked.txt" content_sha256: ("secret\n" | hash sha256)
+        content_git: "" content_cid: ""
+    } $key
+    let linked = merkle verify $link_proof --repo $link_dir
+    assert equal $linked.content_verified "symlink"
+    assert not $linked.valid "a symlink was followed and reported as verified content"
+    assert ($linked.error | str contains "symlink")
+
+    # 2. a broken link — checked before existence, so it does not degrade into
+    #    the vaguer "missing"
+    let broken_dir = $"($tmp_dir)/broken"
+    mkdir $broken_dir
+    ^ln -s $"($tmp_dir)/no-such-file" $"($broken_dir)/leaked.txt"
+    let broken_proof = forge-bundle $broken_dir {
+        filepath: "leaked.txt" content_sha256: ("secret\n" | hash sha256)
+        content_git: "" content_cid: ""
+    } $key
+    assert equal (merkle verify $broken_proof --repo $broken_dir).content_verified "symlink"
+
+    # 3. the leaf is a regular file, but a parent component is a link out. The
+    #    path text has no ".." and the final component is not a link, so only
+    #    resolving the whole chain catches it.
+    let parent_dir = $"($tmp_dir)/parent"
+    mkdir $parent_dir
+    ^ln -s $tmp_dir $"($parent_dir)/up"
+    let parent_proof = forge-bundle $parent_dir {
+        filepath: "up/outside.txt" content_sha256: ("secret\n" | hash sha256)
+        content_git: "" content_cid: ""
+    } $key
+    let escaped = merkle verify $parent_proof --repo $parent_dir
+    assert equal $escaped.content_verified "outside"
+    assert not $escaped.valid "a leaf resolving out of the repo was content-verified"
+}
+
 # The manifest and the statement signed over it were never compared: verify read
 # the root out of tree-root.txt and trusted it. Every artifact here is written by
 # hand — CSV, statement, signature, proof JSON — because a seal round-trip can
