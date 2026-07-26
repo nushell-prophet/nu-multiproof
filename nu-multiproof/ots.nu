@@ -561,6 +561,30 @@ def esplora-get [url: string]: nothing -> any {
     $r.body | into string | str trim
 }
 
+# Fetch a block header from one explorer and hand back its 80 bytes.
+#
+# Why this is separate from check-block-header: everything here is about the
+# transport — did an explorer answer, is the answer hex, is it header-sized.
+# Those are operational failures and must throw. Folded into the `try` around
+# check-block-header they became `valid: false`, which handed any explorer a
+# one-request veto over any valid proof: a 200 carrying an HTML error page read
+# as "this proof does not match Bitcoin", and `--fail` exited non-zero on it.
+# check-block-header keeps its own 80-byte guard as a precondition for its
+# other callers; from this path it can no longer fire.
+def fetch-header [src: string, block_hash: string]: nothing -> binary {
+    let header_hex = esplora-get $"($src)/block/($block_hash)/header"
+    if $header_hex == null {
+        error make {msg: $"could not fetch the header for block ($block_hash) from ($src)"}
+    }
+    let bytes = try { $header_hex | decode hex } catch {
+        error make {msg: $"explorer ($src) answered with a block header that is not hex — cannot verify"}
+    }
+    if ($bytes | bytes length) != 80 {
+        error make {msg: $"explorer ($src) answered with ($bytes | bytes length) bytes where a block header is 80 — cannot verify"}
+    }
+    $bytes
+}
+
 # Independently verify a Bitcoin-anchored OTS proof against real block headers.
 # Why: `info`/`upgrade` only echo the block height the calendar reported —
 # nothing checks it against Bitcoin. This does. It looks the height up on
@@ -635,14 +659,13 @@ export def verify [
     let block_hash = $distinct | first
 
     let src = $ok_lookups | first | get source
-    let header_hex = esplora-get $"($src)/block/($block_hash)/header"
-    if $header_hex == null {
-        error make {msg: $"could not fetch the header for block ($block_hash)"}
-    }
+    let header_bytes = fetch-header $src $block_hash
 
     # Self-verify the header. A failure here means the proof does not match the
-    # real block -> invalid proof, not an operational error.
-    let checked = try { check-block-header ($header_hex | decode hex) $expected_root $block_hash } catch {|e| {error: $e.msg} }
+    # real block -> invalid proof, not an operational error. Everything about
+    # whether the explorer's answer is header-shaped at all was settled in
+    # fetch-header, above — inside this try it would read as "invalid proof".
+    let checked = try { check-block-header $header_bytes $expected_root $block_hash } catch {|e| {error: $e.msg} }
     let confirmed = $ok_lookups | get source
     if ($checked.error? != null) {
         return (emit-verify ($base | merge {block_hash: $block_hash sources_confirmed: $confirmed error: $checked.error}) $fail)
