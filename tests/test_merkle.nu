@@ -434,6 +434,69 @@ def "a directory row in a non-git bundle reports unverifiable, not valid" [] {
     assert $result.structure_valid "structure is genuine — this is alice's real proof"
     assert not $result.valid "a directory row was called valid with nothing to check it against"
     assert equal $result.content_verified "unverifiable"
+
+    # The ordinary consumer case, and the one that must not read as tampering:
+    # the same bundle unpacked INSIDE some git repo of the consumer's own.
+    # `rev-parse --is-inside-work-tree` answers yes there, so `git ls-files`
+    # ran over the bundle path and listed whatever was tracked there — usually
+    # nothing — and sealed, untouched evidence was reported as
+    # `content_verified: false`, "the directory's tracked contents differ from
+    # the sealed catalogue". Claiming tampering about evidence nobody touched
+    # is as bad as missing tampering.
+    let outer = $"($tmp_dir)/consumer"
+    mkdir $outer
+    ^git -C $outer init -q
+    cp --recursive $bundle $"($outer)/bundle"
+    let nested = merkle verify $dir_proof --repo $"($outer)/bundle"
+    assert equal $nested.content_verified "unverifiable" "a bundle inside a git repo was judged against that repo's index"
+    assert ($nested.error | str contains "not a git repository")
+}
+
+# The containment check runs on the resolved path, so it has to reject a
+# sibling as well as a parent. `--repo /a/repo` with a link resolving to
+# /a/repo-evil/x is the case a `str starts-with $root` (no separator) lets
+# through, and the test above cannot see it — escaping to a parent fails
+# either way.
+@test
+def "a leaf resolving into a sibling directory is outside, not inside" [] {
+    let tmp_dir = $in.tmp_dir
+    let key = $"($tmp_dir)/attacker"
+    ^ssh-keygen -t ed25519 -f $key -N "" -q
+
+    let repo = $"($tmp_dir)/repo"
+    let sibling = $"($tmp_dir)/repo-evil"
+    mkdir $repo $sibling
+    "secret\n" | save --force $"($sibling)/x.txt"
+    ^ln -s $sibling $"($repo)/out"
+
+    let proof = forge-bundle $repo {
+        filepath: "out/x.txt" content_sha256: ("secret\n" | hash sha256)
+        content_git: "" content_cid: ""
+    } $key
+    let result = merkle verify $proof --repo $repo
+    assert equal $result.content_verified "outside"
+    assert not $result.valid
+}
+
+# A file row whose path is a directory on disk reached `open --raw <dir>` and
+# died with a bare "I/O error" naming neither the path nor the leaf — a hostile
+# artifact crashing the verifier instead of getting a verdict.
+@test
+def "a file row landing on a directory gets a verdict, not an I/O error" [] {
+    let tmp_dir = $in.tmp_dir
+    let key = $"($tmp_dir)/attacker"
+    ^ssh-keygen -t ed25519 -f $key -N "" -q
+    let dir = $"($tmp_dir)/dirrow"
+    mkdir $"($dir)/notafile"
+
+    let proof = forge-bundle $dir {
+        filepath: "notafile" content_sha256: ("anything" | hash sha256)
+        content_git: "" content_cid: ""
+    } $key
+    let result = merkle verify $proof --repo $dir
+    assert equal $result.content_verified "directory"
+    assert not $result.valid
+    assert ($result.error | str contains "it is a directory")
 }
 
 # Every discovery step here (pubkeys for the allowed_signers body, the signer

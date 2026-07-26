@@ -32,29 +32,34 @@ use ots.nu
 # tree-hashes, the builder — a verifier must not assume the builder ran.
 #
 # Two distinct invariants, so two checks:
-#   symlink — a manifest row describes one object, and a link is two (the link
-#             and its target). tree-hashes refuses to catalogue one, so finding
-#             one here means disk diverges from the catalogue. Checked before
-#             existence: `path exists` is false for a broken link, which would
-#             otherwise report the vaguer "missing".
-#   outside — an intermediate component can be a link even when the final one
-#             is a regular file (`a/b.txt` with `a -> /etc`). `path expand`
-#             resolves the whole chain, so containment is checked on the
-#             resolved path, not on the text validate-leaf already saw.
-def resolve-leaf-file [target: path, filepath: string]: nothing -> record {
+#   symlink   — a manifest row describes one object, and a link is two (the
+#               link and its target). tree-hashes refuses to catalogue one, so
+#               finding one here means disk diverges from the catalogue.
+#               Checked first: a broken link exists as a link but not as a
+#               file, and would otherwise report the vaguer "missing".
+#   outside   — an intermediate component can be a link even when the final one
+#               is a regular file (`a/b.txt` with `a -> /etc`). `path expand`
+#               resolves the whole chain, so containment is checked on the
+#               resolved path, not on the text validate-leaf already saw.
+#               Not a `str starts-with ($root + "/")`: that is separator
+#               arithmetic, and with `--repo /` it builds the prefix "//" and
+#               calls every row "outside". `path relative-to` states the
+#               question directly and throws when there is no such prefix.
+#   directory — a row attesting a content_sha256 whose path is a directory on
+#               disk. Only a hand-built manifest produces it, and it used to
+#               reach `open --raw <dir>` and die with a bare "I/O error"
+#               naming neither the path nor the leaf: a hostile artifact
+#               crashing the verifier rather than getting a verdict.
+def resolve-leaf-file [target: path, filepath: string]: nothing -> string {
     let joined = $target | path join $filepath
-    if ($joined | path type) == "symlink" {
-        return {status: "symlink" path: $joined}
+    if ($joined | path type) == "symlink" { return "symlink" }
+    let contained = try { $joined | path expand | path relative-to ($target | path expand); true } catch { false }
+    if not $contained { return "outside" }
+    match ($joined | path type) {
+        "file" => "ok"
+        "dir" => "directory"
+        _ => "missing"
     }
-    let real = $joined | path expand
-    let root = $target | path expand
-    if $real != $root and not ($real | str starts-with ($root + "/")) {
-        return {status: "outside" path: $joined}
-    }
-    if not ($joined | path exists) {
-        return {status: "missing" path: $joined}
-    }
-    {status: "ok" path: $joined}
 }
 
 # Content check for a row that attests no sha256 — a directory, or "." itself.
@@ -93,8 +98,19 @@ def resolve-leaf-file [target: path, filepath: string]: nothing -> record {
 # a plain directory, or a hand-built manifest, as easily as a repo.
 def derive-dir-cid [target: path, leaf: record]: nothing -> any {
     if $leaf.content_cid == "" { return "unverifiable" }
-    let git_check = do { ^git -C $target rev-parse --is-inside-work-tree } | complete
-    if $git_check.exit_code != 0 { return "unverifiable" }
+    # Why --show-toplevel compared against the target, and not
+    # --is-inside-work-tree: that answers yes for any directory *under* a work
+    # tree. A consumer who unpacks a genuine bundle inside any git repo — the
+    # ordinary case — then had `git ls-files` run over the bundle path, which
+    # lists whatever happens to be tracked there (usually nothing), and the
+    # sealed, unmodified evidence was reported as tampered: `valid: false`,
+    # "the directory's tracked contents differ from the sealed catalogue".
+    # Claiming tampering about untouched evidence is the same defect class as
+    # an explorer outage reading as an invalid proof. The manifest's paths are
+    # relative to the repo root, so anything but the root is "unverifiable".
+    let toplevel = do { ^git -C $target rev-parse --show-toplevel } | complete
+    if $toplevel.exit_code != 0 { return "unverifiable" }
+    if ($toplevel.stdout | str trim | path expand) != ($target | path expand) { return "unverifiable" }
     # A directory CID is a function of the whole subtree, so this reads every
     # tracked file. Only rows that attest no sha256 reach it — file rows keep
     # the single-file hash.
@@ -181,14 +197,15 @@ export def prove [
 #   content_verified — the on-disk content matches what the leaf attests: a
 #                      file row against content_sha256, a directory row (and
 #                      ".") against content_cid re-derived from the tracked
-#                      files under it. null only when the leaf attests nothing
-#                      checkable. Anything else is a divergence from the
-#                      catalogue and blocks valid, same as a mismatch:
-#                      "missing" (absent on disk), "symlink" (a link where the
-#                      catalogue describes a regular file), "outside"
-#                      (resolves out of the repo through a symlinked parent),
-#                      "unverifiable" (a directory row with no git repo to
-#                      re-derive its CID from)
+#                      files under it. Anything but true is a divergence from
+#                      the catalogue, or a check that could not be made, and
+#                      blocks valid either way: "missing" (absent on disk),
+#                      "symlink" (a link where the catalogue describes a
+#                      regular file), "outside" (resolves out of the repo
+#                      through a symlinked parent), "directory" (a file row
+#                      landing on a directory), "unverifiable" (nothing to
+#                      re-derive the commitment from — the target is not a git
+#                      repo root, or the row commits to no content at all)
 #   signatures       — ssh-sign results over the root statement file
 #   ots              — {status: absent|pending|anchored, ots} — a status, NOT
 #                      pass/fail: a fresh seal stays pending for hours/days
@@ -291,17 +308,19 @@ export def verify [
     # Content binding: without this the proof only shows the ROW was
     # catalogued, not that the on-disk FILE matches it.
     let target_file = $target | path join $proof.leaf.filepath
-    let resolved = resolve-leaf-file $target $proof.leaf.filepath
     let content_verified = if $proof.leaf.content_sha256 == "" {
         derive-dir-cid $target $proof.leaf
-    } else if $resolved.status != "ok" {
-        # Why a status and not null: null means "nothing to check" (directory
-        # rows). Every status here is a real divergence from the sealed
+    } else {
+        # Why a status and not null: null means "nothing to check". Every
+        # status resolve-leaf-file returns is a real divergence from the sealed
         # catalogue — folded into null they yielded `valid: true`, misleading
         # consumers keying only on .valid.
-        $resolved.status
-    } else {
-        (open --raw $target_file | hash sha256) == $proof.leaf.content_sha256
+        let resolved = resolve-leaf-file $target $proof.leaf.filepath
+        if $resolved != "ok" {
+            $resolved
+        } else {
+            (open --raw $target_file | hash sha256) == $proof.leaf.content_sha256
+        }
     }
 
     # OTS status for the root statement, discovered by content commitment
@@ -353,6 +372,8 @@ export def verify [
         $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"
     } else if $content_verified == "symlink" {
         $"($proof.leaf.filepath) is a symlink on disk, and the catalogue describes regular files only — following it would verify content this bundle does not carry"
+    } else if $content_verified == "directory" {
+        $"($proof.leaf.filepath) attests a content_sha256, but on disk it is a directory — no manifest this repo writes has that shape"
     } else if $content_verified == "outside" {
         $"($proof.leaf.filepath) resolves outside ($target) through a symlinked parent — a proof cannot verify against content the bundle does not contain"
     } else if not $signed_ok {
@@ -367,7 +388,7 @@ export def verify [
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'unverifiable' => 'UNVERIFIABLE (directory CID needs the tracked tree)', null => 'not checked' })"
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (directory CID needs the tracked tree)', null => 'not checked' })"
     print $"ots:       ($ots_status.status)"
 
     if $fail and not $valid {
