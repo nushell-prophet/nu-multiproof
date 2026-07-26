@@ -303,8 +303,8 @@ def "a pending attestation payload with trailing bytes is refused" [] {
     | bytes add --end 0x[08]
     | bytes add --end 0x[00]
     | bytes add --end 0x[83dfe30d2ef90c8e]
-    | bytes add --end ($uri_len + 3 | into binary | bytes at 0..0)
-    | bytes add --end ($uri_len | into binary | bytes at 0..0)
+    | bytes add --end ($uri_len + 3 | into binary --endian little | bytes at 0..0)
+    | bytes add --end ($uri_len | into binary --endian little | bytes at 0..0)
     | bytes add --end $uri
     | bytes add --end 0x[ffff]
     | save --raw --force $path
@@ -329,8 +329,8 @@ def "a pending URI holding characters the format forbids is refused" [] {
     | bytes add --end 0x[08]
     | bytes add --end 0x[00]
     | bytes add --end 0x[83dfe30d2ef90c8e]
-    | bytes add --end ($uri_len + 1 | into binary | bytes at 0..0)
-    | bytes add --end ($uri_len | into binary | bytes at 0..0)
+    | bytes add --end ($uri_len + 1 | into binary --endian little | bytes at 0..0)
+    | bytes add --end ($uri_len | into binary --endian little | bytes at 0..0)
     | bytes add --end $uri
     | save --raw --force $path
 
@@ -352,6 +352,90 @@ def "upgrade refuses a calendar URL the proof chose" [] {
 
     let outcome = try { ots upgrade $path; "fetched" } catch {|e| $e.msg }
     assert ($outcome | str contains "refusing to contact") $"expected a refusal, got: ($outcome)"
+}
+
+# One hostile URL only exercises one clause of the gate. `127.0.0.1` fails on
+# the scheme alone, so with just that vector the host, port, userinfo, path,
+# query and fragment checks could all be deleted and the suite stayed green.
+# Each row below is refused by exactly one clause.
+@test
+def "every clause of the calendar gate refuses on its own" [] {
+    let tmp_dir = $in.tmp_dir
+    let hostile = [
+        [url                                                 clause     refused_by];
+        ["https://evil.com"                                  "host"     "refusing to contact"]
+        ["https://calendar.opentimestamps.org.attacker.net"  "suffix"   "refusing to contact"]
+        ["https://calendar.opentimestamps.org"               "label"    "refusing to contact"]
+        ["http://a.calendar.opentimestamps.org"              "scheme"   "refusing to contact"]
+        ["https://a.calendar.opentimestamps.org:8443"        "port"     "refusing to contact"]
+        ["https://a.calendar.opentimestamps.org/timestamp"   "path"     "refusing to contact"]
+        # Userinfo cannot survive the URI charset, so it is refused a step
+        # earlier and never reaches the trust gate. The gate keeps its own
+        # userinfo clause anyway: it states the whole UrlWhitelist rule, and a
+        # trust boundary that only holds because a *format* validator ran first
+        # is one refactor away from not holding.
+        ["https://u:p@a.calendar.opentimestamps.org"         "userinfo" "characters the format does not allow"]
+    ]
+    for row in $hostile {
+        let path = $"($tmp_dir)/(random uuid).ots"
+        build-pending-ots --url $row.url | save --raw --force $path
+        let outcome = try { ots upgrade $path; "fetched" } catch {|e| $e.msg }
+        assert ($outcome | str contains $row.refused_by) $"($row.clause): ($row.url) was not refused as expected, got: ($outcome)"
+    }
+}
+
+# --calendar is the operator's deliberate override of that gate, and it is the
+# one path that sends a digest off the machine. Unreachable localhost, so the
+# assertion is about which failure comes out: anything but the allowlist.
+# Name does not start with "--": nutest builds a call from the test name, and
+# a leading "--" parses there as a flag, breaking the whole suite file.
+@test
+def "the calendar flag overrides the allowlist" [] {
+    let tmp_dir = $in.tmp_dir
+    let path = $"($tmp_dir)/pending.ots"
+    build-pending-ots --url "https://evil.com" | save --raw --force $path
+
+    let refused = try { ots upgrade $path; "fetched" } catch {|e| $e.msg }
+    assert ($refused | str contains "refusing to contact")
+
+    let overridden = try { ots upgrade $path --calendar "http://127.0.0.1:1" ; "fetched" } catch {|e| $e.msg }
+    assert (not ($overridden | str contains "refusing to contact")) $"--calendar did not bypass the gate: ($overridden)"
+}
+
+# The charset check claims to be the reference client's ALLOWED_URI_CHARS
+# (notary.py). Nothing in this repo carries that file, so pin the set itself:
+# a comment naming an absent source is not a check.
+@test
+def "the accepted URI charset is exactly the reference set" [] {
+    let tmp_dir = $in.tmp_dir
+    let reference = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._/:"
+    # Accepted: every reference character, in one URI.
+    let ok_path = $"($tmp_dir)/charset-ok.ots"
+    build-pending-ots --url $reference | save --raw --force $ok_path
+    assert equal (ots info $ok_path | get attestation.url) $reference
+
+    # Refused: everything else that a URL could plausibly carry.
+    for c in ["%" "@" "#" "?" "\\" " " "~" "+" "=" "&" "[" "]" "," ";"] {
+        let path = $"($tmp_dir)/(random uuid).ots"
+        build-pending-ots --url $"https://a.calendar.opentimestamps.org($c)x" | save --raw --force $path
+        let outcome = try { ots info $path; "accepted" } catch {|e| $e.msg }
+        assert ($outcome | str contains "characters the format does not allow") $"($c) was accepted, got: ($outcome)"
+    }
+}
+
+# --min-sources 0 would mean "assert validity with no explorer agreeing at
+# all", which is not a weaker check but no check. The floor is refused before
+# anything is read, so this is the one part of --min-sources that pins offline;
+# the rest needs live explorers and lives in tests-network/.
+@test
+def "a min-sources floor below one is refused" [] {
+    let tmp_dir = $in.tmp_dir
+    let path = $"($tmp_dir)/btc.ots"
+    build-bitcoin-ots | save --raw --force $path
+    for n in [0 -1] {
+        let outcome = try { ots verify $path --min-sources $n; "verified" } catch {|e| $e.msg }
+        assert ($outcome | str contains "at least 1") $"--min-sources ($n) was accepted, got: ($outcome)"
+    }
 }
 
 # The other half — that the allowlist still admits the calendar the live pool

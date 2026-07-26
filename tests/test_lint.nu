@@ -13,6 +13,11 @@ use ../nu-multiproof/_fs.nu list-files
 # rules narrow enough that a match is always a defect. Anything needing real
 # parsing belongs in a behavioural test instead.
 
+# Sources only, still. Pointing this at tests/ as well finds ~30 hits —
+# test_seal.nu's fail-open glob assertions and test_init.nu's `ls` without
+# --all are real, the "glob" inside a test *name* is not, and this file's own
+# offender samples are literal violations by design. Sorting that out is its
+# own change; the inventory is in todo/STABILIZE.md D2.
 const MODULE_DIR = (path self ..) | path join "nu-multiproof"
 
 # Each rule: `pattern` marks the suspect construct, `unless` (when set) is what
@@ -50,6 +55,14 @@ const RULES = [
         unless: '--max-time'
         offender: 'let r = http get --full $url'
         allowed: 'let r = http get --full --max-time $NETWORK_TIMEOUT $url'
+    }
+    {
+        name: "byte extraction must name its endianness"
+        why: "`into binary` defaults to NATIVE, so `bytes at 0..0` takes the low byte only on a little-endian host. On a big-endian one it takes the high byte of an i64 — every varint byte becomes 0x00, every CID and OTS varuint is silently wrong, and nothing crashes."
+        pattern: 'into binary.*bytes at'
+        unless: '--endian'
+        offender: 'let byte = $n | into binary | bytes at 0..0'
+        allowed: 'let byte = $n | into binary --endian little | bytes at 0..0'
     }
 ]
 

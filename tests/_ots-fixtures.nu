@@ -26,8 +26,8 @@ export def build-pending-ots [
         )
     }
     let url_len = $url_bytes | bytes length
-    let inner_len = ($url_len | into binary | bytes at 0..0)
-    let outer_len = ($url_len + 1 | into binary | bytes at 0..0)
+    let inner_len = ($url_len | into binary --endian little | bytes at 0..0)
+    let outer_len = ($url_len + 1 | into binary --endian little | bytes at 0..0)
     $ots
     | bytes add --end 0x[00]
     | bytes add --end $ATT_PENDING_TAG
@@ -57,7 +57,7 @@ export def build-calendar-response [] {
     let url_len = $url_bytes | bytes length
     0x[00]
     | bytes add --end $ATT_PENDING_TAG
-    | bytes add --end ($url_len + 1 | into binary | bytes at 0..0)
-    | bytes add --end ($url_len | into binary | bytes at 0..0)
+    | bytes add --end ($url_len + 1 | into binary --endian little | bytes at 0..0)
+    | bytes add --end ($url_len | into binary --endian little | bytes at 0..0)
     | bytes add --end $url_bytes
 }

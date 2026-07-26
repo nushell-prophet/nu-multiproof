@@ -84,12 +84,18 @@ def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
 
 # The URI of a pending attestation, as bytes read out of the .ots file.
 #
-# Why check the bytes and not the decoded string: `decode utf-8` is lossy —
-# invalid bytes become U+FFFD — so `ots info` would print a URL that is not
-# what the file holds, and that silently-normalized string is what `upgrade`
-# would then contact. Reject, never normalize. The limit and the character set
-# are the reference client's (notary.py:165-186), so a URI this refuses is one
-# no OTS implementation should have written.
+# Why the length is measured on the bytes and the charset on the decoded
+# string: `decode utf-8` is lossy — invalid bytes become U+FFFD — so `ots info`
+# would otherwise print a URL that is not what the file holds, and that
+# silently normalized string is what `upgrade` would contact. Checking after
+# the decode is safe only because every allowed character is ASCII: U+FFFD is
+# outside the set, and so is every character a multi-byte sequence can decode
+# to, so no byte sequence survives normalization into something accepted.
+# The length must be measured before, though — 1000 bytes is not 1000 chars.
+# Reject, never normalize. The limit and the character set are the reference
+# client's (notary.py:165-186); pinned as a set by tests/test_ots.nu "the
+# accepted URI charset is exactly the reference set", since nothing in this
+# repo carries that file and a comment naming an absent source is not a check.
 def check-uri [raw: binary]: nothing -> string {
     if ($raw | bytes length) > 1000 {
         error make {msg: "malformed OTS file: pending attestation URI exceeds 1000 bytes"}
