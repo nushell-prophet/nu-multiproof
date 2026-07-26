@@ -13,7 +13,7 @@
 # Why the negative gate: `-1 | into binary` is two's complement, so the old
 # form returned 0xFF for it — a byte no LEB128 reader would decode back to -1.
 # The encoding has no representation for a negative number; refuse rather than
-# emit bytes that mean something else. Pinned by tests/test_cid-v0.nu.
+# emit bytes that mean something else. Pinned by tests/test_varint.nu.
 export def encode-varint []: int -> binary {
     mut n = $in
     if $n < 0 {

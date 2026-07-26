@@ -356,6 +356,57 @@ def "a directory row does not verify against a directory that was rewritten" [] 
     assert equal $tampered_root.content_verified false
 }
 
+# The scope line, stated as a test rather than left to be discovered: the
+# manifest catalogues git-tracked files, so an untracked file is outside what
+# any row commits to. Making it a divergence would fail verification on every
+# build artifact. A directory verifying therefore means "the tracked contents
+# are the sealed ones", NOT "nothing else sits here" — and `ipfs add` over a
+# working tree with untracked files gives a different CID than the "." row.
+@test
+def "an untracked file under a proven directory is outside what the row commits to" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle write-root --repo $repo
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let dir_proof = merkle prove sub --repo $repo
+
+    "backdoor\n" | save --force $"($repo)/sub/backdoor.sh"
+    let untracked = merkle verify $dir_proof --repo $repo
+    assert $untracked.valid "an untracked file is not part of the tracked tree the CID commits to"
+    assert equal $untracked.content_verified true
+
+    # The same file, staged, IS part of it.
+    ^git -C $repo add sub/backdoor.sh
+    assert equal (merkle verify $dir_proof --repo $repo).content_verified false
+}
+
+# validate-leaf permits a row whose content_cid is empty, and the README tree
+# spec says so too. Such a row commits to no content: verify has nothing to
+# check, and "nothing to check" must not read as "checked and fine". Today's
+# tree-hashes always writes a CID, so this is reachable only through a manifest
+# built by hand — which is exactly the artifact a verifier does not trust.
+@test
+def "a leaf that commits to no content is not valid" [] {
+    let tmp_dir = $in.tmp_dir
+    let key = $"($tmp_dir)/attacker"
+    ^ssh-keygen -t ed25519 -f $key -N "" -q
+    let dir = $"($tmp_dir)/ghostly"
+    mkdir $dir
+    let proof = forge-bundle $dir {
+        filepath: "ghost" content_sha256: "" content_git: "" content_cid: ""
+    } $key
+
+    let result = merkle verify $proof --repo $dir
+    assert $result.structure_valid "the path still folds — the forgery is in what the row omits"
+    assert not $result.valid "a row committing to nothing was reported valid"
+    assert equal $result.content_verified "unverifiable"
+    assert ($result.error | str contains "commits to no content")
+}
+
 # A directory CID commits to every tracked entry under it, so re-deriving one
 # needs the tracked tree. A plain directory carrying only the proof artifacts
 # has none — and "nothing to check" must not read as "checked and fine", or the

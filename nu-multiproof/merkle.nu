@@ -63,24 +63,36 @@ def resolve-leaf-file [target: path, filepath: string]: nothing -> record {
 # branch returned null and `valid` stayed true. So the strongest configuration
 # this tool offers answered `valid: true` for a bundle carrying alice's genuine
 # root, her genuine signature and her genuine proof of the `src` row, with the
-# attacker's own files written into src/. A directory absent from disk entirely
+# attacker's own tracked files in src/. A directory absent from disk entirely
 # gave the same answer. Four of this repo's own 42 rows are that shape,
 # including "." — the CID of the whole repo.
 #
-# The enumeration must come from disk, not from the manifest: a UnixFS
-# directory commits to its entries, so a file the attacker ADDED is exactly
-# what has to be noticed, and it is by definition not in the catalogue. That
-# means git — content-tree walks `git ls-files`, the same walk tree-hashes
-# used to build the row.
+# The enumeration comes from disk, not from the manifest: a UnixFS directory
+# commits to its entries, so a file added under it has to be noticed, and an
+# added file is by definition not in the catalogue. `content-tree` walks
+# `git ls-files` — the same walk tree-hashes used to build the row, because a
+# directory CID is defined over the tracked tree and nothing else.
 #
-# Hence "unverifiable" when the target is not a git repo. A portable bundle
-# (README "Verifying without the origin repo") carries no working tree, so a
-# directory row has nothing to check against — and a row whose only commitment
-# cannot be checked must not read as verified. Returning null there would
-# restore the exact hole this closes, since an attacker can ship a plain
-# directory as easily as a repo.
+# What that scopes out, deliberately: an UNTRACKED file under the directory
+# does not change the answer. It is not in the tracked tree, so it is not in
+# the CID that was sealed, and it never was — the manifest has no opinion about
+# untracked files anywhere in the repo. Making it a divergence would turn every
+# build artifact into a failed verification. Note the consequence honestly: a
+# directory verifying here means "the tracked contents are the sealed ones",
+# not "nothing else sits in this directory", and `ipfs add` over the working
+# tree would produce a different CID than the "." row whenever untracked files
+# are present. Pinned by "an untracked file under a proven directory is outside
+# what the row commits to".
+#
+# "unverifiable" when there is nothing to re-derive from — no git repo, or a
+# leaf that commits to no content at all. A portable bundle (README "Verifying
+# without the origin repo") carries no working tree, and validate-leaf permits
+# a row whose content_cid is empty, which commits to nothing this can check. A
+# row whose only commitment cannot be checked must not read as verified;
+# returning null restores the exact hole this closes, and an attacker can ship
+# a plain directory, or a hand-built manifest, as easily as a repo.
 def derive-dir-cid [target: path, leaf: record]: nothing -> any {
-    if $leaf.content_cid == "" { return null }
+    if $leaf.content_cid == "" { return "unverifiable" }
     let git_check = do { ^git -C $target rev-parse --is-inside-work-tree } | complete
     if $git_check.exit_code != 0 { return "unverifiable" }
     # A directory CID is a function of the whole subtree, so this reads every
@@ -331,6 +343,8 @@ export def verify [
         $"($proof.leaf.filepath) on disk does not reproduce the proven content_cid — the directory's tracked contents differ from the sealed catalogue"
     } else if $content_verified == false {
         $"on-disk ($proof.leaf.filepath) does not match the proven content_sha256"
+    } else if $content_verified == "unverifiable" and $proof.leaf.content_cid == "" {
+        $"($proof.leaf.filepath) commits to no content at all — the row carries neither a content_sha256 nor a content_cid, so there is nothing about it to check"
     } else if $content_verified == "unverifiable" {
         $"($proof.leaf.filepath) attests only a content_cid, and ($target) is not a git repository — a directory CID commits to every tracked entry under it, so there is nothing here to re-derive it from"
     } else if $content_verified == "missing" and $proof.leaf.content_sha256 == "" {

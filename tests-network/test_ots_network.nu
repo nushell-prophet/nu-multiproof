@@ -62,16 +62,20 @@ def "stamp reaches the public calendar, and upgrade will talk to it" [] {
     with-temp-dir "network-stamp" {|dir|
         let file = $dir | path join "doc.txt"
         "hello opentimestamps" | save --raw --force $file
-        ots stamp $file --out-dir $dir
+        # `stamp` returns the paths it wrote; it does NOT write <file>.ots
+        # beside the input, it writes a bundle directory. Reading the guessed
+        # path instead of the returned one is how the OTS_NETWORK_TEST version
+        # of this test stayed broken — it could not run, so nothing said so.
+        let result = ots stamp $file --out-dir $dir
 
-        let stamped = ots info $"($file).ots"
+        let stamped = ots info $result.ots
         assert equal ($stamped.hash | str downcase) (open --raw $file | hash sha256)
         assert equal $stamped.attestation.type "pending"
 
         # A fresh stamp is not yet in a block, so upgrade is expected to fail —
         # the point is *which* failure. "not yet confirmed" means the gate let
         # the fetch through; "refusing to contact" means the allowlist is stale.
-        let outcome = try { ots upgrade $"($file).ots" | get status } catch {|e| $e.msg }
+        let outcome = try { ots upgrade $result.ots | get status } catch {|e| $e.msg }
         assert (not ($outcome | str contains "refusing to contact")) $"CALENDAR_ALLOWLIST does not admit ($stamped.attestation.url), the calendar the public pool named"
     }
 }
