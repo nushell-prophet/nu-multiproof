@@ -594,25 +594,31 @@ def fetch-header [src: string, block_hash: string]: nothing -> binary {
 # the height->hash mapping; both cryptographic claims are recomputed locally.
 # Nothing here bounds the work behind the header — see _ots-helpers.nu
 # check-block-header and README "Verifying a timestamp". So the cross-check is
-# the whole defence: if only one explorer answers there is none at all —
-# `sources_confirmed` names the single source relied on, and the printed
-# output labels it as such rather than claiming agreement.
+# the whole defence, and --min-sources is what makes it mandatory: below it
+# this refuses to answer rather than resting on a single explorer, which would
+# be choosing the block hash and the reported time at once.
 #
 # Returns a uniform record {valid, height, block_hash, block_time, merkle_root,
 # file_hash, content_verified, sources_confirmed, error}. A well-formed proof
 # that does not match Bitcoin (or a --file that the proof does not commit to)
 # is a `valid: false` result, not an error. Operational failures — a pending
-# proof, no reachable explorer, explorers disagreeing — throw, since validity
-# cannot be asserted. --fail turns a `valid: false` into a non-zero exit (CI).
-#   --file:    also confirm the proof commits to this content (closes the loop)
-#   --sources: Esplora-compatible API bases to cross-check
+# proof, too few reachable explorers, explorers disagreeing — throw, since
+# validity cannot be asserted. --fail turns a `valid: false` into a non-zero
+# exit (CI).
+#   --file:        also confirm the proof commits to this content (closes the loop)
+#   --sources:     Esplora-compatible API bases to cross-check
+#   --min-sources: how many must answer and agree before a result is asserted
 @example "verify an anchor, failing on invalid (for CI)" { ots verify proof.ots --fail }
 export def verify [
     ots_file: path
     --file: path
     --sources: list<string> = $DEFAULT_EXPLORERS
+    --min-sources: int = 2 # Explorers that must agree before a result is asserted
     --fail # Exit non-zero on an invalid proof (for CI)
 ] {
+    if $min_sources < 1 {
+        error make {msg: "--min-sources must be at least 1"}
+    }
     let parsed = open --raw $ots_file | into binary | parse-ots
 
     match $parsed.attestation.type {
@@ -651,6 +657,23 @@ export def verify [
     let ok_lookups = $lookups | where hash != null
     if ($ok_lookups | is-empty) {
         error make {msg: $"no explorer returned block ($height) — cannot verify"}
+    }
+    # Why this throws instead of returning valid: false — and why it exists at
+    # all. Nothing below bounds the work behind the header, so the cross-check
+    # IS the defence. With one responder there is none: whoever answers serves
+    # the height -> hash mapping and a header they made, and the header supplies
+    # block_time, which this command reports as the timestamp. The attacker
+    # would set the date — the one claim the whole system exists to make. One
+    # explorer timing out was enough to arrange that, and the old code answered
+    # valid: true with no field a consumer could key on to notice.
+    # Throwing, not valid: false, because this is the same class as "no
+    # explorer answered": validity could not be asserted, and calling a good
+    # proof invalid is its own false statement.
+    if ($ok_lookups | length) < $min_sources {
+        error make {
+            msg: $"only ($ok_lookups | length) of ($sources | length) explorers answered for block ($height), below --min-sources ($min_sources) — cannot verify"
+            help: "a single responder is not a cross-check: it would choose both the block hash and the time this reports. Retry, add --sources, or pass --min-sources 1 to accept one source deliberately."
+        }
     }
     let distinct = $ok_lookups | get hash | each { str lowercase } | uniq
     if ($distinct | length) > 1 {

@@ -29,7 +29,28 @@ def "verify confirms a real Bitcoin-anchored bundle" [] {
     assert $result.valid
     assert equal $result.height 939896
     assert $result.content_verified
-    assert (($result.sources_confirmed | length) >= 1)
+    # Not `>= 1`: below --min-sources verify throws rather than answering, so
+    # reaching this line at all means the cross-check happened. Asserting the
+    # count keeps that true if the default ever changes.
+    assert (($result.sources_confirmed | length) >= 2)
+}
+
+# The cross-check is the whole defence — nothing bounds the work behind the
+# header — so a result resting on one explorer is a result the single
+# responder chose, block time and all. Only a live explorer can put exactly one
+# responder on the wire, which is why this lives here and not in tests/.
+@test
+def "one explorer is not enough, unless it is asked for" [] {
+    let proof = "multiproofs/origin-proofs/tree-hashes.CCA016A8/tree-hashes.ots"
+
+    let outcome = try { ots verify $proof --sources ["https://mempool.space/api"] | get valid } catch {|e| $e.msg }
+    assert ($outcome | describe | str starts-with "string") $"expected a refusal, got valid: ($outcome)"
+    assert ($outcome | str contains "below --min-sources") $"expected the min-sources refusal, got: ($outcome)"
+
+    # The deliberate override still answers.
+    let forced = ots verify $proof --sources ["https://mempool.space/api"] --min-sources 1
+    assert $forced.valid
+    assert equal ($forced.sources_confirmed | length) 1
 }
 
 # What only a live calendar can tell us: that CALENDAR_ALLOWLIST still admits
