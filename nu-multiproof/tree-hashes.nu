@@ -7,146 +7,31 @@
 # reproduces `ipfs add` byte for byte, so no ipfs daemon or CLI is involved and
 # there is only ever one manifest shape to sign.
 
-use _cid-helpers.nu [file-node dir-node node-cid]
+use _cid-helpers.nu node-cid
+use _tracked.nu content-tree
 use _repo.nu repo-root
-use _layout.nu [MULTIPROOFS_DIR multiproofs-dir manifest-path]
+use _layout.nu [multiproofs-dir manifest-path]
 use _temp-helpers.nu with-temp-file
-
-# Fold file nodes up into directory nodes, keyed by manifest row name — "." is
-# the repo root, whose node is the CID the "." row publishes.
-#
-# A UnixFS directory commits to its entries by name and CID, so every child must
-# exist before its parent: walking the directories deepest-first gives that in
-# one pass.
-def cid-nodes [file_entries: table, dir_entries: table]: nothing -> record {
-    let child_index = (
-        ($file_entries | select rel) ++ ($dir_entries | select rel)
-        | each {|e|
-            let parent = $e.rel | path dirname
-            {parent: (if ($parent | is-empty) { "." } else { $parent }) name: ($e.rel | path basename) rel: $e.rel}
-        }
-        | group-by parent
-    )
-    let deepest_first = (
-        ($dir_entries | get rel) ++ ["."]
-        | each {|rel| {rel: $rel depth: (if $rel == "." { 0 } else { $rel | path split | length })} }
-        | sort-by depth --reverse
-        | get rel
-    )
-    mut nodes = $file_entries | reduce --fold {} {|e acc| $acc | insert $e.rel $e.node }
-    for d in $deepest_first {
-        let built = $nodes # a closure cannot capture a mutable variable
-        # Why sort by name: `ipfs add` walks directory entries in byte-wise name
-        # order, and the link order is part of what the directory CID commits
-        # to. Nushell compares strings byte-wise, so a plain sort-by is it.
-        let links = $child_index
-            | get --optional $d
-            | default []
-            | sort-by name
-            | each {|c| {name: $c.name node: ($built | get $c.rel)} }
-        $nodes = ($nodes | insert $d (dir-node $links --path $d))
-    }
-    $nodes
-}
 
 def build-tree [
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> table {
     let root = repo-root $repo
-    # Why: multiproofs/ is the proof-output dir, derived from the source it
-    # describes. Hashing it would make the manifest mutate every seal (new .ots
-    # nonce, new .sig) and entangle proof-of-content with proof-of-proof. The
-    # folder rule also subsumes the self-reference — the manifest can't hash
-    # itself — so no separate single-file exclude is needed.
-    let exclude_prefix = $MULTIPROOFS_DIR + "/"
 
-    # File set: git-tracked files only. Hidden tracked files (.woodpecker.yaml,
-    # .gitignore) are included; .git/ is excluded by ls-files semantics.
-    # Not glob+filter because: it dropped hidden tracked files and mixed
-    # working-tree with VCS noise.
-    # Why -z: without it core.quotePath C-quotes non-ASCII names
-    # ("\346\226\207.md"), poisoning the filepath as an open path and as
-    # future merkle leaf bytes. Filepath = the raw path bytes as stored in git.
-    # Why -s: it carries the staged mode in the same pass, which the symlink
-    # gate below needs — no extra stat over the tree.
-    let tracked_entries = (
-        ^git -C $root ls-files -s -z
-        | split row (char -i 0)
-        | where { $in != "" }
-        # Why split on the first tab instead of `parse`: ls-files -s separates
-        # "<mode> <object> <stage>" from the path with one tab, and the path
-        # itself may contain tabs (see the control-byte gate below).
-        | each {|row|
-            let parts = $row | split row --number 2 (char tab)
-            {mode: ($parts.0 | split row " " | first) path: $parts.1}
-        }
-        | where { not ($in.path | str starts-with $exclude_prefix) }
-        | sort-by path
-    )
-    let tracked_files = $tracked_entries | get path
+    # The enumeration, the per-file hashes and the folded directory nodes all
+    # come from _tracked.nu, because `merkle verify` re-derives directory CIDs
+    # from disk and must walk the tree exactly as this does. Two enumerations
+    # that differ by a hair disagree for reasons unrelated to tampering.
+    let tree = content-tree $root
+    let tracked_files = $tree.files | get rel
 
-    # Why reject control bytes here, not only in merkle validate-leaf: git
-    # allows tab/ESC/\n in filenames. Such a name would pass manifest
-    # generation but fail later at `merkle write-root` — which seal runs AFTER
-    # regenerating the CSV, leaving a fresh manifest beside the previous
-    # seal's still-valid signed root; rebuild-and-compare consumers read that
-    # as tampering. Fail before writing anything (merkle's check stays as the
-    # verifier-side guard for untrusted manifests). Consequence accepted: the
-    # repo is unsealable until the file is renamed — per the spec's
-    # "reject, never normalize".
-    let control_byte_paths = $tracked_files | where { $in =~ '[\x00-\x1f]' }
-    if ($control_byte_paths | is-not-empty) {
-        error make {msg: $"git-tracked filenames contain control bytes \(< 0x20\), which merkle leaves reject — rename: ($control_byte_paths | to json)"}
-    }
-
-    # Why reject symlinks (mode 120000) rather than follow or hash them: one
-    # manifest row must describe one object. `open --raw` follows the link, so
-    # content_sha256 and content_cid would describe the target while
-    # content_git describes git's blob holding the link string — one row, two
-    # objects, and two honest verifiers (re-hash the worktree vs. rebuild from
-    # git objects) that disagree without either being wrong. A link pointing
-    # outside the repo would also pull foreign content into the sealed
-    # catalogue. Same "reject, never normalize" rule as the control-byte gate.
-    # Naming the offending paths also replaces the opaque death a broken link
-    # caused downstream in `open` ("Eval block failed with pipeline input").
-    let symlink_paths = $tracked_entries | where mode == "120000" | get path
-    if ($symlink_paths | is-not-empty) {
-        error make {msg: $"git-tracked symlinks are not supported — one manifest row cannot describe both the link and its target; remove or replace: ($symlink_paths | to json)"}
-    }
-
-    # Synthesize directory entries from file paths (ls-files returns only files).
-    let dir_entries = (
-        $tracked_files
-        | each {|f|
-            let parts = $f | path split
-            if ($parts | length) <= 1 { [] } else {
-                1..(($parts | length) - 1) | each {|n| $parts | first $n | path join }
-            }
-        }
-        | flatten
-        | uniq
-        | sort
-        | each {|d| {rel: $d is_dir: true content_sha256: ""} }
+    let entries = (
+        ($tree.dirs | each {|d| {rel: $d content_sha256: ""} })
+        ++ ($tree.files | select rel content_sha256)
+        | sort-by rel
     )
 
-    # Read each file once and derive both the sha256 and the CID node from that
-    # single read — not one read per hash.
-    let file_entries = (
-        $tracked_files
-        | each {|f|
-            let content = open --raw ($root | path join $f) | into binary
-            {
-                rel: $f
-                is_dir: false
-                content_sha256: ($content | hash sha256)
-                node: ($content | file-node)
-            }
-        }
-    )
-
-    let entries = ($dir_entries ++ ($file_entries | reject node)) | sort-by rel
-
-    let nodes = cid-nodes $file_entries $dir_entries
+    let nodes = $tree.nodes
 
     # Git hashes: build a temp index from working-tree files, then ls-tree the
     # resulting tree. Gives blob AND tree hashes from the same snapshot, so a
