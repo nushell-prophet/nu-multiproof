@@ -121,6 +121,15 @@ export def verify [
     # original it covers. The grammar lives in _sig.nu — reading it here is what
     # made `doc.txt.sig` resolve to `doc`.
     let target = if ($path | str ends-with ".sig") {
+        # A named sig that is not on disk is the verifier's own typo, not
+        # evidence against the artifact — the same rule check-signer-known
+        # applies to --signer. Left unchecked, the missing file fell through
+        # find-principals and check-novalidate into a {valid: false, error:
+        # invalid_signature} verdict row. Checked before original-for-sig so
+        # the error names the path the caller typed.
+        if not ($path | path exists) {
+            error make {msg: $"signature file not found: ($path)"}
+        }
         {file: (original-for-sig $path) sig: ($path | into string)}
     } else {
         {file: $path sig: null}

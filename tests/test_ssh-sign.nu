@@ -339,6 +339,29 @@ def "verify --fail errors on invalid signature" [] {
     assert equal ($results | first | get valid) false
 }
 
+# A typo'd sig path is the verifier's own mistake, and used to fall through to
+# `{valid: false, error: invalid_signature}` — the verifier's typo reading as
+# evidence against the artifact, the exact shape check-signer-known refuses for
+# --signer. It must throw, naming the path the caller typed.
+@test
+def "verify throws on a named sig path that does not exist" [] {
+    let tmp_dir = $in.tmp_dir
+    let key_path = $"($tmp_dir)/alice_key"
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $pubkeys_dir
+    cp $"($key_path).pub" ($pubkeys_dir | path join "alice.pub")
+    "hello world" | save --force $test_file
+    ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
+
+    let missing = $"($test_file).nope.sig"
+    let outcome = try { ssh-sign verify $missing --pubkeys-dir $pubkeys_dir; "ok" } catch {|e| $e.msg }
+    assert ($outcome | str contains "not found") $"expected an error, got: ($outcome)"
+    assert ($outcome | str contains $missing) $"the error does not name the typo'd path: ($outcome)"
+}
+
 # `verify foo.txt.alice.sig` names one signature, so it must report on alice's
 # sig alone. Discovery from the inferred original would also pull in bob's —
 # answering a question the caller never asked.
