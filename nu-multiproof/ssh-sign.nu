@@ -106,7 +106,10 @@ export def sign [
 # Returns a table of {signer, valid, error?}, where `signer` is the fingerprint
 # of the key that made the signature — read out of the signature itself. Only an
 # `unrecognized_signer` row falls back to the label the sig's file name carries,
-# since there is no registered key to name. --fail exits non-zero if any
+# since there is no registered key to name. A sig that fails even keyless
+# checking yields `{signer: null, error: unreadable_signature, sig: <path>}` —
+# no signing key was established, so nothing read off a file name is reported
+# as a principal. --fail exits non-zero if any
 # signature is invalid (for CI), instead of a silent pass the caller must inspect.
 @example "verify all signatures on the root statement" { ssh-sign verify multiproofs/tree-root.txt }
 export def verify [
@@ -174,13 +177,22 @@ export def verify [
                 let cn = (do {
                     open --raw $path | ^ssh-keygen -Y check-novalidate -n $NAMESPACE -s $sig_path
                 } | complete)
-                let label = (signer-from-sig $path $sig_path | default "unknown")
                 if $cn.exit_code == 0 {
+                    let label = (signer-from-sig $path $sig_path | default "unknown")
                     print $"($label): unrecognized signer \(sig cryptographically valid but key not in pubkeys_dir\)"
                     {signer: $label valid: false error: "unrecognized_signer"}
                 } else {
-                    print $"($label): invalid signature"
-                    {signer: $label valid: false error: "invalid_signature"}
+                    # Even keyless checking failed: junk bytes planted at a sig
+                    # name, or a foreign key's sig over content it never signed.
+                    # Either way no signing key was established, so there is no
+                    # principal to report. This row used to carry the label off
+                    # the sig's file name as `signer`, which made a junk file
+                    # planted at `doc.<alice-fp>.sig` byte-identical to alice's
+                    # registered key really failing over changed content. The
+                    # sig path says which file to inspect; it is a path, not an
+                    # identity.
+                    print $"($sig_path): unreadable signature \(does not check as an SSH signature over ($path)\)"
+                    {signer: null valid: false error: "unreadable_signature" sig: ($sig_path | into string)}
                 }
             }
         }

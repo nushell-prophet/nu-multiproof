@@ -255,6 +255,37 @@ def "verify fails with tampered content" [] {
     assert equal ($results | first | get error) "invalid_signature"
 }
 
+# A junk file planted at `doc.<alice-fp>.sig` — a name anyone can write — used
+# to come back as `{signer: <alice-fp>, valid: false, error: invalid_signature}`,
+# byte-identical to the row alice's registered key produces when the content no
+# longer matches (the test above). The two states must be distinguishable, and a
+# failed verification must never be attributed to a principal read off a file
+# name: no key was established here, so the row names no signer at all — only
+# the sig file to inspect.
+@test
+def "a planted non-signature named for a registered signer is not attributed to them" [] {
+    let tmp_dir = $in.tmp_dir
+    let key_path = $"($tmp_dir)/alice_key"
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $pubkeys_dir
+    cp $"($key_path).pub" ($pubkeys_dir | path join "alice.pub")
+    "hello world" | save --force $test_file
+
+    let planted = $"($test_file).(principal-of $key_path).sig"
+    "this is not a signature" | save --force $planted
+
+    let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
+    assert equal ($results | length) 1
+    let row = $results | first
+    assert equal $row.valid false
+    assert equal $row.error "unreadable_signature" $"a planted junk file read as a real bad signature: ($row)"
+    assert equal $row.signer null $"a filename label was reported as the signer: ($row)"
+    assert equal $row.sig $planted
+}
+
 @test
 def "verify infers the original from a named .sig path" [] {
     let tmp_dir = $in.tmp_dir
