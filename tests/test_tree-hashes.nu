@@ -210,6 +210,27 @@ def "broken symlink is rejected by name, not an opaque open failure" [] {
     assert ($err | str contains "dangling.txt") $"error does not name the broken symlink: ($err)"
 }
 
+# Builder and verifier share one enumeration (content-tree), but not one
+# behavior: the verifier turns a deleted tracked file into a "missing" verdict,
+# while the builder must refuse to seal a tree it cannot read — loudly, naming
+# the path, not with the bare "Eval block failed" `open` used to die with.
+@test
+def "a tracked file deleted from the worktree fails the build by name" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+    "x\n" | save --force $"($repo)/kept.txt"
+    "y\n" | save --force $"($repo)/gone.txt"
+    ^git -C $repo add . o+e>| ignore
+    rm $"($repo)/gone.txt"
+
+    let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
+    assert ($err != null) "a build over a deleted tracked file did not fail"
+    assert ($err | str contains "gone.txt") $"error does not name the missing file: ($err)"
+    assert ($err | str contains "missing")
+}
+
 @test
 def "directory content_git matches working-tree blob hashes of its files" [] {
     let result = tree-hashes --echo

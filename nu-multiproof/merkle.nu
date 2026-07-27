@@ -348,7 +348,11 @@ export def verify [
     } else if $content_verified == "unverifiable" {
         $"($proof.leaf.filepath) attests only a content_cid, and ($target) is not a git repository — a directory CID commits to every tracked entry under it, so there is nothing here to re-derive it from"
     } else if $content_verified == "missing" and $proof.leaf.content_sha256 == "" {
-        $"($proof.leaf.filepath) is proven as a directory but no tracked files sit under it"
+        # Two disk states share this verdict: a tracked file deleted from the
+        # worktree (the ordinary mid-edit state, which used to crash the
+        # re-derivation with a bare "Eval block failed"), and a row naming a
+        # directory no tracked file sits under.
+        $"($proof.leaf.filepath) is proven as a directory, but its sealed tracked content is not all on disk — a tracked file was deleted, or no tracked files sit under it at all"
     } else if $content_verified == "missing" {
         $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"
     } else if ($content_verified in ["symlink" "outside" "directory"]) and $proof.leaf.content_sha256 == "" {

@@ -422,6 +422,35 @@ def "a proven directory swapped for a symlink is refused, not re-derived" [] {
     assert not $root_row.valid
 }
 
+# A tracked file deleted from the worktree is the ordinary mid-edit state, not
+# an attack — and any directory-row verify used to die on it with a bare "Eval
+# block failed with pipeline input" naming neither file nor leaf, while file
+# rows already answered "missing". Both row shapes must yield a verdict.
+@test
+def "a deleted tracked file gives every row a verdict, not a crash" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle write-root --repo $repo
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let file_proof = merkle prove sub/inner.txt --repo $repo
+    let dir_proof = merkle prove sub --repo $repo
+
+    rm $"($repo)/sub/inner.txt"
+
+    let file_row = merkle verify $file_proof --repo $repo
+    assert equal $file_row.content_verified "missing"
+    assert not $file_row.valid
+
+    let dir_row = merkle verify $dir_proof --repo $repo
+    assert equal $dir_row.content_verified "missing"
+    assert not $dir_row.valid "a directory row verified over a deleted member"
+    assert ($dir_row.error | str contains "sub")
+}
+
 # The scope line, stated as a test rather than left to be discovered: the
 # manifest catalogues git-tracked files, so an untracked file is outside what
 # any row commits to. Making it a divergence would fail verification on every
