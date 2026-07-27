@@ -86,6 +86,17 @@ def resolve-key [root: path, pubkey: any]: nothing -> any {
 # about what a key comment may become. None of that is here: two files cannot
 # hold one key under two names, because one key has one fingerprint, and no name
 # reaches a trust list at all (see _allowed-signers.nu).
+#
+# Not an `--as <label>` flag for a human-readable name, because: nothing reads the
+# name, so `mv` already gives a key any name the operator wants, and a key placed
+# in pubkeys/ by hand keeps whatever it is called — both pinned by
+# tests/test_ssh-sign.nu "a pubkey file name the trust list could never express
+# still signs and verifies". A flag would buy that one step and bring back the two
+# rules the fingerprint removed: a collision when a label is already taken by
+# another key, and a gate on the label (a `/` writes outside pubkeys/, and a
+# control byte makes a name `ls` cannot round-trip, which throws on every later
+# render — see todo/20260727-023419). Same call as `merkle prove --out`, deleted
+# in ad1f7ab: `mv` is the escape hatch.
 def register [canon: string, pubkeys_dir: path, root: path] {
     let principal = $canon | pubkey fingerprint
     let dest = $pubkeys_dir | path join $"($principal).pub"
