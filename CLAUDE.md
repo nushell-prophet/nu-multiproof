@@ -71,8 +71,9 @@ Four of these are enforced by `tests/test_lint.nu`, not by memory: the glob rule
 ## Running tests
 
 ```sh
-nu toolkit.nu test          # runs all tests under tests/
-nu toolkit.nu test --fail   # exits non-zero on any failure (for CI)
+nu toolkit.nu test            # runs all tests under tests/; exits non-zero on any failure
+nu toolkit.nu test --no-fail  # exit 0 even on failures (fail-on-error is the default)
+nu toolkit.nu test --network  # runs tests-network/ instead — reaches the internet; one test writes a permanent public timestamp
 ```
 
 Requires `nutest` as a sibling directory:
