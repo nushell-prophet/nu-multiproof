@@ -298,6 +298,39 @@ def "init refuses an inline key whose type names a path" [] {
     assert equal (ls $"($repo)/multiproofs/pubkeys" | length) 0
 }
 
+# The registered file's stem is this key's principal in every allowed_signers
+# the repo renders, so a stem the renderer refuses is a registration that
+# breaks every later verify in that repo — no verdict at all, from a command
+# that printed success. Hostile input here is the *file name*, which no key
+# in this repo's own pubkeys/ would ever carry.
+@test
+def "init refuses a pubkey whose file name cannot be a principal" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+
+    # `*` would be trusted for every signer; the rest write more (or other)
+    # principals than the one line they are meant to be.
+    for stem in ["al ice" "*" "alice,mallory" 'ali"ce' "ali?e" "#alice"] {
+        let source = $"($tmp_dir)/($stem).pub"
+        cp $"($key_path).pub" $source
+
+        let outcome = try { init --repo $repo --pubkey $source; "ok" } catch {|e| $e.msg }
+        assert ($outcome | str contains "signer name") $"stem ($stem) was registered: ($outcome)"
+        assert equal (ls --all $"($repo)/multiproofs/pubkeys" | length) 0 $"stem ($stem) reached pubkeys/"
+        rm $source
+    }
+
+    # The same key under an expressible name still registers — the refusal is
+    # about the name, not about the key.
+    init --repo $repo --pubkey $"($key_path).pub"
+    assert equal (ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename }) ["sshkey.pub"]
+}
+
 # A key with no comment is named after its type. Splitting on a single space
 # made `ssh-ed25519  AAAA…` look like three fields, so the "comment" the name
 # came from was the base64 blob itself.

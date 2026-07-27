@@ -4,6 +4,7 @@ use _repo.nu repo-root
 use _layout.nu [multiproofs-dir pubkeys-dir]
 use _fs.nu list-files
 use _pubkey-helpers.nu canonical-file
+use _allowed-signers.nu check-signer-name
 use pubkey.nu
 
 # Initialize multiproofs/ structure in a git repo.
@@ -71,7 +72,17 @@ export def main [
         }
     }
 
-    let name = $key_file | path parse | get stem
+    # Checked before it becomes a file name: the stem is this key's principal in
+    # every allowed_signers this repo renders, and `init --pubkey 'src/al
+    # ice.pub'` used to print success while making every later `ssh-sign
+    # verify`, `merkle verify` and `seal` in that repo throw before reaching a
+    # verdict — denial of service, from one registration. `--pubkey 'src/*.pub'`
+    # created a file literally named `*.pub`, a key trusted for every signer.
+    # Reject, never normalize: renaming the source file is the operator's call,
+    # not this command's. The inline `key::` branch above needs no such gate —
+    # `resolve-key-name` builds its name from a sanitized comment or from a key
+    # type `pubkey canonical` has already accepted.
+    let name = check-signer-name ($key_file | path parse | get stem) $"pubkey file name ($key_file | path basename)"
     let dest = $pubkeys_dir | path join $"($name).pub"
     # Not cp because: the stored bytes are the identity downstream — they
     # must be canonical regardless of how the source file was written.
