@@ -2,7 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/ots.nu
-use ../nu-multiproof/_ots-helpers.nu [copy-path-for check-block-header]
+use ../nu-multiproof/_ots-helpers.nu [copy-path-for check-block-header check-fetched-header]
 use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots build-calendar-response OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG]
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
@@ -217,6 +217,29 @@ def "check-block-header does not bound the work behind a header" [] {
     let r = check-block-header $header $root $block_hash
     assert equal $r.block_hash $block_hash
     assert equal $r.merkle_root ($root | encode hex | str downcase)
+}
+
+# The explorer serving the header used to hold a one-request veto: a header
+# with one flipped byte, inside verify's `try`, read as "this proof does not
+# match Bitcoin" — `valid: false`, `--fail` exit non-zero — for a proof that
+# verified fine with the source order swapped. The block hash was cross-checked
+# by --min-sources explorers before the header fetch, so a header-vs-hash
+# mismatch can only be the explorer's fault: an outage, not a verdict.
+@test
+def "a corrupted header blames the explorer, not the proof" [] {
+    let flipped = 0x[ff] | bytes add --end ($BLOCK_939896_HEADER | bytes at 1..79)
+    let outcome = try {
+        check-fetched-header "https://explorer.example/api" $BLOCK_939896_HASH ($flipped | encode hex)
+        "accepted"
+    } catch {|e| $e.msg }
+    assert ($outcome | str contains "explorer https://explorer.example/api") $"expected the explorer blamed, got: ($outcome)"
+    assert ($outcome | str contains "cannot verify") $"expected an operational refusal, got: ($outcome)"
+}
+
+@test
+def "check-fetched-header hands back the bytes of a genuine header" [] {
+    let bytes = check-fetched-header "https://explorer.example/api" $BLOCK_939896_HASH ($BLOCK_939896_HEADER | encode hex)
+    assert equal $bytes $BLOCK_939896_HEADER
 }
 
 # --- Bitcoin-anchored bundle, without the network ---

@@ -15,6 +15,31 @@ export def copy-path-for [file: path, bundle_dir: path]: nothing -> string {
     }
 }
 
+# The explorer's answer to /block/<hash>/header, admitted only if it really is
+# that block's header. Everything here is about the source, not the proof: the
+# block hash was already cross-checked across explorers before the header was
+# fetched, so an answer that is not hex, not 80 bytes, or hashes to something
+# else can only be this explorer's fault. Each check throws naming the
+# explorer — none is a verdict about the proof. Pinned by tests/test_ots.nu
+# "a corrupted header blames the explorer, not the proof".
+export def check-fetched-header [
+    src: string          # explorer base URL, named in every refusal
+    block_hash: string   # cross-checked block hash (display hex)
+    header_hex: string   # the explorer's response body
+]: nothing -> binary {
+    let bytes = try { $header_hex | decode hex } catch {
+        error make {msg: $"explorer ($src) answered with a block header that is not hex — cannot verify"}
+    }
+    if ($bytes | bytes length) != 80 {
+        error make {msg: $"explorer ($src) answered with ($bytes | bytes length) bytes where a block header is 80 — cannot verify"}
+    }
+    let hashes_to = $bytes | hash sha256 | decode hex | hash sha256 | decode hex | bytes reverse | encode hex | str lowercase
+    if $hashes_to != ($block_hash | str lowercase) {
+        error make {msg: $"explorer ($src) answered with a header that hashes to ($hashes_to), not the cross-checked ($block_hash) — cannot verify"}
+    }
+    $bytes
+}
+
 # Self-verify a raw 80-byte Bitcoin block header with no network access:
 #   1. double-SHA256(header), reversed, equals `claimed_hash` (display order)
 #   2. the header's merkle-root field equals `expected_root` (internal order)

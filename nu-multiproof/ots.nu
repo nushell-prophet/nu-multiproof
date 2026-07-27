@@ -1,7 +1,7 @@
 # Pure Nushell OpenTimestamps implementation — no `ots` CLI dependency.
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
-use _ots-helpers.nu [copy-path-for check-block-header]
+use _ots-helpers.nu [copy-path-for check-block-header check-fetched-header]
 use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
@@ -566,26 +566,25 @@ def esplora-get [url: string]: nothing -> any {
 
 # Fetch a block header from one explorer and hand back its 80 bytes.
 #
-# Why this is separate from check-block-header: everything here is about the
-# transport — did an explorer answer, is the answer hex, is it header-sized.
-# Those are operational failures and must throw. Folded into the `try` around
-# check-block-header they became `valid: false`, which handed any explorer a
-# one-request veto over any valid proof: a 200 carrying an HTML error page read
-# as "this proof does not match Bitcoin", and `--fail` exited non-zero on it.
-# check-block-header keeps its own 80-byte guard as a precondition for its
-# other callers; from this path it can no longer fire.
+# Why the answer is checked here (check-fetched-header) and not in the `try`
+# around check-block-header: everything about the fetched answer — did an
+# explorer respond, is it hex, is it header-sized, does it hash to the
+# cross-checked block hash at all — is operational and must throw. Folded into
+# that `try` it became `valid: false`, which handed the one explorer serving
+# the header a one-request veto over any valid proof: a 200 carrying an HTML
+# error page — or a header with a single flipped byte — read as "this proof
+# does not match Bitcoin", and `--fail` exited non-zero on it. The block hash
+# was already cross-checked by --min-sources explorers before this fetch, so a
+# header that does not hash to it can only be this explorer's fault — the
+# "outage, not a verdict" class. check-block-header keeps its own 80-byte and
+# claimed-hash guards as preconditions for its other callers; from this path
+# they can no longer fire.
 def fetch-header [src: string, block_hash: string]: nothing -> binary {
     let header_hex = esplora-get $"($src)/block/($block_hash)/header"
     if $header_hex == null {
         error make {msg: $"could not fetch the header for block ($block_hash) from ($src)"}
     }
-    let bytes = try { $header_hex | decode hex } catch {
-        error make {msg: $"explorer ($src) answered with a block header that is not hex — cannot verify"}
-    }
-    if ($bytes | bytes length) != 80 {
-        error make {msg: $"explorer ($src) answered with ($bytes | bytes length) bytes where a block header is 80 — cannot verify"}
-    }
-    $bytes
+    check-fetched-header $src $block_hash $header_hex
 }
 
 # Independently verify a Bitcoin-anchored OTS proof against real block headers.
@@ -685,8 +684,10 @@ export def verify [
 
     # Self-verify the header. A failure here means the proof does not match the
     # real block -> invalid proof, not an operational error. Everything about
-    # whether the explorer's answer is header-shaped at all was settled in
-    # fetch-header, above — inside this try it would read as "invalid proof".
+    # the explorer's answer itself — its shape, and whether it is the
+    # cross-checked block's header at all — was settled in fetch-header, above;
+    # inside this try it would read as "invalid proof". Only the merkle-root
+    # binding is left to fail here, and that mismatch is about the proof.
     let checked = try { check-block-header $header_bytes $expected_root $block_hash } catch {|e| {error: $e.msg} }
     let confirmed = $ok_lookups | get source
     if ($checked.error? != null) {
