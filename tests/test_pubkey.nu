@@ -160,6 +160,34 @@ def "an unreadable key reports the parser reason, not a umask artifact" [] {
     assert (not ($out.stdout | str contains $nu.temp-dir)) $"the reason names a temp path the operator cannot look at: ($out.stdout)"
 }
 
+# A missing binary makes an external call throw, and `complete` catches only
+# non-zero exits — so the throw reached `canonical-file`, which reported a
+# broken toolchain as "<file> is not an SSH public key", and `merkle verify`
+# folded that into `valid: false` on the artifact. The key here is a perfectly
+# good one: the only thing wrong is the environment, and the message must say
+# so.
+@test
+def "a missing ssh-keygen is reported as a toolchain problem, not a bad key" [] {
+    let tmp_dir = $in.tmp_dir
+    let bin = $"($tmp_dir)/bin"
+    mkdir $bin
+    # A PATH holding nu and chmod but no ssh-keygen. nu is needed to run the
+    # probe at all; chmod stays so the assertion is about ssh-keygen alone.
+    for tool in ["nu" "chmod"] {
+        ^ln -s (which $tool | get 0.path) $"($bin)/($tool)"
+    }
+    let script = $"($tmp_dir)/probe.nu"
+    [
+        $"use ($MODULE_DIR)/pubkey.nu"
+        $"const GOOD = \"($ED25519)\""
+        "try { $GOOD | pubkey canonical } catch {|e| print $e.msg }"
+    ] | str join "\n" | save --force $script
+
+    let out = ^bash -c $"PATH=($bin) exec ($bin)/nu ($script)" | complete
+    assert ($out.stdout | str contains "toolchain problem") $"expected a toolchain message, got: ($out.stdout)($out.stderr)"
+    assert (not ($out.stdout | str contains "not an SSH public key")) $"a good key was blamed: ($out.stdout)"
+}
+
 @test
 def "canonical rejects a truncated or padded blob" [] {
     # first field only: the type, with no key after it

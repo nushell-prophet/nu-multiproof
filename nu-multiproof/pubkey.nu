@@ -103,6 +103,18 @@ export def canonical []: string -> string {
 # material into a trust list, and silently storing bytes other than the ones it
 # was handed is how one key becomes two identities in the first place.
 def openssh-reserialize [line: string]: nothing -> string {
+    # Why this is asked before any work: a missing binary makes an external call
+    # *throw*, and `complete` does not catch that — only a non-zero exit. The
+    # throw travelled up to `canonical-file`, which wrapped it as "<file> is not
+    # an SSH public key: External command failed", so a broken toolchain read as
+    # a verdict about the operator's key — and through `merkle verify`, as
+    # `valid: false` on the artifact. Fail-closed either way; the difference is
+    # what the operator goes looking for.
+    for tool in ["ssh-keygen" "chmod"] {
+        if (which $tool | is-empty) {
+            error make {msg: $"($tool) is not on PATH — deciding what an SSH key is needs OpenSSH. This is a toolchain problem, not a problem with the key."}
+        }
+    }
     with-temp-dir "pubkey" {|dir|
         let source = $dir | path join "key.pub"
         let envelope = $dir | path join "key.rfc4716"
