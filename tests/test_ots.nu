@@ -559,6 +559,36 @@ def "a rejected calendar response is kept, nonce and all" [] {
     assert equal ($bytes | bytes length) 85
 }
 
+# The rejected name was <stem>.<prefix>.rejected-<YYYYmmdd-HHMMSS>.ots written
+# with --force, so two failing stamps inside one second collided: the second
+# silently replaced the first, and the first's nonce — the only thing binding
+# its already-submitted digest to this file — was gone. The comment above the
+# write claimed "a retry never overwrites one" while the code did exactly that.
+@test
+def "rejected stamps in the same second each keep their nonce" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    0x[ff] | save --raw --force $"($tmp_dir)/forked.bin"
+
+    for _ in 1..3 {
+        try { ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/forked.bin" }
+    }
+
+    let rejected = (ls --all $tmp_dir | get name | where {|f| $f | str contains ".rejected-" })
+    assert equal ($rejected | length) 3 "a rejected proof was overwritten"
+    # Each run draws a fresh nonce, so these are three distinct payloads.
+    assert equal ($rejected | each { open --raw $in | hash sha256 } | uniq | length) 3
+    # Why assert the naming rule and not just the count: the three runs could
+    # straddle a second boundary, and distinct timestamps would then carry the
+    # test on their own. Binding the name to the bytes is what makes a
+    # same-second collision impossible rather than unlikely.
+    for f in $rejected {
+        let tag = (open --raw $f | hash sha256 | str substring 0..<8)
+        assert ($f | path basename | str ends-with $"-($tag).ots") $"rejected name is not bound to its bytes: ($f)"
+    }
+}
+
 # Validation runs before the archival rename, so a bad response cannot cost the
 # proof that is already there.
 @test

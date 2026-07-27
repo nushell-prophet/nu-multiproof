@@ -341,10 +341,16 @@ export def stamp [file: path --out-dir: path --response-file: path] {
         # is untouched, so nothing here is mistaken for a proof; these bytes
         # are the only material a later recovery (or the reference `ots` CLI,
         # which reads constructs this parser refuses, such as forks) can work
-        # from. Named for the moment, so a retry never overwrites one.
+        # from. Named for the moment AND for its own bytes: the timestamp
+        # alone repeats within one second, and --force then let a second
+        # failing stamp silently swallow the first one's nonce — three failing
+        # stamps in a second left one file. Bound to the proof's hash (like
+        # the parked-file branch below), a name collision can only be the same
+        # bytes. Pinned by tests/test_ots.nu "rejected stamps in the same
+        # second each keep their nonce".
         mkdir $out_dir
-        let rejected = $"($out_dir)/($stem).($hash_prefix).rejected-(date now | format date '%Y%m%d-%H%M%S').ots"
-        $ots | save --raw --force $rejected
+        let rejected = $"($out_dir)/($stem).($hash_prefix).rejected-(date now | format date '%Y%m%d-%H%M%S')-($ots | hash sha256 | str substring 0..<8).ots"
+        $ots | save --raw $rejected
         error make {msg: ([
             $"calendar response does not make a readable proof: ($validation.reason)"
             $"no bundle was written; the assembled bytes \(nonce included\) are at ($rejected)"
