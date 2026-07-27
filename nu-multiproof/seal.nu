@@ -6,7 +6,7 @@ use _repo.nu repo-root
 use _layout.nu [manifest-path merkle-root-path ots-dir pubkeys-dir]
 use _sig.nu sig-files-for
 use _fs.nu list-files
-use _key-helpers.nu with-signing-key
+use _key-helpers.nu [with-signing-key signing-principal]
 
 # Full seal pipeline: hash+root-cid → sign → stamp.
 #
@@ -56,6 +56,16 @@ export def main [
     let manifest_path = manifest-path $root
     let root_statement_path = merkle-root-path $root
     let ots_dir = ots-dir $root
+
+    # Ask the signing question before touching anything. Step 2 rewrites the
+    # manifest and the root statement and clears signatures over changed bytes;
+    # when step 3 then discovered an unregistered key, the seal had already
+    # left a regenerated manifest, a new unsigned root, and possibly a deleted
+    # co-signer signature behind. Same check `ssh-sign sign` runs — asked
+    # early, not enforced twice: sign keeps it for standalone use.
+    with-signing-key --root $root {|signing_key|
+        signing-principal $signing_key (pubkeys-dir $root)
+    } | ignore
 
     # Fingerprint every artifact regen rewrites, before regen: a sig covers
     # exact bytes, so it only goes stale when the bytes actually change. This is

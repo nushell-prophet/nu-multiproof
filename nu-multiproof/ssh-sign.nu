@@ -3,37 +3,10 @@
 use _repo.nu repo-root
 use _layout.nu pubkeys-dir
 use _sig.nu [sig-files-for signer-from-sig sig-path-for original-for-sig]
-use _key-helpers.nu with-signing-key
+use _key-helpers.nu [with-signing-key signing-principal]
 use _temp-helpers.nu with-temp-file
 use _allowed-signers.nu [allowed-signers-body registered-principals NAMESPACE]
 use _pubkey-helpers.nu fingerprint-file
-
-# The principal this key signs under: its own fingerprint, from its public half.
-#
-# Why it is not looked up in pubkeys/ any more: the signer used to be the *stem*
-# of whichever registered file held matching key material, so the same key filed
-# twice made every signature fail with "multiple pubkeys match", and a stem the
-# trust-list renderer refused made every later verify in that repo throw. A
-# fingerprint is a property of the key, so neither question arises.
-#
-# Registration is still required, and that is the only reason pubkeys/ is read
-# here: a signature by a key the trust list does not hold is one nothing reading
-# the artifact can check. There is no `--name` escape hatch, deliberately — a
-# principal is not the signer's to choose.
-def signing-principal [key: path pubkeys_dir: path]: nothing -> string {
-    let pub_path = if ($key | str ends-with ".pub") { $key } else {
-        let candidate = $"($key).pub"
-        if not ($candidate | path exists) {
-            error make {msg: $"public key file not found: ($candidate)"}
-        }
-        $candidate
-    }
-    let principal = fingerprint-file $pub_path
-    if $principal not-in (registered-principals $pubkeys_dir) {
-        error make {msg: $"the signing key \(($principal)\) is not registered in ($pubkeys_dir)/ — register it with `init --pubkey ($pub_path)`, or nothing reading this artifact can check the signature"}
-    }
-    $principal
-}
 
 # Sign a file with an SSH key.
 # Creates {path}.{fingerprint}.sig alongside the input file, where the

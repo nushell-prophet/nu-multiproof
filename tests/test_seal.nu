@@ -118,6 +118,33 @@ def "a deliberate manifest signature survives an unchanged reseal" [] {
     assert equal (sig-files-for $manifest) []
 }
 
+@test
+def "an unregistered signing key refuses the seal before it rewrites anything" [] {
+    let fx = make-sealable-repo $in.tmp_dir
+    let manifest = $"($fx.repo)/multiproofs/tree-hashes.csv"
+    let root_statement = $"($fx.repo)/multiproofs/tree-root.txt"
+    seal --repo $fx.repo --no-stamp
+
+    # A registered-signer seal exists; now the operator switches to a key
+    # nobody registered and edits a file, so a rerun would rewrite the
+    # manifest and the root statement and clear the sig over them.
+    let rogue = $"($in.tmp_dir)/rogue"
+    ^ssh-keygen -t ed25519 -f $rogue -N "" -q
+    ^git -C $fx.repo config user.signingKey $"($rogue).pub"
+    "v2\n" | save --force $"($fx.repo)/file.txt"
+
+    let pre_manifest = open --raw $manifest | hash sha256
+    let pre_root = open --raw $root_statement | hash sha256
+    let pre_sigs = sig-files-for $root_statement
+
+    let err = try { seal --repo $fx.repo --no-stamp; null } catch {|e| $e.msg }
+    assert ($err != null) "seal accepted an unregistered signing key"
+    assert ($err | str contains "is not registered")
+    assert equal (open --raw $manifest | hash sha256) $pre_manifest "the refusal came after the manifest was rewritten"
+    assert equal (open --raw $root_statement | hash sha256) $pre_root "the refusal came after the root statement was rewritten"
+    assert equal (sig-files-for $root_statement) $pre_sigs "the refusal came after signatures were cleared"
+}
+
 # The same rule on the root statement, and on a signature this seal did not
 # make. Bytes are the only thing seal can check: unchanged bytes mean the sig
 # still verifies, whoever made it; changed bytes make it stale wherever it came

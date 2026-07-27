@@ -5,6 +5,9 @@
 # private keys, whereas this returns the private key (or its inline material)
 # to sign with — the opposite intent and safety rule.
 
+use _allowed-signers.nu registered-principals
+use _pubkey-helpers.nu fingerprint-file
+
 # Read user.signingKey and return {path, temp} — a key path usable with
 # `ssh-keygen -Y sign -f <key>`, plus who owns it. Handles both forms:
 #  - inline `key::ssh-ed25519 AAAA…` — materialized to a temp .pub file
@@ -71,4 +74,31 @@ export def with-signing-key [
     } finally {
         if $resolved.temp { rm --force $resolved.path }
     }
+}
+
+# The principal this key signs under: its own fingerprint, from its public half.
+#
+# Why it is not looked up in pubkeys/ any more: the signer used to be the *stem*
+# of whichever registered file held matching key material, so the same key filed
+# twice made every signature fail with "multiple pubkeys match", and a stem the
+# trust-list renderer refused made every later verify in that repo throw. A
+# fingerprint is a property of the key, so neither question arises.
+#
+# Registration is still required, and that is the only reason pubkeys/ is read
+# here: a signature by a key the trust list does not hold is one nothing reading
+# the artifact can check. There is no `--name` escape hatch, deliberately — a
+# principal is not the signer's to choose.
+export def signing-principal [key: path pubkeys_dir: path]: nothing -> string {
+    let pub_path = if ($key | str ends-with ".pub") { $key } else {
+        let candidate = $"($key).pub"
+        if not ($candidate | path exists) {
+            error make {msg: $"public key file not found: ($candidate)"}
+        }
+        $candidate
+    }
+    let principal = fingerprint-file $pub_path
+    if $principal not-in (registered-principals $pubkeys_dir) {
+        error make {msg: $"the signing key \(($principal)\) is not registered in ($pubkeys_dir)/ — register it with `init --pubkey ($pub_path)`, or nothing reading this artifact can check the signature"}
+    }
+    $principal
 }
