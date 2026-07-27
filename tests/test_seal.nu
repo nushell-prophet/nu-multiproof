@@ -47,26 +47,9 @@ def cleanup [] {
 # still exercises tree-hashes regen + signing-key resolution + sig clearing.
 @test
 def "seal produces manifest and signed root statement" [] {
-    let tmp_dir = $in.tmp_dir
-    let repo = $"($tmp_dir)/repo"
-    mkdir $repo
-
-    # seal works on a SHA-1 repo: it hashes file contents itself
-    ^git -C $repo init -q
-    ^git -C $repo config user.email "seal-test@example.com"
-    ^git -C $repo config user.name "Seal Test"
-
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    ^git -C $repo config user.signingKey $"($key_path).pub"
-
-    # Bootstrap pubkeys/ via init so signer-name lookup works
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-
-    "hello\n" | save --force $"($repo)/README.md"
-    ^git -C $repo add README.md
-    ^git -C $repo commit -q -m "init"
+    # The fixture leaves a SHA-1 repo, which seal must handle: it hashes file
+    # contents itself rather than leaning on git's object hash.
+    let repo = (make-sealable-repo $in.tmp_dir).repo
 
     let result = seal --repo $repo --no-stamp
 
@@ -88,23 +71,7 @@ def "seal produces manifest and signed root statement" [] {
 # the root statement — seal clears stale sigs itself before re-signing.
 @test
 def "seal re-runs without sig conflict" [] {
-    let tmp_dir = $in.tmp_dir
-    let repo = $"($tmp_dir)/repo"
-    mkdir $repo
-
-    ^git -C $repo init -q
-    ^git -C $repo config user.email "seal-test@example.com"
-    ^git -C $repo config user.name "Seal Test"
-
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    ^git -C $repo config user.signingKey $"($key_path).pub"
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-
-    "v1\n" | save --force $"($repo)/file.txt"
-    ^git -C $repo add file.txt
-    ^git -C $repo commit -q -m "init"
+    let repo = (make-sealable-repo $in.tmp_dir).repo
 
     seal --repo $repo --no-stamp
     # Second invocation must not error: stale sig from first run gets cleared
@@ -123,40 +90,23 @@ def "seal re-runs without sig conflict" [] {
 # stays; once the bytes change it is stale and goes.
 @test
 def "a deliberate manifest signature survives an unchanged reseal" [] {
-    let tmp_dir = $in.tmp_dir
-    let repo = $"($tmp_dir)/repo"
-    mkdir $repo
+    let fx = make-sealable-repo $in.tmp_dir
 
-    ^git -C $repo init -q
-    ^git -C $repo config user.email "seal-test@example.com"
-    ^git -C $repo config user.name "Seal Test"
-
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    ^git -C $repo config user.signingKey $"($key_path).pub"
-    let pubkeys = $"($repo)/multiproofs/pubkeys"
-    mkdir $pubkeys
-    cp $"($key_path).pub" $"($pubkeys)/sshkey.pub"
-
-    "v1\n" | save --force $"($repo)/file.txt"
-    ^git -C $repo add file.txt
-    ^git -C $repo commit -q -m "init"
-
-    let manifest = $"($repo)/multiproofs/tree-hashes.csv"
-    seal --repo $repo --no-stamp
+    let manifest = $"($fx.repo)/multiproofs/tree-hashes.csv"
+    seal --repo $fx.repo --no-stamp
     # A signature the user made on purpose, not a planted stub: what must
     # survive is a sig that still verifies.
-    ssh-sign sign $manifest --key $key_path --pubkeys-dir $pubkeys
+    ssh-sign sign $manifest --key $fx.key --pubkeys-dir $fx.pubkeys
 
-    seal --repo $repo --no-stamp
+    seal --repo $fx.repo --no-stamp
     let kept = sig-files-for $manifest | each {|f| $f | path basename }
     assert equal $kept ["tree-hashes.csv.sshkey.sig"] "seal deleted a signature over bytes it did not change"
-    assert equal (ssh-sign verify $manifest --pubkeys-dir $pubkeys | get valid) [true]
+    assert equal (ssh-sign verify $manifest --pubkeys-dir $fx.pubkeys | get valid) [true]
 
     # Changed content: the manifest's bytes change with it, and a sig over the
     # old bytes is stale — that is when clearing is right.
-    "v2\n" | save --force $"($repo)/file.txt"
-    seal --repo $repo --no-stamp
+    "v2\n" | save --force $"($fx.repo)/file.txt"
+    seal --repo $fx.repo --no-stamp
     assert equal (sig-files-for $manifest) []
 }
 
@@ -168,43 +118,27 @@ def "a deliberate manifest signature survives an unchanged reseal" [] {
 @test
 def "seal keeps a co-signer sig over unchanged bytes and clears it once they change" [] {
     let tmp_dir = $in.tmp_dir
-    let repo = $"($tmp_dir)/repo"
-    mkdir $repo
-
-    ^git -C $repo init -q
-    ^git -C $repo config user.email "seal-test@example.com"
-    ^git -C $repo config user.name "Seal Test"
-
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    ^git -C $repo config user.signingKey $"($key_path).pub"
-    let pubkeys = $"($repo)/multiproofs/pubkeys"
-    mkdir $pubkeys
-    cp $"($key_path).pub" $"($pubkeys)/sshkey.pub"
+    let fx = make-sealable-repo $tmp_dir
 
     let bob_key = $"($tmp_dir)/bob"
     ^ssh-keygen -t ed25519 -f $bob_key -N "" -q
-    cp $"($bob_key).pub" $"($pubkeys)/bob.pub"
+    cp $"($bob_key).pub" $"($fx.pubkeys)/bob.pub"
 
-    "v1\n" | save --force $"($repo)/file.txt"
-    ^git -C $repo add file.txt
-    ^git -C $repo commit -q -m "init"
-
-    seal --repo $repo --no-stamp
-    let root_file = $"($repo)/multiproofs/tree-root.txt"
-    ssh-sign sign $root_file --key $bob_key --pubkeys-dir $pubkeys
+    seal --repo $fx.repo --no-stamp
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    ssh-sign sign $root_file --key $bob_key --pubkeys-dir $fx.pubkeys
 
     # Unchanged content: regen writes identical bytes, so bob's signature over
     # them still verifies and must survive the reseal.
-    seal --repo $repo --no-stamp
+    seal --repo $fx.repo --no-stamp
     let kept = sig-files-for $root_file | each {|f| $f | path basename } | sort
     assert equal $kept ["tree-root.txt.bob.sig" "tree-root.txt.sshkey.sig"] "seal deleted a co-signer sig over bytes it did not change"
-    assert equal (ssh-sign verify $root_file --pubkeys-dir $pubkeys | get valid) [true true]
+    assert equal (ssh-sign verify $root_file --pubkeys-dir $fx.pubkeys | get valid) [true true]
 
     # Changed content: the root statement's bytes change, so bob's sig is stale
     # and goes; the sealer signs the new bytes.
-    "v2\n" | save --force $"($repo)/file.txt"
-    seal --repo $repo --no-stamp
+    "v2\n" | save --force $"($fx.repo)/file.txt"
+    seal --repo $fx.repo --no-stamp
     assert equal (sig-files-for $root_file | each {|f| $f | path basename }) ["tree-root.txt.sshkey.sig"]
 }
 
@@ -239,25 +173,44 @@ def "seal stamps the root statement into the target repo and bundles its signatu
 }
 
 # Step 1, the opportunistic upgrade loop, also skipped by every other test.
-# The property is that it cannot cost a seal: an archived proof that no longer
-# parses is a real problem worth printing, but seal must still produce this
-# run's manifest, root and signature. Anything anchored is left exactly as it
-# is — `ots upgrade` returns early rather than refetching.
+# Two properties, and the first is visible only on stdout — which is why seal
+# runs in a subprocess here. Asserted on the return value alone, a seal that
+# never entered the loop, and one that swallowed every failure, both passed:
+# measured, by deleting the loop and by replacing its error branch with null.
+#
+#   reported — "not yet confirmed" is the normal case for hours or days and is
+#     rightly silent, but a proof that no longer parses is a corrupt artifact
+#     or a misconfig, and seal is the only thing that will ever look at it
+#   it cannot cost the seal — this run's manifest, root and signature are
+#     produced anyway, and anything already anchored is left byte-identical,
+#     since `ots upgrade` returns early rather than refetching
 @test
-def "a corrupt archived proof does not abort the seal" [] {
+def "seal reports an archived proof it cannot read, and seals anyway" [] {
     let tmp_dir = $in.tmp_dir
     let fx = make-sealable-repo $tmp_dir
-    mkdir $"($fx.ots_dir)/tree-root.DEADBEEF"
+    let bundle = $"($fx.ots_dir)/tree-root.DEADBEEF"
+    mkdir $bundle
 
-    let anchored = $"($fx.ots_dir)/tree-root.DEADBEEF/tree-root.ots"
+    let anchored = $"($bundle)/tree-root.ots"
     build-bitcoin-ots | save --raw --force $anchored
     let anchored_before = open --raw $anchored | into binary
-    "not an OTS file at all" | save --raw --force $"($fx.ots_dir)/tree-root.DEADBEEF/broken.ots"
+    "not an OTS file at all" | save --raw --force $"($bundle)/broken.ots"
 
-    let result = seal --repo $fx.repo --no-stamp
+    # Same idiom as test_temp-helpers.nu's subprocess test: the suite runs from
+    # the repo root, so assert that rather than fail as "module not found".
+    let seal_nu = $env.PWD | path join "nu-multiproof" "seal.nu"
+    assert ($seal_nu | path exists) $"expected the suite to run from the repo root, got ($env.PWD)"
+    let run = do {
+        ^nu --no-config-file -c $"use ($seal_nu); seal --repo ($fx.repo) --no-stamp | ignore"
+    } | complete
+    assert equal $run.exit_code 0 $"seal failed: ($run.stderr)"
+    assert (
+        $run.stdout | str contains $"upgrade failed for ($bundle)/broken.ots"
+    ) $"an unreadable archived proof went unreported:(char newline)($run.stdout)"
 
     assert equal (open --raw $anchored | into binary) $anchored_before "seal rewrote an already-anchored proof"
     assert equal (ots info $anchored | get attestation.height) 123456
-    assert ($result.merkle_root | is-not-empty)
-    assert ($result.root_sig | path exists) "seal stopped before signing"
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    assert ($root_file | path exists) "seal stopped before writing the root statement"
+    assert (sig-files-for $root_file | is-not-empty) "seal stopped before signing"
 }

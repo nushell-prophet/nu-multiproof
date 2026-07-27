@@ -11,8 +11,9 @@ use _key-helpers.nu with-signing-key
 # Full seal pipeline: hash+root-cid → sign → stamp.
 #
 # Operations order:
-#   1. Upgrade pending OTS — opportunistic; tries all .ots files, silent on failure
-#      (Bitcoin confirmation takes hours/days, so this progresses previous seals)
+#   1. Upgrade pending OTS — opportunistic; tries all .ots files. "Still
+#      pending" is silent (Bitcoin confirmation takes hours/days, so this just
+#      progresses previous seals); any other failure is printed and skipped
 #   2. tree-hashes — regenerate the manifest from current worktree files: one
 #      in-process pass emits per-file, per-dir and the root "." row together, so
 #      the manifest is written once, complete. Then derive the merkle root
@@ -42,8 +43,9 @@ export def main [
 
     # Fingerprint every artifact regen rewrites, before regen: a sig covers
     # exact bytes, so it only goes stale when the bytes actually change. This is
-    # what lets --no-sign mean "skip signing" instead of "remove still-valid
-    # signatures" on an unchanged reseal (see the clearing step below).
+    # what keeps the clearing step below from deleting a signature this seal did
+    # not make and has no reason to touch — pinned by "seal keeps a co-signer
+    # sig over unchanged bytes and clears it once they change".
     let regen_targets = [$root_statement_path $manifest_path]
     let pre_hashes = $regen_targets | each {|f|
         if ($f | path exists) { open --raw $f | hash sha256 } else { "" }
