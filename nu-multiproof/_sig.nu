@@ -23,7 +23,13 @@ export def sig-files-for [path: path]: nothing -> list<path> {
     # No directory, no signatures — the same answer the previous glob-based
     # discovery gave. Callers clear sigs before the dir is created.
     if not ($dir | path exists) { return [] }
-    let entries = ls --all $dir | get name
+    # Why `type == file` and not just a name match: `seal` passes this list
+    # straight to `rm`. A directory named `tree-hashes.csv.bundle.sig` was
+    # deleted silently when empty, and made `rm` throw when not — aborting seal
+    # after the manifest was regenerated and before signing, leaving an unsigned
+    # catalogue. A signature is a regular file; a symlink is not one either
+    # (`verify` would read through it to bytes the name does not describe).
+    let entries = ls --all $dir | where type == file | get name
     let bare_base = $"($base).sig"
     let named = $entries | where {|f|
         let f_base = $f | path basename

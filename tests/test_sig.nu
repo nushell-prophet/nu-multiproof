@@ -76,6 +76,27 @@ def "discovery finds sigs of a dotfile" [] {
     assert equal $found [".env.alice.sig" ".env.sig"]
 }
 
+# Discovery feeds `seal`'s `rm`, so anything it returns gets deleted. A
+# directory wearing a signature's name is not a signature: the empty one was
+# removed silently and the non-empty one made `rm` throw mid-seal, leaving the
+# catalogue regenerated but unsigned. Symlinks are out for the other half of
+# the reason — verify would read through one to bytes its name does not name.
+@test
+def "discovery returns signatures only, not directories or links wearing the name" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "content" | save --force $file
+    "sig" | save --force $"($file).alice.sig"
+    mkdir $"($file).bundle.sig"
+    mkdir $"($file).full.sig"
+    "decoy" | save --force $"($file).full.sig/inside"
+    "elsewhere" | save --force $"($tmp_dir)/elsewhere"
+    ^ln -s $"($tmp_dir)/elsewhere" $"($file).link.sig"
+
+    let found = sig-files-for $file | each {|f| $f | path basename }
+    assert equal $found ["doc.txt.alice.sig"]
+}
+
 @test
 def "discovery returns an empty list when nothing is signed" [] {
     let tmp_dir = $in.tmp_dir
