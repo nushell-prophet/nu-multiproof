@@ -35,12 +35,12 @@ export def main [
     let root_statement_path = merkle-root-path $root
     let ots_dir = ots-dir $root
 
-    # Fingerprint the signed artifact before regen: a sig covers exact bytes,
-    # so it only goes stale when the bytes actually change. This is what lets
-    # --no-sign mean "skip signing" instead of "remove still-valid signatures"
-    # on an unchanged reseal (see the clearing step below).
-    let sign_targets = [$root_statement_path]
-    let pre_hashes = $sign_targets | each {|f|
+    # Fingerprint every artifact regen rewrites, before regen: a sig covers
+    # exact bytes, so it only goes stale when the bytes actually change. This is
+    # what lets --no-sign mean "skip signing" instead of "remove still-valid
+    # signatures" on an unchanged reseal (see the clearing step below).
+    let regen_targets = [$root_statement_path $manifest_path]
+    let pre_hashes = $regen_targets | each {|f|
         if ($f | path exists) { open --raw $f | hash sha256 } else { "" }
     }
 
@@ -82,23 +82,26 @@ export def main [
     # over unchanged bytes are still valid and survive (so --no-sign doesn't
     # behave as "remove signatures"). Uses the shared discovery so the bare
     # `.sig` form is cleared too, not just `.<signer>.sig`.
-    $sign_targets | zip $pre_hashes | each {|pair|
+    #
+    # Why the manifest goes through the same rule instead of being swept
+    # unconditionally: `ssh-sign sign multiproofs/tree-hashes.csv` is a public
+    # command, and the sweep deleted a signature the user made deliberately,
+    # saying nothing — it read "leftover from the era when seal signed the CSV"
+    # into a file that only says who signed which bytes. Bytes are the one thing
+    # a seal can check: unchanged bytes mean the sig still verifies, whoever
+    # made it and whenever; changed bytes make it stale wherever it came from.
+    # Frozen copies inside OTS bundle dirs stay — they're archival.
+    #
+    # Why it prints: this deletes signed evidence, and the previous silence is
+    # how a deliberate signature could go without anyone noticing.
+    $regen_targets | zip $pre_hashes | each {|pair|
         if (open --raw $pair.0 | hash sha256) != $pair.1 {
-            sig-files-for $pair.0 | each {|sig| rm $sig }
+            sig-files-for $pair.0 | each {|sig|
+                rm $sig
+                print $"Cleared stale signature: ($sig | path relative-to $root)"
+            }
         }
     }
-
-    # Legacy cleanup: the CSV itself is no longer signed (the root statement
-    # covers every row — see step 3), so a live manifest sig is normally a
-    # leftover from the transition era. Tag pre-drop-manifest-sig marks the last
-    # version that produced them. Frozen copies inside OTS bundle dirs stay —
-    # they're archival.
-    #
-    # Blunt: `ssh-sign sign multiproofs/tree-hashes.csv` is still a public
-    # command, so this also deletes a manifest sig the user made deliberately,
-    # and says nothing. Kept because a stale CSV sig is the likelier case, but
-    # it is a wrong default, not a fact about where the sig came from.
-    sig-files-for $manifest_path | each {|sig| rm $sig }
 
     # 3. Sign the root statement — the one signed artifact. The root is
     # derived from every manifest row (the "." root-CID row included), so it

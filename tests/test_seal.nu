@@ -2,6 +2,8 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/seal.nu
+use ../nu-multiproof/ssh-sign.nu
+use ../nu-multiproof/_sig.nu sig-files-for
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -85,11 +87,14 @@ def "seal re-runs without sig conflict" [] {
     assert equal ($root_sigs | length) 1
 }
 
-# The CSV signature is dropped legacy: a live manifest sig can only be a
-# leftover from the transition era, and seal deletes it instead of leaving a
-# stale artifact (tag pre-drop-manifest-sig holds the last producing version).
+# `ssh-sign sign multiproofs/tree-hashes.csv` is a public command, and seal
+# used to sweep whatever it produced on the next run, silently — reading
+# "leftover from the era when seal signed the CSV" into a file that only says
+# who signed which bytes. The manifest now follows the same rule as the root
+# statement: a signature over bytes regen did not change still verifies, so it
+# stays; once the bytes change it is stale and goes.
 @test
-def "seal deletes leftover transition-era manifest sigs" [] {
+def "a deliberate manifest signature survives an unchanged reseal" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     mkdir $repo
@@ -101,8 +106,9 @@ def "seal deletes leftover transition-era manifest sigs" [] {
     let key_path = $"($tmp_dir)/sshkey"
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     ^git -C $repo config user.signingKey $"($key_path).pub"
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let pubkeys = $"($repo)/multiproofs/pubkeys"
+    mkdir $pubkeys
+    cp $"($key_path).pub" $"($pubkeys)/sshkey.pub"
 
     "v1\n" | save --force $"($repo)/file.txt"
     ^git -C $repo add file.txt
@@ -110,11 +116,20 @@ def "seal deletes leftover transition-era manifest sigs" [] {
 
     let manifest = $"($repo)/multiproofs/tree-hashes.csv"
     seal --repo $repo --no-stamp
-    # Plant sigs as an older seal would have left them: named and bare forms
-    "legacy\n" | save --force $"($manifest).sshkey.sig"
-    "legacy\n" | save --force $"($manifest).sig"
+    # A signature the user made on purpose, not a planted stub: what must
+    # survive is a sig that still verifies.
+    ssh-sign sign $manifest --key $key_path --pubkeys-dir $pubkeys
+
     seal --repo $repo --no-stamp
-    assert equal (glob $"($manifest)*.sig" | length) 0
+    let kept = sig-files-for $manifest | each {|f| $f | path basename }
+    assert equal $kept ["tree-hashes.csv.sshkey.sig"] "seal deleted a signature over bytes it did not change"
+    assert equal (ssh-sign verify $manifest --pubkeys-dir $pubkeys | get valid) [true]
+
+    # Changed content: the manifest's bytes change with it, and a sig over the
+    # old bytes is stale — that is when clearing is right.
+    "v2\n" | save --force $"($repo)/file.txt"
+    seal --repo $repo --no-stamp
+    assert equal (sig-files-for $manifest) []
 }
 
 # --no-sign means "skip signing", not "remove signatures": an unchanged
