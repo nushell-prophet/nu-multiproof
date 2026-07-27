@@ -25,7 +25,7 @@ def "with-temp-dir gives an empty dir, returns the closure value, and removes it
 }
 
 # The reason the helper exists: a hand-written `rm` after the work is skipped
-# on every throw. Five separate commits fixed one instance of that each.
+# on every throw. Six separate commits fixed one instance of that each.
 @test
 def "with-temp-dir removes the dir when the closure throws" [] {
     let receipt = $"($in.tmp_dir)/dir-path"
