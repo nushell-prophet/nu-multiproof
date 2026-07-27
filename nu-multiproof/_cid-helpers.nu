@@ -1,9 +1,13 @@
 # UnixFS / dag-pb node construction for CID v0, in pure Nushell.
 #
 # Reproduces `ipfs add --cid-version=0 --raw-leaves=false --hash=sha2-256
-# --chunker=size-262144` for files of any size and for directories. Vectors
-# recorded from the reference client pin every shape this file can build:
-# see tests/test_cid-v0.nu.
+# --chunker=size-262144` for files and directories. Vectors recorded from the
+# reference client (tests/test_cid-v0.nu) pin the chunk boundaries (empty
+# through one full 262144-byte chunk), a depth-1 file DAG (two full chunks
+# and a tail), a depth-2 file DAG at 175 chunks, and directory shapes from
+# empty up to the HAMT boundary. A file DAG deeper than 2 (175 full branches,
+# ~7.9 GB) has no recorded vector — the fold past depth 2 is the same code,
+# but nothing external pins it.
 #
 # A *node* here is {digest, dag_size} plus, for file nodes only, {file_size}:
 #   digest    sha-256 of the serialized block (the multihash body of its CID)
