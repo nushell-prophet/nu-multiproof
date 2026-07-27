@@ -75,9 +75,12 @@ const RULES = [
     {
         name: "no apostrophe in a def name"
         why: "nutest interpolates a test name into generated source as a bare block — `execute: { a sibling's bare signature }` — so an apostrophe opens a string that never closes and EVERY test in that file is reported failed, pointing at nutest's internals rather than at the name. Cost a diagnosis round twice in one session."
-        # Backtick strings: this rule is about an apostrophe inside a
-        # double-quoted name, so neither quote can be the delimiter.
-        pattern: `^\s*(export\s+)?def\s+"[^"]*'`
+        # Backtick strings: this rule is about an apostrophe inside a quoted
+        # name, so neither quote can be the delimiter. Both delimiters a name
+        # can use are matched — a backtick-quoted name breaks nutest the same
+        # way — and \x60 is the backtick, spelled that way so the pattern
+        # itself needs no delimiter it cannot hold.
+        pattern: `^\s*(export\s+)?def\s+("[^"]*'|\x60[^\x60]*')`
         unless: null
         raw: true
         offender: `def "a sibling's bare signature is not ours" [] {`
@@ -96,50 +99,111 @@ def strip-comments []: string -> list<record<no: int, text: string>> {
     | each {|l| {no: $l.no text: ($l.text | split row " #" | first)} }
 }
 
-# Empty out quoted string bodies, keeping the quotes. A construct written
+# Empty out plain string bodies, keeping the delimiters. A construct written
 # INSIDE a string is prose, not a call: `def "listing survives glob
 # metacharacters"` is a test name and this file's own `offender:` samples are
 # violations on purpose. Both used to be reported, which is why this file
 # linted only the sources.
 #
-# Same crude-but-safe property as strip-comments: `[^"]*` cannot span a quote,
-# so each pair is emptied on its own and an odd quote at worst hides code from
-# a rule. It cannot invent a violation, and a real call keeps its command word
-# — `glob $"($dir)/*"` becomes `glob $""`, which still matches.
-def strip-strings []: string -> string {
-    str replace --all --regex '"[^"]*"' '""' | str replace --all --regex "'[^']*'" "''"
+# Why a scan and not two `str replace --regex` passes, which is what this was:
+# `"[^"]*"` pairs quotes blindly, so `$"a=\"x\" (ls $dir | get name)"` — the
+# shape `tests/test_pubkey.nu:127` already writes — had its escaped quote read
+# as a terminator, and the emptied span then swallowed the live `ls`. Measured:
+# that line planted in a source file passed the linter. Two passes also lose to
+# a mixed line (`let a = 'it"s'` before a `glob`, `"x'y"` after): whichever
+# quote type goes first mis-pairs across the other's body. Blanking a linter
+# does not fail loudly — it just stops finding things.
+#
+# An INTERPOLATED string keeps its body: `$"…(ls $dir)…"` holds a real call
+# inside the parens, and a `$"…"` naming a forbidden construct as prose exists
+# nowhere in this repo, so keeping it costs no false positive and closes the
+# hole. Known limit, and the reason it is stated rather than handled: a string
+# left open at end of line is blanked to the end of that line, and the line
+# after it is read as code.
+def blank-strings []: string -> string {
+    mut out = ""
+    mut delim = "" # the quote we are inside, "" when outside one
+    mut interp = false # ...and whether a `$` opened it
+    mut escaped = false
+    mut prev = ""
+    for c in ($in | split chars) {
+        if $delim == "" {
+            # Backticks are a string delimiter too — the apostrophe rule below
+            # has to write both other quotes, so its own patterns use them.
+            if $c in ['"' "'" '`'] {
+                $delim = $c
+                $interp = ($prev == '$')
+            }
+            $out = $out + $c
+        } else if $escaped {
+            # Only `"…"` honours a backslash; `'…'` and backticks take it raw.
+            $escaped = false
+            if $interp { $out = $out + $c }
+        } else if $c == '\' and $delim == '"' {
+            $escaped = true
+            if $interp { $out = $out + $c }
+        } else if $c == $delim {
+            $delim = ""
+            $interp = false
+            $out = $out + $c
+        } else if $interp {
+            $out = $out + $c
+        }
+        $prev = $c
+    }
+    $out
 }
 
 def violations [text: string]: nothing -> list<record> {
     $text
     | strip-comments
     | each {|line|
-        let code = $line.text | strip-strings
-        $RULES | each {|rule|
-            let subject = if $rule.raw { $line.text } else { $code }
-            let hit = $subject =~ $rule.pattern
-            let excused = $rule.unless != null and ($subject | str contains $rule.unless)
-            if $hit and not $excused {
-                {line: $line.no rule: $rule.name text: ($line.text | str trim)}
+        # Blanking only ever deletes characters between delimiters that stay
+        # put, so a line whose raw text holds the construct nowhere cannot grow
+        # one. Skipping those keeps the scan off ~99% of lines; the verdict is
+        # still decided on the blanked text, including the `unless` token —
+        # `let x = "--all"` must not excuse the bare `ls` beside it.
+        let candidates = $RULES | where {|rule| $line.text =~ $rule.pattern }
+        if ($candidates | is-empty) { [] } else {
+            let code = $line.text | blank-strings
+            $candidates | each {|rule|
+                let subject = if $rule.raw { $line.text } else { $code }
+                let hit = $subject =~ $rule.pattern
+                let excused = $rule.unless != null and ($subject | str contains $rule.unless)
+                if $hit and not $excused {
+                    {line: $line.no rule: $rule.name text: ($line.text | str trim)}
+                }
             }
         }
     }
     | flatten
 }
 
-# Every .nu file in the repo: the three scanned directories plus the repo root
+# Every .nu file in the repo: the scanned directories, walked all the way down
+# so a future tests/helpers/ is not silently unlinted, plus the repo root
 # itself, which is listed non-recursively and so contributes toolkit.nu alone.
-def scanned-files []: nothing -> list<path> {
-    [$REPO_ROOT] ++ ($SCAN_DIRS | each {|d| $REPO_ROOT | path join $d })
-    | each {|d| list-files $d --suffix ".nu" }
-    | flatten
+def scanned-files [dir: path]: nothing -> list<path> {
+    if $dir == $REPO_ROOT {
+        list-files $dir --suffix ".nu"
+    } else {
+        list-files $dir --recursive --suffix ".nu"
+    }
 }
 
 @test
 def "known defect classes are absent from the sources and tests" [] {
-    let files = scanned-files
     # A linter that finds no files passes vacuously — the exact shape of
-    # "OK: all 0 objects verified" this repo shipped once already.
+    # "OK: all 0 objects verified" this repo shipped once already. Counted per
+    # directory, not as one total: `list-files` answers [] for a directory that
+    # is not there, so a renamed SCAN_DIRS entry would drop out of a combined
+    # count of 39 and still clear a floor of 35.
+    let files = [$REPO_ROOT] ++ ($SCAN_DIRS | each {|d| $REPO_ROOT | path join $d })
+        | each {|d|
+            let here = scanned-files $d
+            assert ($here | is-not-empty) $"no .nu files found under ($d) — is it still there?"
+            $here
+        }
+        | flatten
     assert (($files | length) >= 35) $"only ($files | length) .nu files found under ($REPO_ROOT)"
 
     let found = $files | each {|f|
@@ -181,4 +245,36 @@ def "a forbidden construct inside a string literal is not a violation" [] {
     assert equal (violations "        offender: 'let entries = ls $dir | get name'") []
     # …but the call around the string still counts.
     assert equal (violations 'let hits = glob $"($dir)/*.pub"' | get rule) ["no glob pattern built from a path"]
+}
+
+# Every line here passed the two-regex stripper this replaced — the blanked
+# span ran past where the string actually ended and took a live call with it.
+# A linter that stops finding things says nothing while it does so, so the
+# cases that broke it are pinned rather than remembered.
+@test
+def "a call the blanking used to swallow is still a violation" [] {
+    # An escaped quote is not a terminator. This exact shape is written at
+    # tests/test_pubkey.nu:127.
+    assert equal (
+        violations 'let names = $"a=\"x\" (ls $dir | get name)"' | get rule
+    ) ["ls must pass --all"]
+
+    # Mixed delimiters: neither "doubles first" nor "singles first" survives
+    # this, because each quote type appears inside the other's body. Written
+    # with backticks, the one delimiter that can hold both.
+    assert equal (
+        violations `let a = 'it"s' ; let hits = glob $pat ; let b = "x'y"` | get rule
+    ) ["no glob pattern built from a path"]
+
+    # A real call inside an interpolation is code, not prose.
+    assert equal (violations 'print $"count: (ls $dir | length)"' | get rule) ["ls must pass --all"]
+
+    # An `unless` token sitting inside a string excuses nothing.
+    assert equal (violations 'let flag = "--all" ; ls $d' | get rule) ["ls must pass --all"]
+
+    # The apostrophe rule covers both delimiters a def name can use; only the
+    # double-quoted form is its offender sample.
+    assert equal (
+        violations "def `a sibling's bare signature is not ours` [] {" | get rule
+    ) ["no apostrophe in a def name"]
 }
