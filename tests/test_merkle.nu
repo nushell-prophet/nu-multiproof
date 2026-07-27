@@ -364,6 +364,46 @@ def "a directory row does not verify against a directory that was rewritten" [] 
     assert equal $tampered_root.content_verified false
 }
 
+# The dir-row edition of the symlink attack: the git index still lists
+# sub/inner.txt as a regular file, so the builder's mode-120000 gate never
+# fires — the swap happens on disk after sealing, which is exactly the state a
+# verifier must not trust. The outside directory holds the EXACT sealed bytes,
+# so a verifier that follows the link re-derives the proven CID and answers
+# `content_verified: true, valid: true` for content the bundle does not
+# contain — and a MISMATCH on other bytes makes it a confirmation oracle about
+# the verifier's own files. The only non-oracle answer is a refusal.
+@test
+def "a proven directory swapped for a symlink is refused, not re-derived" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle write-root --repo $repo
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let dir_proof = merkle prove sub --repo $repo
+    let root_proof = merkle prove "." --repo $repo
+
+    let outside = $"($tmp_dir)/outside-dir"
+    mkdir $outside
+    "world\n" | save --force $"($outside)/inner.txt" # the sealed bytes, byte for byte
+    rm --recursive $"($repo)/sub"
+    ^ln -s $outside $"($repo)/sub"
+
+    # "outside", not true (the bytes match) and not false (false would be the
+    # oracle's other half): the check refuses before reading anything.
+    let swapped = merkle verify $dir_proof --repo $repo
+    assert equal $swapped.content_verified "outside"
+    assert not $swapped.valid "a symlinked-away directory verified against outside content"
+    assert ($swapped.error | str contains "sub")
+
+    # "." commits to the same subtree, so it must refuse identically.
+    let root_row = merkle verify $root_proof --repo $repo
+    assert equal $root_row.content_verified "outside"
+    assert not $root_row.valid
+}
+
 # The scope line, stated as a test rather than left to be discovered: the
 # manifest catalogues git-tracked files, so an untracked file is outside what
 # any row commits to. Making it a divergence would fail verification on every

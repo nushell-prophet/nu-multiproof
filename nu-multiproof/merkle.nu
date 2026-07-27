@@ -8,7 +8,7 @@
 
 use _repo.nu repo-root
 use _fs.nu [list-files list-dirs]
-use _tracked.nu content-tree
+use _tracked.nu [content-tree resolve-leaf-file]
 use _cid-helpers.nu node-cid
 use _layout.nu [manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir MERKLE_ROOT_FILE]
 use _merkle-helpers.nu [
@@ -19,48 +19,11 @@ use _allowed-signers.nu check-signer-known
 use ssh-sign.nu
 use ots.nu
 
-# Where a leaf's filepath actually lands on disk, and whether that object is
-# the kind of thing the catalogue can describe.
-#
-# validate-leaf constrains the path *text* — no leading "/", no ".." — but the
-# text is not the object. `open --raw` follows links, so a bundle shipping
-# `leaked.txt -> /home/victim/secret` alongside a row whose content_sha256 is
-# the hash of the guessed content got `content_verified: true, valid: true`:
-# the bundle "proved" it contains a file it does not contain, and doubled as a
-# confirmation oracle for the verifier's own files. README's tree spec says
-# "Symlinks: refused, never followed", but that refusal lived only in
-# tree-hashes, the builder — a verifier must not assume the builder ran.
-#
-# Two distinct invariants, so two checks:
-#   symlink   — a manifest row describes one object, and a link is two (the
-#               link and its target). tree-hashes refuses to catalogue one, so
-#               finding one here means disk diverges from the catalogue.
-#               Checked first: a broken link exists as a link but not as a
-#               file, and would otherwise report the vaguer "missing".
-#   outside   — an intermediate component can be a link even when the final one
-#               is a regular file (`a/b.txt` with `a -> /etc`). `path expand`
-#               resolves the whole chain, so containment is checked on the
-#               resolved path, not on the text validate-leaf already saw.
-#               Not a `str starts-with ($root + "/")`: that is separator
-#               arithmetic, and with `--repo /` it builds the prefix "//" and
-#               calls every row "outside". `path relative-to` states the
-#               question directly and throws when there is no such prefix.
-#   directory — a row attesting a content_sha256 whose path is a directory on
-#               disk. Only a hand-built manifest produces it, and it used to
-#               reach `open --raw <dir>` and die with a bare "I/O error"
-#               naming neither the path nor the leaf: a hostile artifact
-#               crashing the verifier rather than getting a verdict.
-def resolve-leaf-file [target: path, filepath: string]: nothing -> string {
-    let joined = $target | path join $filepath
-    if ($joined | path type) == "symlink" { return "symlink" }
-    let contained = try { $joined | path expand | path relative-to ($target | path expand); true } catch { false }
-    if not $contained { return "outside" }
-    match ($joined | path type) {
-        "file" => "ok"
-        "dir" => "directory"
-        _ => "missing"
-    }
-}
+# The refusal to follow a leaf path onto an object the catalogue cannot
+# describe (symlink / outside / directory / missing) lives in _tracked.nu
+# resolve-leaf-file, shared with content-tree's own enumeration — the builder
+# must not be assumed to have run, and the verifier's file rows and its
+# directory re-derivation must refuse identically.
 
 # Content check for a row that attests no sha256 — a directory, or "." itself.
 #
@@ -114,8 +77,18 @@ def derive-dir-cid [target: path, leaf: record]: nothing -> any {
     # A directory CID is a function of the whole subtree, so this reads every
     # tracked file. Only rows that attest no sha256 reach it — file rows keep
     # the single-file hash.
-    let nodes = (content-tree $target).nodes
-    let node = $nodes | get --optional $leaf.filepath
+    # Why --lenient: the builder throws on a tracked path that no longer
+    # resolves to a regular file inside the repo; here that disk state IS the
+    # verdict. A proven directory swapped for a symlink reopens, one level up,
+    # the containment hole resolve-leaf-file closes for file rows, and it must
+    # be refused BEFORE any bytes are read — a MISMATCH/matches answer over
+    # followed links doubles as an oracle about content the bundle does not
+    # contain. Coarse by design: the problems cover the whole tracked tree,
+    # not just this row's subtree — a partial re-derivation would need a
+    # second, differing enumeration (see 785420b).
+    let tree = content-tree $target --lenient
+    if ($tree.problems | is-not-empty) { return $tree.problems.0.status }
+    let node = $tree.nodes | get --optional $leaf.filepath
     if $node == null { return "missing" }
     ($node | node-cid) == $leaf.content_cid
 }
@@ -371,6 +344,8 @@ export def verify [
         $"($proof.leaf.filepath) is proven as a directory but no tracked files sit under it"
     } else if $content_verified == "missing" {
         $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"
+    } else if ($content_verified in ["symlink" "outside" "directory"]) and $proof.leaf.content_sha256 == "" {
+        $"a tracked path under ($proof.leaf.filepath) does not resolve to a regular file inside ($target) \(($content_verified)\) — re-deriving the directory CID would read content the sealed catalogue does not describe"
     } else if $content_verified == "symlink" {
         $"($proof.leaf.filepath) is a symlink on disk, and the catalogue describes regular files only — following it would verify content this bundle does not carry"
     } else if $content_verified == "directory" {
