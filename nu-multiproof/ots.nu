@@ -269,7 +269,14 @@ export def info [ots_file: path] {
 # posting the digest. Same seam as `upgrade --response-file`, and for the same
 # reason: without it the assemble/validate/write path can only be exercised
 # against a live calendar, so it was not exercised at all.
-@example "timestamp the manifest against the OTS calendar" { ots stamp multiproofs/tree-hashes.csv }
+#
+# The live form is `ots stamp multiproofs/tree-hashes.csv` with no flags — it
+# posts the file's digest to the public calendar, a permanent public write, so
+# it is named here in prose rather than in the @example: an example must be
+# safe to paste. A fully runnable offline example is impossible for this
+# command — a valid calendar answer only ever comes from a calendar — so the
+# example shows the offline seam and fails locally when the file is absent.
+@example "assemble a proof from a saved calendar answer, offline" { ots stamp multiproofs/tree-hashes.csv --response-file calendar-answer.bin }
 export def stamp [file: path --out-dir: path --response-file: path] {
     let out_dir = if $out_dir != null { $out_dir } else {
         ots-dir (repo-root)

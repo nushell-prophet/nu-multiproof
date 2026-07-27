@@ -29,8 +29,24 @@ use _key-helpers.nu with-signing-key
 # gives explicit key choice for a one-off. "Seal but do not sign" is
 # `tree-hashes` followed by `merkle write-root` — the two commands this step
 # wraps — so the flag bought a second name for a path that already exists.
-@example "full seal of the current repo" { seal }
-@example "seal without timestamping" { seal --no-stamp }
+# The live form is plain `seal` in an initialized repo — step 4 then posts the
+# root statement's digest to the public OTS calendar, a permanent public write.
+# That is why it is named here in prose and the example below stays offline:
+# an @example must be pasteable into a throwaway directory without side
+# effects beyond it.
+@example "seal a throwaway repo, offline (drop --no-stamp for the calendar post)" {
+    cd (mktemp --directory)
+    git init -q
+    git config user.email seal@example.com
+    git config user.name sealer
+    ssh-keygen -q -t ed25519 -N "" -f sealkey
+    git config user.signingKey ./sealkey.pub
+    "hello" | save file.txt
+    git add file.txt
+    git commit -q -m "init"
+    init
+    seal --no-stamp
+}
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
