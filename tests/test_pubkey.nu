@@ -8,11 +8,20 @@ use std/testing *
 
 use ../nu-multiproof/pubkey.nu
 
+# Why a const: one test asks what the operator sees under a fixed umask, which
+# only a separate process can answer.
+const MODULE_DIR = path self ../nu-multiproof
+
 const ED25519 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOi7LinplEQewM3/l8Ol9rE85+YwhvLPKf+ZUUf36Xuf"
 const RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDExnwUVhsIh66w1OIGHFyr0prionxHoHEmkSdgDvMo86vDarHwO88H5yQ4ZhRcUTBS4pLYMbGMeGQfHQBbJI4P8Xarsgys7TfMZ9oJq7/tvSnt85xfkXixhSSTMml3D80FAvhS4hPjnSbqaaVeBcW6d3uCDGpibXZ9eted9nY1PsVtsvET57ooJ8qGh4e3lqkwCXJaCKGAY4zqtTZKAEjsm0PcCueFDuN9zWTTzYy9XZucqcGaBDslrylix5AW81QwOzWlkE7nukWGCguSLUezms8yr1NU9Z2HBlwt3hVC5BLqPOrDWR55jhEQuGV8RVZBT6LaVfVdPqhNA1lJTn9j"
 # A hardware-backed key, assembled field by field (type, key, application) —
 # `ssh-keygen -t ed25519-sk` needs a security key present.
 const SK = "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIDfEkyImHgI7LfesBcs1Q1OQlod52hqMaAYxpRExv2OqAAAABHNzaDo="
+# The seventh accepted type, assembled the same way (type, curve, point,
+# application) around a real nistp256 point — `ssh-keygen -t ecdsa-sk` needs a
+# security key present, so without this the type had no vector at all and the
+# fixed-point claim covered six of seven.
+const SK_ECDSA = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBE/Y3fEWc3l4tPCRaXjcZ+s6DEyWxEpTpgFGyyoDGyE996NZmu1UYuzksgXTOyTx+tGMHOzsBx5xlUKzh7FgTIcAAAAEc3NoOg=="
 # RSA above with one redundant 0x00 byte in front of its modulus. RFC 4251
 # allows a leading zero only when the next byte's high bit is set, but OpenSSH
 # trims leading zeros while parsing instead of refusing them — `ssh-keygen -lf`
@@ -87,7 +96,7 @@ def "canonical is a fixed point for real keys of every accepted type" [] {
             open --raw $"($path).pub" | str trim
         }
 
-    for key in ($generated ++ [$ED25519 $RSA $SK]) {
+    for key in ($generated ++ [$ED25519 $RSA $SK $SK_ECDSA]) {
         let line = $key | split row --regex '\s+' | first 2 | str join " "
         assert equal ($key | pubkey canonical) $"($line)\n"
         # and applying it twice changes nothing more
@@ -123,6 +132,34 @@ def "canonical refuses the key shapes ssh-keygen reads but pubkeys/ must not hol
     }
 }
 
+# The refusal an operator actually has to act on, and the one branch where the
+# reason comes from another program. `ssh-keygen -e` retries a public key it
+# cannot read as a *private* key, so at a common umask the temp file trips the
+# UNPROTECTED PRIVATE KEY FILE banner and the reported cause became a
+# permissions complaint about a path that no longer exists — a message that
+# changed with the operator's umask. Run under a fixed umask 0022 for that
+# reason: at 0077 the bug is invisible.
+@test
+def "an unreadable key reports the parser reason, not a umask artifact" [] {
+    let tmp_dir = $in.tmp_dir
+    let script = $"($tmp_dir)/probe.nu"
+    # Valid base64 of the right shape, but not a key: it gets past the type
+    # allowlist and dies inside ssh-keygen, which is the branch under test.
+    let broken = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICQSxzg3nX7AN3jgd3UK5yRoZgY/SX5cuFFiFwpjKuj="
+    [
+        $"use ($MODULE_DIR)/pubkey.nu"
+        $"const BROKEN = \"($broken)\""
+        # A plain "…" string, not $"…": the `$e` inside must reach the probe as
+        # source text, not be resolved here.
+        "try { $BROKEN | pubkey canonical } catch {|e| print $e.msg }"
+    ] | str join "\n" | save --force $script
+
+    let out = ^bash -c $"umask 0022; exec nu ($script)" | complete
+    assert ($out.stdout | str contains "invalid format") $"expected ssh-keygen's parse error, got: ($out.stdout)"
+    assert (not ($out.stdout | str contains "UNPROTECTED")) $"the reason is a umask artifact: ($out.stdout)"
+    assert (not ($out.stdout | str contains $nu.temp-dir)) $"the reason names a temp path the operator cannot look at: ($out.stdout)"
+}
+
 @test
 def "canonical rejects a truncated or padded blob" [] {
     # first field only: the type, with no key after it
@@ -134,16 +171,20 @@ def "canonical rejects a truncated or padded blob" [] {
     assert error {|| $"ssh-ed25519 ($padded)" | pubkey canonical }
 }
 
-# The outside oracle. Every check above is this codebase reading its own
-# fixtures, so the `side` of each rule could be wrong in the code and in the
-# test at once. `ssh-keygen -lf` is the parser that actually decides whether a
-# key in pubkeys/ can verify anything, so the two must accept the same set —
-# a key this accepts and OpenSSH refuses is a trust-list entry that silently
-# verifies nothing.
+# The outside oracle, and it pins one direction only: nothing `canonical`
+# accepts may be a line `ssh-keygen -lf` cannot load. A key that fails that way
+# is a trust-list entry which silently verifies nothing.
 #
-# Not in the list, and deliberately: certificates
-# (`ssh-ed25519-cert-v01@openssh.com`) and authorized_keys option prefixes,
-# which ssh-keygen reads and this module refuses on purpose.
+# Not the converse, and that is deliberate — `canonical` is strictly the
+# narrower of the two. `-lf` loads a certificate, an authorized_keys options
+# prefix and a padded copy of a registered key; each is refused here, and each
+# has its own test above. Asserting set *equality* would either fail or, worse,
+# pass by leaving those vectors out of the candidate list, which is what an
+# earlier version of this test did.
+#
+# The check is one-sided, so it would also pass if `canonical` refused
+# everything. The real keys below are asserted accepted by both to keep it from
+# holding vacuously.
 @before-each
 def setup []: nothing -> record {
     {tmp_dir: (mktemp --directory)}
@@ -173,7 +214,7 @@ def canonical-accepts [line: string]: nothing -> bool {
 }
 
 @test
-def "canonical and ssh-keygen accept the same keys" [] {
+def "canonical never accepts a key ssh-keygen cannot load" [] {
     let tmp_dir = $in.tmp_dir
     let ed_blob = ($ED25519 | split row " " | get 1 | decode base64)
     let ed_type = ($ed_blob | bytes at 0..<15)
@@ -190,6 +231,7 @@ def "canonical and ssh-keygen accept the same keys" [] {
         $ED25519
         $RSA
         $SK
+        $SK_ECDSA
         # An ed25519 point that is not 32 bytes — the field walk alone took it.
         $"ssh-ed25519 (($ed_type | bytes add --end 0x[00000010] | bytes add --end 0x[41414141414141414141414141414141]) | encode base64)"
         # ...and one with no point at all.
@@ -225,16 +267,28 @@ def "canonical and ssh-keygen accept the same keys" [] {
         "hello world"
     ]
 
-    let disagreements = $candidates | each {|line|
+    # The whole line, not a prefix: several candidates are corruptions of a
+    # real key and share its first 48 characters, so a truncated key would put
+    # them in the same bucket as the key they attack.
+    let verdicts = $candidates | each {|line|
         {
-            line: ($line | str substring 0..48)
+            line: $line
             canonical: (canonical-accepts $line)
             ssh_keygen: (ssh-keygen-accepts $tmp_dir $line)
         }
-    # A closure, not `where canonical != ssh_keygen`: the bare word on the
-    # right of a `where` shorthand is a string literal, so that form compares
-    # every row against "ssh_keygen" and reports all of them as disagreeing.
-    } | where {|r| $r.canonical != $r.ssh_keygen }
+    }
 
-    assert equal $disagreements []
+    # A closure, not `where canonical and not ssh_keygen`: the bare word on the
+    # right of a `where` shorthand is a string literal, so that form compares
+    # every row against "ssh_keygen" instead of reading the column.
+    let unloadable = $verdicts | where {|r| $r.canonical and not $r.ssh_keygen }
+        | each {|r| $r | update line ($r.line | str substring 0..48) }
+    assert equal $unloadable [] "canonical accepted a key ssh-keygen cannot load"
+
+    # Not vacuous: a `canonical` that refused everything would satisfy the
+    # assertion above.
+    let real_keys = $generated ++ [$ED25519 $RSA $SK $SK_ECDSA]
+    let real = $verdicts | where {|r| $r.line in $real_keys }
+    assert equal ($real | length) ($real_keys | length) "a real key is missing from the candidate list"
+    assert ($real | all {|r| $r.canonical and $r.ssh_keygen }) $"a real key was refused: ($real | where {|r| not $r.canonical } | get line | each {|l| $l | str substring 0..48 })"
 }

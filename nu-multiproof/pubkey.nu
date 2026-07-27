@@ -90,9 +90,11 @@ export def canonical []: string -> string {
 #
 # -e writes the key out in RFC 4716 form and -i reads it back, which forces
 # OpenSSH to parse the blob into its own structures and re-serialize it with
-# its own encoder. The result is a fixed point for every type in KEY_TYPES
-# (pinned by "canonical is a fixed point for real keys of every accepted
-# type"), so a difference means the input was not what OpenSSH writes. RFC 4716
+# its own encoder. The result is a fixed point for every type in KEY_TYPES —
+# all seven, the two sk-* ones through hand-assembled vectors, since
+# `ssh-keygen -t ed25519-sk` needs hardware present (pinned by "canonical is a
+# fixed point for real keys of every accepted type"). A difference therefore
+# means the input was not what OpenSSH writes. RFC 4716
 # and not PEM/PKCS8 because it is the one -m format that covers ed25519 and
 # sk-* too. The envelope carries a `Comment:` header naming the local user and
 # host; -i drops it, and only `<type> <base64>` is ever compared or returned.
@@ -105,20 +107,36 @@ def openssh-reserialize [line: string]: nothing -> string {
         let source = $dir | path join "key.pub"
         let envelope = $dir | path join "key.rfc4716"
         $"($line)\n" | save --force $source
+        # Why 0600 on a *public* key: when -e cannot read the line as a public
+        # key it retries it as a private one, and a private key at the default
+        # umask trips the UNPROTECTED PRIVATE KEY FILE banner. The operator then
+        # got a permissions complaint about a temp path that no longer exists
+        # instead of `invalid format` — a message that changed with their umask.
+
+        ^chmod 600 $source
 
         let exported = do { ^ssh-keygen -e -m RFC4716 -f $source } | complete
         if $exported.exit_code != 0 {
             # Why `complete`: ssh-keygen writes the reason ("invalid format",
             # "unknown key type") to stderr, and a bare external call would
-            # throw with none of it reaching the operator.
-            error make {msg: $"ssh-keygen cannot read this SSH pubkey: ($exported.stderr | str trim)"}
+            # throw with none of it reaching the operator. The temp path is
+            # swapped out of the text — it is gone by the time anyone reads
+            # this, and sending the operator to look for it is worse than
+            # saying nothing.
+            error make {msg: $"ssh-keygen cannot read this SSH pubkey: (reason $exported $source)"}
         }
         $exported.stdout | save --force $envelope
 
         let imported = do { ^ssh-keygen -i -m RFC4716 -f $envelope } | complete
         if $imported.exit_code != 0 {
-            error make {msg: $"ssh-keygen cannot read back this SSH pubkey: ($imported.stderr | str trim)"}
+            error make {msg: $"ssh-keygen cannot read back this SSH pubkey: (reason $imported $envelope)"}
         }
         $imported.stdout | str trim
     }
+}
+
+# What ssh-keygen said, with the temp path it names replaced by what that path
+# held. The caller is looking at a key line, not at a file this module made.
+def reason [result: record path: path]: nothing -> string {
+    $result.stderr | str trim | str replace --all $path "the given key"
 }
