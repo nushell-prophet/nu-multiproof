@@ -148,11 +148,11 @@ def fingerprint [key: string]: nothing -> string {
 # private key (multi-line, no pubkey type prefix) can never land — that much is
 # pinned by the private-key refusal tests.
 #
-# `pubkey canonical` also decodes the key material and checks that the blob's
-# own type field matches the declared one (tests/test_pubkey.nu "canonical
-# rejects key material that is not a key"), so `ssh-rsa A` no longer passes.
-# What it does not check is whether the key is *usable* — a well-formed blob
-# with a garbage public point still lands.
+# `pubkey canonical` also hands the line to ssh-keygen and refuses anything
+# that parser will not load, so a key pubkeys/ holds is one some
+# `ssh-keygen -Y verify` can actually use — an off-curve point no longer lands
+# (tests/test_pubkey.nu "canonical and ssh-keygen accept the same keys"). What
+# it does not check is whether anyone holds the matching private key.
 
 # Resolve an SSH key path to its public-key file.
 # Why: --pubkey and the user.signingKey file-path branch must never copy a
@@ -167,12 +167,14 @@ def resolve-pubkey-file [key_path: path]: nothing -> path {
     if not ($expanded | path exists) {
         error make {msg: $"pubkey file not found: ($key_path)"}
     }
-    let first_line = (open --raw $expanded | lines | first | default "")
-    if (try { $first_line | pubkey canonical } | is-not-empty) {
-        $expanded
-    } else {
-        error make {msg: $"($key_path) does not look like an SSH public key — point at the .pub file"}
-    }
+    # Why canonical-file and not a `try … | is-not-empty`: the swallowed form
+    # answered "does not look like an SSH public key" for every refusal alike,
+    # including a key ssh-keygen loads happily and this module rejects for its
+    # *encoding* — an operator reading that would go looking for the wrong
+    # problem. canonical-file raises the real reason with the file's name on it.
+    # A private key fails here too: it is multi-line, which canonical refuses.
+    canonical-file $expanded
+    $expanded
 }
 
 # Derive a short name from an SSH public key string. The result becomes a file

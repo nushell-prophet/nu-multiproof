@@ -13,6 +13,13 @@ const RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDExnwUVhsIh66w1OIGHFyr0prionx
 # A hardware-backed key, assembled field by field (type, key, application) —
 # `ssh-keygen -t ed25519-sk` needs a security key present.
 const SK = "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIDfEkyImHgI7LfesBcs1Q1OQlod52hqMaAYxpRExv2OqAAAABHNzaDo="
+# RSA above with one redundant 0x00 byte in front of its modulus. RFC 4251
+# allows a leading zero only when the next byte's high bit is set, but OpenSSH
+# trims leading zeros while parsing instead of refusing them — `ssh-keygen -lf`
+# takes this line, exits 0 and prints the *same* SHA256 fingerprint as RSA.
+# That is the fork: one key, two canonical lines, two file-byte CIDs, two
+# identities. Built by hand from the constant above, not by this repo's code.
+const RSA_PADDED_MODULUS = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAgAAxMZ8FFYbCIeusNTiBhxcq9Ka4qJ8R6BxJpEnYA7zKPOrw2qx8DvPB+ckOGYUXFEwUuKS2DGxjHhkHx0AWySOD/F2q7IMrO03zGfaCau/7b0p7fOcX5F4sYUkkzJpdw/NBQL4UuIT450m6mmlXgXFund7ggxqYm12fXrXnfZ2NT7FbbLxE+e6KCfKhoeHt5apMAlyWgihgGOM6rU2SgBI7JtD3ArnhQ7jfc1k082MvV2bnKnBmgQ7Ja8pYseQFvNUMDs1pZBO57pFhgoLki1Hs5rPMq9TVPWdhwZcLd4VQuQS6jzqw1keeY4RELhlfEVWQU+i2lX1XT6oTQNZSU5/Yw=="
 
 @test
 def "canonical is `<type> <base64>` + newline: comment and extra whitespace dropped" [] {
@@ -47,6 +54,73 @@ def "canonical rejects key material that is not a key" [] {
     # a real ed25519 blob presented under another type: OpenSSH reads the
     # inner type, so the line lies about what the key is
     assert error {|| $"ssh-rsa ($ED25519 | split row ' ' | get 1)" | pubkey canonical }
+}
+
+# The identity fork, and the reason `ssh-keygen -lf` is not the oracle here:
+# it loads this line, exits 0 and prints RSA's own fingerprint. Whoever holds
+# alice's public key can therefore file a second canonical line for it, and
+# `init`'s duplicate check — which compares canonical bytes — does not fire.
+# `ssh-sign verify` then names that second registration as the signer of
+# alice's signature.
+@test
+def "canonical refuses a second encoding of a key it already accepts" [] {
+    let tmp_dir = $in.tmp_dir
+    assert (ssh-keygen-accepts $tmp_dir $RSA_PADDED_MODULUS) "the vector no longer loads — it must be a key OpenSSH takes, or it proves nothing"
+    assert equal (fingerprint-of $tmp_dir $RSA_PADDED_MODULUS) (fingerprint-of $tmp_dir $RSA) "the vector must be the same key to be a fork"
+
+    assert equal ($RSA | pubkey canonical) $"($RSA)\n"
+    let outcome = try { $RSA_PADDED_MODULUS | pubkey canonical; "accepted" } catch {|e| $e.msg }
+    assert ($outcome | str contains "not the encoding OpenSSH writes") $"the padded copy was accepted: ($outcome)"
+}
+
+# The other half of the same rule: re-encoding must leave a real key alone. If
+# the round trip moved any accepted key's bytes, `canonical` would refuse
+# ordinary keys — and every stored identity would depend on the OpenSSH build
+# that wrote it.
+@test
+def "canonical is a fixed point for real keys of every accepted type" [] {
+    let tmp_dir = $in.tmp_dir
+    let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
+        | each {|args|
+            let path = $"($tmp_dir)/fixed-($args | str join '-')"
+            ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
+            open --raw $"($path).pub" | str trim
+        }
+
+    for key in ($generated ++ [$ED25519 $RSA $SK]) {
+        let line = $key | split row --regex '\s+' | first 2 | str join " "
+        assert equal ($key | pubkey canonical) $"($line)\n"
+        # and applying it twice changes nothing more
+        assert equal ($key | pubkey canonical | pubkey canonical) $"($line)\n"
+    }
+}
+
+# What the type allowlist is for, and the only thing that is: two shapes
+# ssh-keygen reads happily — it loads a certificate and re-serializes it
+# unchanged, and it takes an authorized_keys line with an options prefix. Both
+# are refused here on the type field alone. A certificate carries its own
+# principals and validity window, so storing one in pubkeys/ would put a second
+# authority beside the file name this repo treats as the identity; an options
+# prefix would make the stored bytes carry an instruction.
+#
+# Mutation-checked: deleting the allowlist leaves every other test in this file
+# green, because the round trip's accept-set is ssh-keygen's own.
+@test
+def "canonical refuses the key shapes ssh-keygen reads but pubkeys/ must not hold" [] {
+    let tmp_dir = $in.tmp_dir
+    let ca = $"($tmp_dir)/ca"
+    let user = $"($tmp_dir)/user"
+    ^ssh-keygen -t ed25519 -f $ca -N "" -q
+    ^ssh-keygen -t ed25519 -f $user -N "" -q -C "alice@host"
+    ^ssh-keygen -s $ca -I alice-id -n alice -V +52w $"($user).pub"
+
+    let cert = open --raw $"($user)-cert.pub" | str trim
+    let options_prefix = $"command=\"rm -rf /\" (open --raw $"($user).pub" | str trim)"
+
+    for line in [$cert $options_prefix] {
+        assert (ssh-keygen-accepts $tmp_dir $line) $"vector no longer loads in ssh-keygen, so it proves nothing: ($line | str substring 0..40)"
+        assert (not (canonical-accepts $line)) $"accepted into pubkeys/: ($line | str substring 0..40)"
+    }
 }
 
 @test
@@ -84,6 +158,14 @@ def ssh-keygen-accepts [dir: path line: string]: nothing -> bool {
     let file = $"($dir)/candidate.pub"
     $line | save --force $file
     (do { ^ssh-keygen -lf $file } | complete | get exit_code) == 0
+}
+
+# SHA256 fingerprint ssh-keygen computes for a key line — the identity OpenSSH
+# itself would report for it.
+def fingerprint-of [dir: path line: string]: nothing -> string {
+    let file = $"($dir)/fingerprint.pub"
+    $line | save --force $file
+    ^ssh-keygen -lf $file | str trim | split row " " | get 1
 }
 
 def canonical-accepts [line: string]: nothing -> bool {
@@ -124,6 +206,17 @@ def "canonical and ssh-keygen accept the same keys" [] {
         # alone, on both sides: a key ssh-keygen will not read is a trust-list
         # entry that verifies nothing.
         $"ssh-dss ((0x[00000007] | bytes add --end ("ssh-dss" | into binary) | bytes add --end 0x[00000001 01 00000001 02 00000001 03 00000001 04]) | encode base64)"
+        # The seven shapes the hand-written field walk accepted and ssh-keygen
+        # refuses, assembled field by field outside this repo. Counting
+        # length-prefixed fields only proves the bytes divide evenly; whether
+        # an mpint is a modulus or an EC point is on the curve is decided by
+        # the parser that will have to load the key.
+        "ssh-rsa AAAAB3NzaC1yc2EAAAABAwAAAAEF"
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAAA=="
+        "ssh-rsa AAAAB3NzaC1yc2EAAAAAAAAAAA=="
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
+        "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEAAAAEc3NoOg=="
         "ssh-rsa A"
         "ssh-rsa Zm9v"
         "ssh-../../../../tmp/pwn Zm9v"

@@ -276,6 +276,35 @@ def "init refuses a different inline key that derives the same name" [] {
     assert equal (open --raw $"($repo)/multiproofs/pubkeys/alicehost.pub") $registered
 }
 
+# The attack the duplicate check cannot see: mallory holds alice's *public*
+# key — it is public — and files a copy whose RSA modulus carries one redundant
+# leading zero. `ssh-keygen -lf` loads it and prints alice's own fingerprint,
+# and `check-registration` compares canonical bytes, which differ, so neither
+# the stem check nor the twin check fires. Registered, alice's signature then
+# verifies as mallory. Refused now because the bytes are not the ones OpenSSH
+# writes for that key.
+const RSA_PADDED_MODULUS = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAgAAxMZ8FFYbCIeusNTiBhxcq9Ka4qJ8R6BxJpEnYA7zKPOrw2qx8DvPB+ckOGYUXFEwUuKS2DGxjHhkHx0AWySOD/F2q7IMrO03zGfaCau/7b0p7fOcX5F4sYUkkzJpdw/NBQL4UuIT450m6mmlXgXFund7ggxqYm12fXrXnfZ2NT7FbbLxE+e6KCfKhoeHt5apMAlyWgihgGOM6rU2SgBI7JtD3ArnhQ7jfc1k082MvV2bnKnBmgQ7Ja8pYseQFvNUMDs1pZBO57pFhgoLki1Hs5rPMq9TVPWdhwZcLd4VQuQS6jzqw1keeY4RELhlfEVWQU+i2lX1XT6oTQNZSU5/Yw=="
+const RSA_ALICE = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDExnwUVhsIh66w1OIGHFyr0prionxHoHEmkSdgDvMo86vDarHwO88H5yQ4ZhRcUTBS4pLYMbGMeGQfHQBbJI4P8Xarsgys7TfMZ9oJq7/tvSnt85xfkXixhSSTMml3D80FAvhS4hPjnSbqaaVeBcW6d3uCDGpibXZ9eted9nY1PsVtsvET57ooJ8qGh4e3lqkwCXJaCKGAY4zqtTZKAEjsm0PcCueFDuN9zWTTzYy9XZucqcGaBDslrylix5AW81QwOzWlkE7nukWGCguSLUezms8yr1NU9Z2HBlwt3hVC5BLqPOrDWR55jhEQuGV8RVZBT6LaVfVdPqhNA1lJTn9j"
+
+@test
+def "init refuses a second encoding of a key it already holds" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+
+    $"($RSA_ALICE) alice@host\n" | save --force $"($tmp_dir)/alice.pub"
+    init --repo $repo --pubkey $"($tmp_dir)/alice.pub"
+
+    $"($RSA_PADDED_MODULUS) mallory@host\n" | save --force $"($tmp_dir)/mallory.pub"
+    let outcome = try { init --repo $repo --pubkey $"($tmp_dir)/mallory.pub"; "ok" } catch {|e| $e.msg }
+    assert ($outcome | str contains "not the encoding OpenSSH writes") $"the padded copy was registered: ($outcome)"
+    # The same key, so the fingerprints match — that is what makes this a fork
+    # rather than two keys, and what the twin check could not see.
+    assert equal (fingerprint-of $"($tmp_dir)/alice.pub") (fingerprint-of $"($tmp_dir)/mallory.pub")
+    assert equal (ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename }) ["alice.pub"]
+}
+
 # The key type reaches a file name when the key carries no comment, so a type
 # that is a path used to write outside pubkeys/: `key::ssh-../../../../pwned
 # Zm9v` created /tmp/pwned.pub. The refusal lives in `pubkey canonical`, which
