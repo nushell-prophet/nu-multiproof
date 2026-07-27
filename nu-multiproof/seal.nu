@@ -33,6 +33,7 @@ use _key-helpers.nu with-signing-key
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
+    --response-file: path # Calendar answer for step 4, instead of posting the digest
 ] {
     let root = repo-root $repo
     let manifest_path = manifest-path $root
@@ -129,8 +130,14 @@ export def main [
     # but seal may target a different repo via --repo (same fix as pubkeys-dir
     # in step 3). Without it, `seal --repo /other` writes the bundle into the
     # CWD's repo, or fails when CWD is not a repo.
+    #
+    # Why --response-file is forwarded: without it the only way to reach this
+    # step is a live calendar, so the whole of it — the out-dir choice, the
+    # frozen copy, the sig snapshot — went untested, and `--repo /other`
+    # writing its bundle into the CWD's repo was found by reading, not by the
+    # suite. Same test seam, and same argument, as `ots stamp --response-file`.
     if not $no_stamp {
-        let root_stamp = ots stamp $root_statement_path --out-dir $ots_dir
+        let root_stamp = ots stamp $root_statement_path --out-dir $ots_dir --response-file $response_file
         $result = ($result | insert root_ots $root_stamp.ots)
     }
 

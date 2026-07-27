@@ -3,7 +3,33 @@ use std/testing *
 
 use ../nu-multiproof/seal.nu
 use ../nu-multiproof/ssh-sign.nu
+use ../nu-multiproof/ots.nu
 use ../nu-multiproof/_sig.nu sig-files-for
+use ../nu-multiproof/_fs.nu list-files
+use _ots-fixtures.nu [build-calendar-response build-bitcoin-ots]
+
+# A repo with one commit and one registered signer — the state every test here
+# starts from. Returns the paths the assertions need.
+def make-sealable-repo [tmp_dir: path]: nothing -> record {
+    let repo = $"($tmp_dir)/repo"
+    mkdir $repo
+    ^git -C $repo init -q
+    ^git -C $repo config user.email "seal-test@example.com"
+    ^git -C $repo config user.name "Seal Test"
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    ^git -C $repo config user.signingKey $"($key_path).pub"
+    let pubkeys = $"($repo)/multiproofs/pubkeys"
+    mkdir $pubkeys
+    cp $"($key_path).pub" $"($pubkeys)/sshkey.pub"
+
+    "v1\n" | save --force $"($repo)/file.txt"
+    ^git -C $repo add file.txt
+    ^git -C $repo commit -q -m "init"
+
+    {repo: $repo key: $key_path pubkeys: $pubkeys ots_dir: $"($repo)/multiproofs/ots-timestamps"}
+}
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -180,4 +206,58 @@ def "seal keeps a co-signer sig over unchanged bytes and clears it once they cha
     "v2\n" | save --force $"($repo)/file.txt"
     seal --repo $repo --no-stamp
     assert equal (sig-files-for $root_file | each {|f| $f | path basename }) ["tree-root.txt.sshkey.sig"]
+}
+
+# Step 4, which every other test here skipped with --no-stamp. What it has to
+# get right is not the OTS bytes — test_ots.nu owns those — but that the bundle
+# lands in the repo seal was pointed at, holding the artifact it just signed
+# and the signature it just made. `--repo /other` writing its bundle into the
+# CWD's repo was a real bug, found by reading rather than by this suite.
+@test
+def "seal stamps the root statement into the target repo and bundles its signature" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    let response = $"($tmp_dir)/calendar-response.bin"
+    build-calendar-response | save --raw --force $response
+
+    let result = seal --repo $fx.repo --response-file $response
+
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    let bundle = $result.root_ots | path dirname
+    assert equal ($bundle | path dirname) $fx.ots_dir "bundle landed outside the target repo"
+    assert equal ($result.root_ots | path basename) "tree-root.ots"
+
+    # The proof commits to the bytes that were signed, not to some other file.
+    assert equal (ots info $result.root_ots | get hash) (open --raw $root_file | hash sha256)
+    assert equal (open --raw $"($bundle)/tree-root.txt") (open --raw $root_file)
+
+    # A bundle answers "who endorsed this content" on its own, so the signature
+    # seal made in step 3 has to be snapshotted beside the frozen copy.
+    assert equal (
+        list-files $bundle --suffix ".sig" | each {|f| $f | path basename }
+    ) ["tree-root.txt.sshkey.sig"]
+}
+
+# Step 1, the opportunistic upgrade loop, also skipped by every other test.
+# The property is that it cannot cost a seal: an archived proof that no longer
+# parses is a real problem worth printing, but seal must still produce this
+# run's manifest, root and signature. Anything anchored is left exactly as it
+# is — `ots upgrade` returns early rather than refetching.
+@test
+def "a corrupt archived proof does not abort the seal" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    mkdir $"($fx.ots_dir)/tree-root.DEADBEEF"
+
+    let anchored = $"($fx.ots_dir)/tree-root.DEADBEEF/tree-root.ots"
+    build-bitcoin-ots | save --raw --force $anchored
+    let anchored_before = open --raw $anchored | into binary
+    "not an OTS file at all" | save --raw --force $"($fx.ots_dir)/tree-root.DEADBEEF/broken.ots"
+
+    let result = seal --repo $fx.repo --no-stamp
+
+    assert equal (open --raw $anchored | into binary) $anchored_before "seal rewrote an already-anchored proof"
+    assert equal (ots info $anchored | get attestation.height) 123456
+    assert ($result.merkle_root | is-not-empty)
+    assert ($result.root_sig | path exists) "seal stopped before signing"
 }
