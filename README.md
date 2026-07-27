@@ -2,7 +2,7 @@
 
 Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git` and `ssh-keygen` — network calls use Nushell's built-in `http`.
 
-🚧 The code in this repo was generated via `claude code`, is barely tested, and should not be considered secure.
+🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: 192 tests, every verifier guard mutation-checked, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
 
 ## What you can prove
 
@@ -43,12 +43,17 @@ nu-multiproof ots info tree-root.ots
 # Independently verify the Bitcoin anchor against real block headers
 nu-multiproof ots verify multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
 
-# Sign a file with your SSH key
+# Sign a file with your SSH key. The key must already be registered in
+# multiproofs/pubkeys/ — signing resolves the principal out of the trust list,
+# so an unregistered key is refused rather than signing under a name nothing
+# reading the artifact could resolve. `init --pubkey` is what registers one.
 nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ~/.ssh/id_ed25519
 # Verify signatures against bundled public keys
 nu-multiproof ssh-sign verify multiproofs/tree-root.txt
 # The principal a key signs under — what `merkle verify --signer` takes
 open --raw ~/.ssh/id_ed25519.pub | nu-multiproof pubkey fingerprint
+# The canonical pubkey bytes the fingerprint is taken over (type + base64 + \n)
+open --raw ~/.ssh/id_ed25519.pub | nu-multiproof pubkey canonical
 
 # Derive the merkle root over the manifest and write multiproofs/tree-root.txt (seal does this automatically)
 nu-multiproof merkle write-root
@@ -56,13 +61,24 @@ nu-multiproof merkle write-root
 nu-multiproof merkle prove README.md
 # Verify it: fold to the signed root, check signatures, content, OTS status
 nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.json
+
+# The whole pipeline in one step: manifest → merkle root → SSH signature →
+# OTS stamp, then upgrade any pending stamp it finds. This is the command
+# everything below is written in terms of.
+nu-multiproof seal
+nu-multiproof seal --repo path/to/other/repo   # seal a repo other than the CWD's
+
+# The CID v0 of any bytes, standalone — the same one tree-hashes puts in content_cid
+open --raw README.md | nu-multiproof cid-v0
 ```
+
+The signing key comes from the target repo's `git config user.signingKey`; `seal` has no `--key` flag, because a repo's signing identity belongs in its config rather than in each invocation. `ssh-sign sign --key` still gives explicit key choice for a one-off.
 
 ## Prerequisites
 
 - [Nushell](https://www.nushell.sh/) — developed and tested on 0.114.1; the minimum supported version has not been established
 - `git` (any repo)
-- `ssh-keygen` (for SSH signing)
+- `ssh-keygen`, from OpenSSH — for signing, and also for **verifying**: `pubkey canonical` defers to `ssh-keygen` to decide what is a well-formed key, so anything that renders a trust list needs it. That includes `init`, `ssh-sign verify` and `merkle verify`. A missing binary is reported as a broken toolchain, never as a verdict about the artifact
 
 ### Testing
 
@@ -73,8 +89,14 @@ git clone https://github.com/vyadh/nutest ../nutest
 ```
 
 ```nushell no-run
-use toolkit.nu *; main test
+use toolkit.nu *
+main test              # runs tests/; exits non-zero on any failure
+main test --no-fail    # exit 0 even when tests fail
+main test --network    # runs tests-network/ instead — reaches the internet, and
+                       # one test writes a permanent public timestamp
 ```
+
+Network tests are held out of the default run because of that permanent write, not because they are optional.
 
 ## Content manifest
 
@@ -97,6 +119,18 @@ A consumer's full artifact set: the proof file (`merkle prove <filepath>`), `tre
 The trust list it checks against is, by default, the one inside the target — for a portable bundle, the bundle's own `multiproofs/pubkeys/`. A default `valid: true` therefore says the artifact set is internally consistent, not that the signer you expect endorsed it: anyone can fork the repo, `init` with their own key and re-`seal`. `--pubkeys-dir` points the check at a list you control, and `--signer <fingerprint>` narrows further to a valid signature from that one key instead of from any registered key. Because a principal is the key's own fingerprint, `--signer` is a statement about key material and holds even over the bundle's own list: a bundle can call its key files anything, and the rendered principal still comes from the bytes inside them, so it cannot make its key answer for yours (pinned by the test "a bundle cannot file one key under the fingerprint of another"). What a bundle *can* do is not carry the key at all, and a `--signer` the trust list holds no key for is an error, not `valid: false`: "alice did not sign this" is a claim, and without alice's key the verifier cannot make it (pinned by "signer with no matching key in the trusted dir is an error, not invalid"). Which fingerprints count is still a statement only the verifier can make — the same verifier-side policy described under "Verifying commit signatures" below.
 
 `merkle verify` folds the proof to the signed root, checks the SSH signatures over the root statement, re-hashes the on-disk file against the proven `content_sha256` when present, and reports the OTS anchor as a status (`absent`/`pending`/`anchored` — a fresh seal stays pending until Bitcoin confirms, hours or days). A proof whose embedded root differs from the signed root is for a different seal and fails loudly rather than reporting invalid.
+
+The content leg answers with a state, not a boolean, and **only `true` passes** — every other value blocks `valid`. A row whose commitment could not be checked must never read as one that checked out:
+
+| `content_verified` | meaning |
+|---|---|
+| `true` | the bytes on disk match what the leaf attests |
+| `false` | they do not — the file changed, or the proof describes different bytes |
+| `"missing"` | nothing at that path on disk |
+| `"symlink"` | a symlink where the catalogue describes a regular file (checked before existence, so a broken link does not read as missing) |
+| `"outside"` | the path resolves out of the repo, through a symlinked parent |
+| `"directory"` | a file row landing on a directory |
+| `"unverifiable"` | there is nothing to re-derive from — a directory row outside a git repo, or a leaf carrying no commitment at all |
 
 When `multiproofs/tree-hashes.csv` is there, `merkle verify` also rebuilds the root from it and reports it as `manifest_root`; a value differing from the signed `root` blocks `valid`. The statement is a claim about that catalogue, and the two are written in separate steps — an interrupted `seal`, or a bare `tree-hashes` run afterwards, leaves a CSV no signature covers while old proofs still fold to the old statement. A portable bundle carries no CSV, so `manifest_root` is `null` there and nothing is cross-checked. (Pinned by the test "a manifest that no longer yields the signed root is caught".)
 
@@ -125,12 +159,14 @@ A proof of a **directory row** (or of `.`) is the exception: it needs a git repo
 Pinned exactly, so an independent implementation reproduces the root from the same CSV (reference: `nu-multiproof/_merkle-helpers.nu`, test vectors: `tests/test_merkle.nu`).
 
 - **Leaves**: all CSV rows (directory rows and the `.` root-CID row included), sorted by `filepath` — byte-wise lexicographic over the UTF-8 path bytes, no locale, no Unicode normalization. Duplicate filepaths are a hard error.
+- **Columns**: exactly the four below, no more and no fewer. A fifth column is refused rather than ignored — the leaf bytes would not say it was there, so two manifests differing only in a dropped column would share a root.
 - **Leaf bytes**: the four parsed field values (RFC 4180 CSV parsing, not raw lines) joined with `\n`: `filepath \n content_sha256 \n content_git \n content_cid`.
-- **Charset constraints** (make the `\n`-join injective; reject, never normalize): `filepath` contains no bytes < 0x20; `content_sha256` is empty or 64 lowercase hex; `content_git` is empty or 40/64 lowercase hex (SHA-1 or SHA-256 git repos); `content_cid` is empty or a base58btc CIDv0 (`Qm` + 44 chars).
+- **Charset constraints** (make the `\n`-join injective; reject, never normalize): `filepath` is non-empty and contains no bytes < 0x20; `content_sha256` is empty or 64 lowercase hex; `content_git` is empty or 40/64 lowercase hex (SHA-1 or SHA-256 git repos); `content_cid` is empty or a base58btc CIDv0 (`Qm` + 44 chars).
+- **Path containment**: `filepath` has no leading `/` and no `..` component. `verify` joins it onto the target directory and reads it, so either form would let a bundle prove a file it does not contain — or one belonging to the verifier. `git ls-files` emits neither, so nothing legitimate is refused. Bare `.` is legal on purpose: it is the root-CID row.
 - **Symlinks**: refused, never followed. Following one would take `content_sha256` and `content_cid` from the target while `content_git` stays git's blob of the link string — one row describing two objects, and a link pointing outside the repo would pull foreign content into the catalogue. `tree-hashes` errors and names the offending paths.
 - **Hashing** (RFC 6962 domain separation): leaf hash = `sha256(0x00 ++ leaf_bytes)`; inner node = `sha256(0x01 ++ left ++ right)` over the raw 32-byte child hashes.
 - **Shape** (RFC 6962 MTH): split the leaf list at the largest power of two below n, recurse on both halves. No padding, no last-leaf duplication. n=1: root = the leaf hash. n=0: root = `sha256("")` = `e3b0c442…`.
-- **Proof steps**: `side` names the **sibling**'s position, leaf-to-root order: `side: right` → `acc = sha256(0x01 ++ acc ++ sibling)`; `side: left` → the sibling goes first.
+- **Proof steps**: `side` names the **sibling**'s position, leaf-to-root order: `side: right` → `acc = sha256(0x01 ++ acc ++ sibling)`; `side: left` → the sibling goes first. Encoding is checked before folding: `hash` must be a JSON *string* of 64 lowercase hex (a number, or hex with any uppercase, is refused — not coerced), and `side` must be exactly `left` or `right`. This is the most common interop bug in merkle verifiers, so it fails loudly instead of folding something plausible.
 - **Root statement**: exactly `multiproof-merkle-v1 <64 lowercase hex>` + one trailing `\n`. The statement form (not a bare hash) keeps the signature from being replayed in another hash-signing context.
 
 ## Origin proofs
@@ -150,6 +186,11 @@ An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is 
 - `<stem>.ots` — Bitcoin-anchored timestamp over the snapshot's hash
 - `<stem>.<ext>.<fingerprint>.sig` — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig). Every signature sitting beside the stamped file is copied, the bare `<stem>.<ext>.sig` form included, so a bundle carries one per signer rather than one (pinned by the test "stamp snapshots every signature beside the file it stamps"). `seal` signs before it stamps, so its own bundles always carry at least its own (pinned by "seal stamps the root statement into the target repo and bundles its signature")
 - `<stem>.<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots` — a previous proof of the same content, archived by the re-stamp that replaced it. Same content, different nonce and calendar response, so it is an independent attestation worth keeping; the hash in the name makes the archive name collision-proof for two stamps in one second (pinned by the test "rapid re-stamps each keep their own proof")
+- `<stem>.<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots`, **written by a failed stamp** — when `<stem>.ots` cannot be written (another stamp won the race), this run's assembled proof is parked beside it rather than dropped: the nonce binding it to this file exists only in that run. The name shape is identical to the archived form above, so the two are not distinguishable on disk — both are genuine proofs of the bundle's content, which is why `merkle verify` discovers proofs by content rather than by name. The command still exits non-zero and names the path
+
+One more form is written **outside** any bundle, directly under `multiproofs/ots-timestamps/`:
+
+- `<stem>.<hash-prefix>.rejected-<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots` — a calendar answer that did not parse into a readable proof. No bundle is created, and these bytes are deliberately not a proof; they are kept because the digest already reached the calendar and the nonce is unrecoverable otherwise. The reference `ots` CLI reads constructs this parser refuses (forks, for one), so recovery may still be possible from them (pinned by the test "rejected stamps in the same second each keep their nonce")
 
 `seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. New seals produce only `tree-root.*` bundles: the manifest is neither signed nor stamped anymore, since the root statement is derived from every manifest row, so its signature and Bitcoin anchor cover the full CSV. Archival `tree-hashes.*` bundles (including `origin-proofs/`) stay valid as-is; the transition-era ones may also carry a CSV sig.
 
