@@ -331,7 +331,10 @@ export def verify [
         {status: (if $pick.type == "bitcoin" { "anchored" } else { "pending" }) ots: $pick.file}
     }
 
-    let valid = $structure_valid and $manifest_matches and $signed_ok and ($content_verified == true or $content_verified == null)
+    # No status branch returns null: only `$content_verified == true` passes.
+    # A `== null` escape here once made "nothing checked" read as valid — the
+    # fail-open hole 970f402 closed. Do not add one back for a new status.
+    let valid = $structure_valid and $manifest_matches and $signed_ok and $content_verified == true
     let error = if not $structure_valid {
         "proof path does not fold to the signed root"
     } else if not $manifest_matches {
@@ -368,7 +371,7 @@ export def verify [
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (directory CID needs the tracked tree)', null => 'not checked' })"
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (directory CID needs the tracked tree)' })"
     print $"ots:       ($ots_status.status)"
 
     if $fail and not $valid {
