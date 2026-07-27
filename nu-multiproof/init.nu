@@ -149,15 +149,16 @@ def fingerprint [key: string]: nothing -> string {
 # pinned by the private-key refusal tests.
 #
 # `pubkey canonical` also hands the line to ssh-keygen and refuses anything
-# that parser will not load, so a key pubkeys/ holds is one some
-# `ssh-keygen -Y verify` can actually use — an off-curve point no longer lands
-# (tests/test_pubkey.nu "canonical and ssh-keygen accept the same keys"). What
-# it does not check is whether anyone holds the matching private key.
+# that parser will not load, so an off-curve point no longer lands
+# (tests/test_pubkey.nu "canonical never accepts a key ssh-keygen cannot
+# load"). Loadable is not the same as usable: nothing here says anyone holds
+# the matching private key, only that a verifier can read the entry.
 
 # Resolve an SSH key path to its public-key file.
 # Why: --pubkey and the user.signingKey file-path branch must never copy a
 # private key into pubkeys/. Prefer the `.pub` sibling when present (forgiving
-# misconfig); otherwise validate the file's first line looks like an SSH pubkey.
+# misconfig); otherwise run the whole file through `pubkey canonical`, which a
+# private key fails on its second line.
 def resolve-pubkey-file [key_path: path]: nothing -> path {
     let expanded = $key_path | path expand
     let pub_sibling = $"($expanded).pub"

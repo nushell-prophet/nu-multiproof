@@ -52,7 +52,11 @@ def "the signing namespace cannot be set by a caller" [] {
     for cmd in ["sign" "verify"] {
         let out = ^nu -c $"use ($MODULE_DIR)/ssh-sign.nu; ssh-sign ($cmd) f --namespace x" | complete
         assert equal $out.exit_code 1 $"ssh-sign ($cmd) still takes a namespace: ($out)"
-        assert ($out.stderr | str contains "--namespace") $"unexpected failure for ($cmd): ($out.stderr)"
+        # Not `str contains "--namespace"`: nushell echoes the offending source
+        # line in every parse error, and that line holds `--namespace` — so a
+        # broken MODULE_DIR or an ssh-sign.nu that stops parsing would satisfy
+        # it too. The error *class* is what says the flag is gone.
+        assert ($out.stderr | str contains "unknown_flag") $"expected an unknown-flag error for ($cmd), got: ($out.stderr)"
     }
 }
 
