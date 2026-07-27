@@ -97,6 +97,32 @@ def "discovery returns signatures only, not directories or links wearing the nam
     assert equal $found ["doc.txt.alice.sig"]
 }
 
+# The ambiguity `original-for-sig` resolves, asked from the discovery side:
+# `doc.txt.gz.sig` is the bare sig of `doc.txt.gz` when that file exists, and
+# only otherwise a "gz"-named sig of `doc.txt`. Discovery used to skip the
+# question, so `seal` cleared an archive's signature as a stale signature of
+# the manifest while the archive itself sat untouched.
+@test
+def "the bare signature of a sibling file is not ours" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "content" | save --force $file
+    "archive" | save --force $"($file).gz"
+    "sig of the archive" | save --force $"($file).gz.sig"
+    "sig" | save --force $"($file).alice.sig"
+
+    let found = sig-files-for $file | each {|f| $f | path basename }
+    assert equal $found ["doc.txt.alice.sig"]
+    # ...and the archive's own discovery still finds it
+    assert equal (sig-files-for $"($file).gz" | each {|f| $f | path basename }) ["doc.txt.gz.sig"]
+
+    # With no such sibling on disk the same name is a named sig of doc.txt —
+    # the grammar is unchanged, only the ambiguity is settled.
+    rm $"($file).gz"
+    let now_named = sig-files-for $file | each {|f| $f | path basename } | sort
+    assert equal $now_named ["doc.txt.alice.sig" "doc.txt.gz.sig"]
+}
+
 @test
 def "discovery returns an empty list when nothing is signed" [] {
     let tmp_dir = $in.tmp_dir
