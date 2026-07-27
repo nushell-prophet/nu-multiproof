@@ -49,7 +49,10 @@ def "a file name that would inject a second line is refused" [] {
 
 @test
 def "a file name that would claim more than its own principal is refused" [] {
-    for stem in ["alice bob" "alice,mallory" "*" "ali?e" "!alice" 'ali"ce' 'ali\ce'] {
+    # The last two are invisible: U+200B renders as `alice` in a PR diff and in
+    # `verify` output, U+202E reverses what follows it. A principal that reads
+    # as another principal is the same fork as two encodings of one key.
+    for stem in ["alice bob" "alice,mallory" "*" "ali?e" "!alice" 'ali"ce' 'ali\ce' "ali\u{200b}ce" "ali\u{202e}ce"] {
         let dir = mktemp --directory
         $"($ED25519)\n" | save --force $"($dir)/($stem).pub"
         let outcome = try { allowed-signers-body $dir; "rendered" } catch { "refused" }

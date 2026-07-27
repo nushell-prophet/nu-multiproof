@@ -17,7 +17,16 @@ use _pubkey-helpers.nu canonical-file
 # hold one, but `ssh-sign sign --name` reaches the same rule and its value is
 # interpolated into `<file>.<name>.sig`, so a slash writes the signature into
 # another directory where discovery never finds it again.
-const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!/\s]|\p{Cc}'
+#
+# `\p{Cf}` beside `\p{Cc}`: a format character writes a principal that *reads*
+# as another one. `ali<U+200B>ce.pub` registered, signed and verified, and the
+# operator reviewing the added key — or the `verify` output naming the signer —
+# saw `alice`; U+202E does the same by reversing what follows it. This is the
+# identity fork C1 closed on the key material, arriving through the name
+# instead. It closes for good when a principal becomes a key fingerprint
+# (STABILIZE E1); until then the character class is the whole defence, so it
+# has to include the invisible ones.
+const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!/\s]|\p{Cc}|\p{Cf}'
 
 # The one namespace this repo signs and verifies under. A const and not a flag:
 # `--namespace` was interpolated into the line raw, right beside the principal

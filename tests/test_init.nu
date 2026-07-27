@@ -344,7 +344,9 @@ def "init refuses a pubkey whose file name cannot be a principal" [] {
 
     # `*` would be trusted for every signer; the rest write more (or other)
     # principals than the one line they are meant to be.
-    for stem in ["al ice" "*" "alice,mallory" 'ali"ce' "ali?e" "#alice"] {
+    # The last one is invisible: `ali<U+200B>ce.pub` reads as `alice.pub` in the
+    # PR that adds it and in every `verify` line that names the signer.
+    for stem in ["al ice" "*" "alice,mallory" 'ali"ce' "ali?e" "#alice" "ali\u{200b}ce"] {
         let source = $"($tmp_dir)/($stem).pub"
         cp $"($key_path).pub" $source
 
