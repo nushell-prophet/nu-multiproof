@@ -6,7 +6,7 @@ use _sig.nu [sig-files-for signer-from-sig sig-path-for original-for-sig]
 use _key-helpers.nu with-signing-key
 use _temp-helpers.nu with-temp-file
 use _fs.nu list-files
-use _allowed-signers.nu [allowed-signers-body check-signer-name]
+use _allowed-signers.nu [allowed-signers-body check-signer-name NAMESPACE]
 use _pubkey-helpers.nu canonical-file
 
 # Match the signing key against registered pubkeys; return the registered stem.
@@ -47,7 +47,6 @@ export def sign [
     --key: path # SSH private key (default: from git config user.signingKey)
     --name: string # Signer name for the .sig file (default: stem of matching pubkey in --pubkeys-dir)
     --pubkeys-dir: path # Directory of registered *.pub files (default: multiproofs/pubkeys from git root)
-    --namespace: string = "file"
 ] {
     # Why default from git config: makes `ssh-sign sign <file>` usable with no
     # flags; without it, a missing --key blew up with a null-conversion error.
@@ -79,7 +78,7 @@ export def sign [
         # starting with `-` stops being an option (ssh-keygen has no `--`).
         # -q silences the "Signing data on standard input" notice.
         let signed = (do {
-            open --raw $path | into binary | ^ssh-keygen -Y sign -q -f $key -n $namespace
+            open --raw $path | into binary | ^ssh-keygen -Y sign -q -f $key -n $NAMESPACE
         } | complete)
         if $signed.exit_code != 0 {
             error make {msg: $"ssh-keygen could not sign ($path): ($signed.stderr | str trim)"}
@@ -102,7 +101,7 @@ export def sign [
         with-temp-file "sig" {|tmp_sig|
             $signed.stdout | save --force $tmp_sig
             let check = (do {
-                open --raw $path | into binary | ^ssh-keygen -Y check-novalidate -n $namespace -s $tmp_sig
+                open --raw $path | into binary | ^ssh-keygen -Y check-novalidate -n $NAMESPACE -s $tmp_sig
             } | complete)
             if $check.exit_code != 0 {
                 error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony. Re-run and complete the prompt."}
@@ -125,7 +124,6 @@ export def verify [
     path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
     --sig: path # Specific signature file (default: all .sig files)
     --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
-    --namespace: string = "file"
     --fail # Exit non-zero if any signature is invalid (for CI)
 ] {
     # A positional .sig names both the signature to check and, by inference, the
@@ -141,7 +139,7 @@ export def verify [
     let pubkeys_dir = if $pubkeys_dir != null { $pubkeys_dir } else {
         pubkeys-dir (repo-root)
     }
-    let signers = (allowed-signers-body $pubkeys_dir --namespace $namespace)
+    let signers = (allowed-signers-body $pubkeys_dir)
     if ($signers | str trim | is-empty) {
         error make {msg: $"no public keys found in ($pubkeys_dir)/"}
     }
@@ -173,7 +171,7 @@ export def verify [
             if $fp.exit_code == 0 {
                 let signer = ($fp.stdout | lines | first)
                 let v = (do {
-                    open --raw $path | ^ssh-keygen -Y verify -f $signers_file -I $signer -n $namespace -s $sig_path
+                    open --raw $path | ^ssh-keygen -Y verify -f $signers_file -I $signer -n $NAMESPACE -s $sig_path
                 } | complete)
                 if $v.exit_code == 0 {
                     print $"($signer): valid"
@@ -187,7 +185,7 @@ export def verify [
                 # Signer's key isn't registered. Why check-novalidate: distinguish
                 # "sig is good but signer not in our bundle" from "sig is broken".
                 let cn = (do {
-                    open --raw $path | ^ssh-keygen -Y check-novalidate -n $namespace -s $sig_path
+                    open --raw $path | ^ssh-keygen -Y check-novalidate -n $NAMESPACE -s $sig_path
                 } | complete)
                 let label = (signer-from-sig $path $sig_path | default "unknown")
                 if $cn.exit_code == 0 {

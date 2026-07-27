@@ -6,6 +6,10 @@ use ../nu-multiproof/ssh-sign.nu
 # lifetime exists for, and signing an inline `key::` key needs an agent.
 use ../nu-multiproof/_key-helpers.nu with-signing-key
 
+# Why a const: the namespace test asks what the *command line* accepts, which
+# only a separate nu process can answer.
+const MODULE_DIR = path self ../nu-multiproof
+
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
 @before-each
@@ -33,6 +37,23 @@ def "sign creates named sig file" [] {
     ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
     assert ($"($test_file).alice.sig" | path exists)
     assert (not ($"($test_file).sig" | path exists))
+}
+
+# The namespace is written into every allowed_signers line, right beside the
+# principal the name grammar guards, and it was interpolated raw. A caller-set
+# `file",cert-authority,namespaces="file` rendered every registered key as a
+# certificate authority, and a value holding a newline added a trust-list entry
+# for a key that is not in pubkeys/ at all — `verify` then answered
+# `valid: true` for it. There is no caller-controlled namespace any more, and
+# the flag going missing is the thing this pins: nothing to validate, nothing
+# to inject through.
+@test
+def "the signing namespace cannot be set by a caller" [] {
+    for cmd in ["sign" "verify"] {
+        let out = ^nu -c $"use ($MODULE_DIR)/ssh-sign.nu; ssh-sign ($cmd) f --namespace x" | complete
+        assert equal $out.exit_code 1 $"ssh-sign ($cmd) still takes a namespace: ($out)"
+        assert ($out.stderr | str contains "--namespace") $"unexpected failure for ($cmd): ($out.stderr)"
+    }
 }
 
 # The inline `key::` form has no file on disk, so resolution writes one. Its

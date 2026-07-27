@@ -19,8 +19,19 @@ use _pubkey-helpers.nu canonical-file
 # another directory where discovery never finds it again.
 const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!/\s]|\p{Cc}'
 
-# One line per pubkey: `<principal> namespaces="<namespace>" <key>`, where each
-# key's filename stem is its principal.
+# The one namespace this repo signs and verifies under. A const and not a flag:
+# `--namespace` was interpolated into the line raw, right beside the principal
+# the rule above guards, so a value holding `"` and a newline wrote an extra
+# trust-list entry and `ssh-sign verify --namespace <payload>` returned
+# `valid: true` for a key that is not in pubkeys/ at all. Without a newline one
+# quote still injected an option: `file",cert-authority,namespaces="file`
+# rendered every registered key as a certificate authority. No caller ever
+# passed a non-default value, so the flag bought a hole and nothing else.
+# Validating it would have been guarding an input that does not exist.
+export const NAMESPACE = "file"
+
+# One line per pubkey: `<principal> namespaces="file" <key>`, where each key's
+# filename stem is its principal.
 #
 # Why every key goes through `pubkey canonical` rather than being copied
 # through: a key file holding two lines emitted a principal-less second line.
@@ -32,10 +43,7 @@ const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!/\s]|\p{Cc}'
 # `complete` wrapped around every ssh-keygen call here, and the signer whose
 # key is broken comes back as an unrecognized signer with nothing pointing at
 # the cause. A broken trust list is an error, raised at the file that broke it.
-export def allowed-signers-body [
-    pubkeys_dir: path
-    --namespace: string = "file"
-]: nothing -> string {
+export def allowed-signers-body [pubkeys_dir: path]: nothing -> string {
     # Why a `for` and not an `each`: an `error make` raised inside a closure
     # reaches the caller as "Eval block failed with pipeline input", with the
     # message naming the broken file buried in `$e.inner`. The operator has to
@@ -46,7 +54,7 @@ export def allowed-signers-body [
         # to fix, and saying so beats whatever `open` reports about it.
         let principal = principal-for $file
         let key = canonical-file $file | str trim
-        $lines = ($lines | append $"($principal) namespaces=\"($namespace)\" ($key)")
+        $lines = ($lines | append $"($principal) namespaces=\"($NAMESPACE)\" ($key)")
     }
     $lines | str join "\n"
 }
