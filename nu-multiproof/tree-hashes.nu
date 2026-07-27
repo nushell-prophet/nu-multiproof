@@ -70,7 +70,7 @@ def build-tree [
         }
 
     # The root "." row goes in during this same pass, so the manifest is written
-    # once, complete — no reopen-and-rewrite (B2).
+    # once, complete — no reopen-and-rewrite.
     # Why re-sort: the "." row must obey the manifest's own byte-wise order
     # ("." sorts before ".woodpecker.yaml"), not sit appended last — merkle
     # leaf ordering depends on the CSV honoring its own rule.

@@ -78,7 +78,7 @@ def "hidden tracked files are included" [] {
     }
 }
 
-# B2: one in-process pass yields per-file, per-dir AND the root "." CID, so the
+# One in-process pass yields per-file, per-dir AND the root "." CID, so the
 # manifest is written complete in a single pass and `root-cid` is a thin wrapper
 # returning that "." CID. The CIDs themselves are pinned against the reference
 # client in tests/test_cid-v0.nu; this test pins the manifest shape.
@@ -123,7 +123,7 @@ def "one pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     assert equal $table.filepath.0 "."
     assert equal $table.filepath ($table.filepath | sort)
 
-    # Directory rows now carry their CID (A3), not an empty string
+    # Directory rows carry their CID, not an empty string
     let dirs = $table | where content_sha256 == "" and filepath != "."
     assert (($dirs | length) > 0)
     for d in $dirs {

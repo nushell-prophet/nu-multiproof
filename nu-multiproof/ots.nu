@@ -8,14 +8,11 @@ use _layout.nu ots-dir
 use _sig.nu sig-files-for
 
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
-# Only the ops this code names as values live here. The rest (0x03 RIPEMD-160,
-# 0xf0 append, 0xf1 prepend) stay byte literals: `match` arms must be literal
-# patterns, and `stamp` writes raw bytes (0x[f0]) where an int const would need
-# converting first. A const nothing reads is drift bait.
-#
-# OP_SHA256 is the leftover half-case: read once below, then bypassed as a bare
-# 0x08 in parse-op and twice in stamp. Either wire it up or drop it.
-const OP_SHA256 = 0x08
+# Op tags stay byte literals throughout (0x08 sha256, 0x03 RIPEMD-160, 0xf0
+# append, 0xf1 prepend): `match` arms must be literal patterns, and `stamp`
+# writes raw bytes (0x[f0]) where an int const would need converting first.
+# OP_SHA256 used to be a const here and was bypassed at three of its four
+# sites — a name spelled one way and meant another is worse than the byte.
 const TAG_ATTESTATION = 0x00
 const TAG_FORK = 0xff
 const ATT_PENDING = 0x[83dfe30d2ef90c8e]
@@ -196,7 +193,7 @@ def parse-ots []: binary -> record {
     }
 
     let hash_op_byte = $buf | bytes at ($ver.offset)..($ver.offset) | into int
-    if $hash_op_byte != $OP_SHA256 {
+    if $hash_op_byte != 0x08 {
         error make {msg: $"unsupported file hash algorithm: ($hash_op_byte)"}
     }
 
@@ -653,12 +650,8 @@ export def verify [
     }
 
     # Cross-check height -> block hash across independent explorers.
-    # Why a for loop, not `each`: a `try`/`catch` wrapping `http get` inside an
-    # `each` closure used to trip a Nushell runtime error across iterations.
-    # Retested on 0.114.1 — both forms work now, so this can go back to `each`.
-    mut lookups = []
-    for src in $sources {
-        $lookups = ($lookups | append {source: $src hash: (esplora-get $"($src)/block-height/($height)")})
+    let lookups = $sources | each {|src|
+        {source: $src hash: (esplora-get $"($src)/block-height/($height)")}
     }
     let ok_lookups = $lookups | where hash != null
     if ($ok_lookups | is-empty) {

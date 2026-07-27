@@ -65,7 +65,7 @@ export def main [
     }
 
     # 2. Regenerate the manifest in one pass: per-file, per-dir AND the root "."
-    #    row together (build-tree/B2), so the manifest is written once,
+    #    row together, so the manifest is written once,
     #    complete, before any signature exists.
     let root_cid = tree-hashes root-cid --repo $root
     print $"Root CID: ($root_cid)"

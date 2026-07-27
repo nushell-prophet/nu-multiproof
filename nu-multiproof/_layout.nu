@@ -3,9 +3,9 @@
 # rather than six files silently disagreeing.
 #
 # Not everything under multiproofs/ is here yet. The OTS bundle grammar
-# (<stem>.<HASH8>/<stem>.ots) is built inline in ots.nu and re-derived by glob in
-# merkle.nu and seal.nu; `.pub`, `.sig` and `.multiproof.json` are spelled at
-# their use sites.
+# (<stem>.<HASH8>/<stem>.ots) is built inline in ots.nu and its `<stem>.`
+# prefix re-derived in merkle.nu; `.pub`, `.sig` and `.multiproof.json` are
+# spelled at their use sites.
 # Anything moved in here should come with its readers.
 
 export const MULTIPROOFS_DIR = "multiproofs"
