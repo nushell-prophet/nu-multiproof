@@ -207,6 +207,24 @@ def "an empty manifest is refused - the empty root is constant and replayable" [
     assert not ($"($tmp_dir)/multiproofs/tree-root.txt" | path exists)
 }
 
+# The end-to-end shape of the same replay: build-tree unconditionally appends
+# the "." row, so an actual empty repo yields a ONE-row manifest and the
+# zero-row form of the guard never fired — two distinct empty repos both
+# sealed to the constant root ccc017f7… the guard exists to refuse.
+@test
+def "an empty git repo cannot mint a root - its one-row manifest is constant too" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/empty"
+    mkdir $repo
+    ^git -C $repo init -q
+    tree-hashes --repo $repo
+
+    let err = try { merkle write-root --repo $repo; null } catch {|e| $e.msg }
+    assert ($err != null) "an empty repo minted a root"
+    assert ($err | str contains "lists no files")
+    assert not ($"($repo)/multiproofs/tree-root.txt" | path exists)
+}
+
 @test
 def "duplicate filepaths are a hard error - equivocation guard" [] {
     let tmp_dir = $in.tmp_dir

@@ -102,14 +102,18 @@ export def write-root [
     let target = repo-root $repo
     let manifest = manifest-path $target
     let leaves = load-leaves $manifest
-    # Why refuse an empty manifest here, at the one place a root is minted:
-    # `mth []` is sha256 of nothing (e3b0c442…b855) — the same 64 hex for every
-    # empty repo. A signature over that statement carries no repo in it, so it
-    # replays into any other empty seal, and the OTS stamp then times an
+    # Why refuse a no-file manifest here, at the one place a root is minted:
+    # the root of a tree with no tracked files is the same 64 hex for every
+    # empty repo — sha256 of nothing for zero rows, and a constant
+    # (ccc017f7de…) for the "." row build-tree now always appends over an
+    # empty file set. A signature over that statement carries no repo in it,
+    # so it replays into any other empty seal, and the OTS stamp then times an
     # attestation that says nothing. Reachable without trying: an empty repo,
-    # and a bare repo, where `git ls-files` exits 0 with no output.
-    if ($leaves | is-empty) {
-        error make {msg: $"($manifest) lists no files — an empty tree hashes to sha256\(\"\") for every repo, so signing that root would state nothing about this one"}
+    # and a bare repo, where `git ls-files` exits 0 with no output. Keyed on
+    # "no rows besides '.'", not on zero rows: the unconditional "." append
+    # bypassed the zero-row form of this guard one layer up.
+    if ($leaves | where filepath != "." | is-empty) {
+        error make {msg: $"($manifest) lists no files — the root of a no-file tree is the same for every empty repo, so signing it would state nothing about this one"}
     }
     let root_hex = mth ($leaves | each { leaf-hash $in }) | encode hex | str lowercase
     let out = merkle-root-path $target
