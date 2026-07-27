@@ -116,7 +116,8 @@ export def sign [
 
 # Verify a file's SSH signatures against public keys in a directory.
 # Naming a .sig file verifies that one signature; naming the original verifies
-# every {path}.*.sig found beside it.
+# every signature `_sig.nu sig-files-for` finds beside it — both the named
+# `{path}.{signer}.sig` form and the bare `{path}.sig`.
 # Returns a table of {signer, valid, error?}. --fail exits non-zero if any
 # signature is invalid (for CI), instead of a silent pass the caller must inspect.
 @example "verify all signatures on the root statement" { ssh-sign verify multiproofs/tree-root.txt }

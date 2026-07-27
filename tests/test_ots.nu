@@ -460,6 +460,33 @@ def "stamp writes a proof its own parser can read" [] {
     assert equal (open --raw $result.copy) "hello world"
 }
 
+# A bundle has to answer "signer X endorsed content C at time T" out of its own
+# directory, so it snapshots EVERY signature sitting beside the stamped file,
+# not one and not only the seal's own. Planted stub sigs on purpose: what is
+# being pinned is discovery and copying, and `stamp` neither reads nor verifies
+# these — a valid signature here would test ssh-keygen, not this.
+#
+# The bare `<file>.sig` form is in because `sig-files-for` is the shared
+# discovery and knows both spellings; a bundle missing it is a bundle whose
+# signature only exists outside itself.
+@test
+def "stamp snapshots every signature beside the file it stamps" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
+    "alice-sig" | save --force $"($file).alice.sig"
+    "bob-sig" | save --force $"($file).bob.sig"
+    "bare-sig" | save --force $"($file).sig"
+
+    let result = (ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
+
+    assert equal ($result.sigs | each {|s| $s | path basename } | sort) [
+        "doc.txt.alice.sig" "doc.txt.bob.sig" "doc.txt.sig"
+    ]
+    assert equal (open --raw $"($result.dir)/doc.txt.alice.sig" | str trim) "alice-sig"
+}
+
 # The failure this guard exists for: only the HTTP status was checked, so a
 # calendar answering 200 with a garbage body produced a success record, exit 0,
 # and an .ots that `info` cannot read — while the digest had already reached
