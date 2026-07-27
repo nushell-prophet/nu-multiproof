@@ -25,7 +25,10 @@ export def resolve-signing-key [--root: path]: nothing -> record<path: path, tem
         do { ^git config user.signingKey } | complete
     }
     if $git.exit_code != 0 {
-        error make {msg: "no git signing key configured — set user.signingKey or pass --key"}
+        # Why not "or pass --key": seal has no such flag (ad1f7ab), and this is
+        # the only message its caller ever sees. `ssh-sign sign --key` short-
+        # circuits before reaching here, so naming the config serves both.
+        error make {msg: "no git signing key configured — set it with: git config user.signingKey <path-to-key>"}
     }
     let raw = $git.stdout | str trim
     if ($raw | str starts-with "key::") {
