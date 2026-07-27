@@ -41,7 +41,7 @@ def "init sanitizes all non-allowed chars in inline-key comment" [] {
 
     init --repo $repo
 
-    let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
+    let names = (ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert ($names | any { |n| $n == "alicebarcom.pub" }) $"expected alicebarcom.pub, got ($names)"
 }
 
@@ -63,7 +63,7 @@ def "init refuses to copy a private-key file as pubkey" [] {
     let outcome = (try { init --repo $repo; "ok" } catch { |e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
-    let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
+    let copied = (ls --all $"($repo)/multiproofs/pubkeys" | length)
     assert equal $copied 0
 }
 
@@ -84,7 +84,7 @@ def "init --pubkey refuses a private-key file" [] {
     let outcome = (try { init --repo $repo --pubkey $key_path; "ok" } catch { |e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
-    let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
+    let copied = (ls --all $"($repo)/multiproofs/pubkeys" | length)
     assert equal $copied 0
 }
 
@@ -102,7 +102,7 @@ def "init --pubkey prefers .pub sibling over private-key path" [] {
 
     init --repo $repo --pubkey $key_path
 
-    let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
+    let names = (ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert equal ($names | length) 1
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
     assert ($saved | str starts-with "ssh-")
@@ -124,7 +124,7 @@ def "init prefers .pub sibling when signingKey points to private key" [] {
 
     init --repo $repo
 
-    let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
+    let names = (ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert equal ($names | length) 1
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
     assert ($saved | str starts-with "ssh-")
@@ -149,7 +149,7 @@ def "init refuses inline key:: material that is not a public key" [] {
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
     assert ($outcome | str contains "public key") $"expected a public-key message, got ($outcome)"
 
-    let copied = (ls $"($repo)/multiproofs/pubkeys" | length)
+    let copied = (ls --all $"($repo)/multiproofs/pubkeys" | length)
     assert equal $copied 0
 }
 
@@ -168,7 +168,7 @@ def "init stores the registered pubkey in canonical form, comment dropped" [] {
 
     init --repo $repo --pubkey $"($key_path).pub"
 
-    let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
+    let names = (ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert equal ($names | length) 1
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/($names | first)")
     let src = (open --raw $"($key_path).pub" | str trim | split row " ")
@@ -195,7 +195,7 @@ def "init reports the same key registered twice as already registered" [] {
     assert equal $out.exit_code 0 $"expected exit 0, got ($out)"
     assert ($out.stdout | str contains "pubkey already registered: multiproofs/pubkeys/alice.pub") $"got ($out.stdout)"
 
-    assert equal (ls $"($repo)/multiproofs/pubkeys" | length) 1
+    assert equal (ls --all $"($repo)/multiproofs/pubkeys" | length) 1
     assert equal (open --raw $"($repo)/multiproofs/pubkeys/alice.pub") $first
 }
 
@@ -246,7 +246,7 @@ def "init refuses the same key material under another name" [] {
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
     assert ($outcome | str contains "already registered as multiproofs/pubkeys/alice.pub") $"got ($outcome)"
 
-    let names = (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
+    let names = (ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename })
     assert equal $names ["alice.pub"]
 }
 
@@ -324,7 +324,7 @@ def "init refuses an inline key whose type names a path" [] {
     let outcome = (try { init --repo $repo; "ok" } catch {|e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
     assert (not ($escape | path exists)) "init wrote outside pubkeys/"
-    assert equal (ls $"($repo)/multiproofs/pubkeys" | length) 0
+    assert equal (ls --all $"($repo)/multiproofs/pubkeys" | length) 0
 }
 
 # The registered file's stem is this key's principal in every allowed_signers
@@ -378,5 +378,5 @@ def "a commentless key is named after its type, whatever the spacing" [] {
     ^git -C $repo config user.signingKey $"key::($spaced)"
 
     init --repo $repo
-    assert equal (ls $"($repo)/multiproofs/pubkeys" | get name | each { path basename }) ["ed25519.pub"]
+    assert equal (ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename }) ["ed25519.pub"]
 }

@@ -46,8 +46,10 @@ def "seal produces manifest and signed root statement" [] {
 
     let manifest = $"($repo)/multiproofs/tree-hashes.csv"
     assert ($manifest | path exists) "manifest not created"
-    # The CSV itself is unsigned — the signed root statement covers every row
-    assert equal (glob $"($manifest).*.sig" | length) 0
+    # The CSV itself is unsigned — the signed root statement covers every row.
+    # Not a glob: a pattern built from a temp path silently matches nothing, so
+    # `== 0` would pass for the wrong reason (test_lint.nu rule 1).
+    assert equal (sig-files-for $manifest) []
 
     # Merkle root statement derived from the fresh manifest and signed
     let root_file = $"($repo)/multiproofs/tree-root.txt"
@@ -83,7 +85,7 @@ def "seal re-runs without sig conflict" [] {
     seal --repo $repo --no-stamp
 
     # Stale root-statement sig from the first run cleared, exactly one live sig
-    let root_sigs = (glob $"($repo)/multiproofs/tree-root.txt.*.sig")
+    let root_sigs = sig-files-for $"($repo)/multiproofs/tree-root.txt"
     assert equal ($root_sigs | length) 1
 }
 
