@@ -304,6 +304,18 @@ def "malformed root statements are rejected" [] {
     }
 }
 
+@test
+def "a proof file holding a JSON scalar is refused, not a crash" [] {
+    let tmp_dir = $in.tmp_dir
+    for bad in ['"hello"' '42' '[1, 2]'] {
+        let proof_file = $"($tmp_dir)/proof.json"
+        $bad | save --raw --force $proof_file
+        let err = try { merkle verify $proof_file --repo $tmp_dir; null } catch {|e| $e.msg }
+        assert ($err != null) $"accepted: ($bad)"
+        assert ($err | str contains "not a multiproof") $"opaque error for ($bad): ($err)"
+    }
+}
+
 # --- prove/verify end-to-end ---
 
 @test

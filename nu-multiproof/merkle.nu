@@ -224,6 +224,9 @@ export def verify [
     if $signer != null { check-signer-known $signer $trusted_dir }
 
     let proof = open --raw $proof_file | from json
+    if not ($proof | describe | str starts-with "record") {
+        error make {msg: $"not a multiproof: ($proof_file) holds ($proof | describe) JSON, not a record"}
+    }
     let schema = $proof | get --optional schema | default "missing"
     if $schema != $MERKLE_SCHEMA {
         error make {msg: $"unsupported proof schema: ($schema) — expected ($MERKLE_SCHEMA)"}
