@@ -3,44 +3,32 @@
 # signer) and by merkle verify to resolve --signer.
 
 use _fs.nu list-files
-use _pubkey-helpers.nu canonical-file
-
-# Characters a principal may not hold. The file's syntax is whitespace-
-# separated with a comma-separated principal list, and principals are matched
-# as patterns — so each of these writes a *different* line than the one
-# intended: a stem with a newline injected a whole extra entry, a stem with a
-# space or comma claimed two principals, and a file named `*.pub` would have
-# trusted its key for every signer. Reject, never normalize: the file name is
-# the operator's to fix.
-#
-# `/` is here for the other half of the grammar: a filename stem can never
-# hold one, but `ssh-sign sign --name` reaches the same rule and its value is
-# interpolated into `<file>.<name>.sig`, so a slash writes the signature into
-# another directory where discovery never finds it again.
-#
-# `\p{Cf}` beside `\p{Cc}`: a format character writes a principal that *reads*
-# as another one. `ali<U+200B>ce.pub` registered, signed and verified, and the
-# operator reviewing the added key — or the `verify` output naming the signer —
-# saw `alice`; U+202E does the same by reversing what follows it. This is the
-# identity fork C1 closed on the key material, arriving through the name
-# instead. It closes for good when a principal becomes a key fingerprint
-# (STABILIZE E1); until then the character class is the whole defence, so it
-# has to include the invisible ones.
-const FORBIDDEN_IN_PRINCIPAL = '["#,\\*?!/\s]|\p{Cc}|\p{Cf}'
+use _pubkey-helpers.nu [canonical-file fingerprint-file]
+use pubkey.nu
 
 # The one namespace this repo signs and verifies under. A const and not a flag:
-# `--namespace` was interpolated into the line raw, right beside the principal
-# the rule above guards, so a value holding `"` and a newline wrote an extra
-# trust-list entry and `ssh-sign verify --namespace <payload>` returned
-# `valid: true` for a key that is not in pubkeys/ at all. Without a newline one
-# quote still injected an option: `file",cert-authority,namespaces="file`
-# rendered every registered key as a certificate authority. No caller ever
-# passed a non-default value, so the flag bought a hole and nothing else.
-# Validating it would have been guarding an input that does not exist.
+# `--namespace` was interpolated into the line raw, right beside the principal,
+# so a value holding `"` and a newline wrote an extra trust-list entry and
+# `ssh-sign verify --namespace <payload>` returned `valid: true` for a key that
+# is not in pubkeys/ at all. Without a newline one quote still injected an
+# option: `file",cert-authority,namespaces="file` rendered every registered key
+# as a certificate authority. No caller ever passed a non-default value, so the
+# flag bought a hole and nothing else. Validating it would have been guarding an
+# input that does not exist.
 export const NAMESPACE = "file"
 
-# One line per pubkey: `<principal> namespaces="file" <key>`, where each key's
-# filename stem is its principal.
+# One line per pubkey: `<fingerprint> namespaces="file" <key>`.
+#
+# Why the principal is derived from the key rather than read off the file name:
+# a line here is a trust statement, and a file name is chosen by whoever put the
+# file there. It used to be the stem, which meant the stem had to be gated as a
+# grammar — a whitespace, quote, `,` or `*` in it wrote a different line than the
+# one intended, and an invisible `\p{Cf}` character wrote a principal that
+# *reads* as another one (`ali<U+200B>ce.pub` registered, signed and verified,
+# and showed as `alice` in a PR diff and in `verify` output). That whole class is
+# gone here, not defended against: nothing a file name holds reaches this line,
+# so `pubkeys/*.pub` may be called anything at all and mallory's key filed as
+# `alice.pub` renders mallory's fingerprint.
 #
 # Why every key goes through `pubkey canonical` rather than being copied
 # through: a key file holding two lines emitted a principal-less second line.
@@ -59,19 +47,17 @@ export def allowed-signers-body [pubkeys_dir: path]: nothing -> string {
     # be told which file to fix.
     mut lines = []
     for file in (list-files $pubkeys_dir --suffix ".pub") {
-        # Name before content: a name this file cannot express is the operator's
-        # to fix, and saying so beats whatever `open` reports about it.
-        let principal = principal-for $file
         let key = canonical-file $file | str trim
-        $lines = ($lines | append $"($principal) namespaces=\"($NAMESPACE)\" ($key)")
+        $lines = ($lines | append $"($key | pubkey fingerprint) namespaces=\"($NAMESPACE)\" ($key)")
     }
     $lines | str join "\n"
 }
 
-# The principal a pubkey file claims: its filename stem, refused when the stem
-# cannot be written as one.
-def principal-for [file: path]: nothing -> string {
-    check-signer-name ($file | path parse | get stem) $"($file)"
+# Every principal a trust list holds. Read from key material, so this is the
+# same set the rendered body carries — two lookups of one fact would be two
+# places to drift.
+export def registered-principals [pubkeys_dir: path]: nothing -> list<string> {
+    list-files $pubkeys_dir --suffix ".pub" | each { fingerprint-file $in }
 }
 
 # Refuse a --signer whose key the trust list does not hold.
@@ -82,26 +68,14 @@ def principal-for [file: path]: nothing -> string {
 # `valid: false` with "no valid signature from signer alice", so a typo in the
 # verifier's OWN flag read as evidence against the artifact. Asked before any
 # other work. Shared here because the rule being applied is this module's: a
-# principal is the stem of a .pub file.
+# principal is a key's fingerprint.
 export def check-signer-known [signer: string pubkeys_dir: path]: nothing -> string {
-    let known = list-files $pubkeys_dir --suffix ".pub" | each { principal-for $in }
-    if (check-signer-name $signer "--signer") not-in $known {
-        error make {msg: $"no key for signer ($signer) in ($pubkeys_dir)/ — --signer names a ($signer).pub there, and this verifier cannot say whether ($signer) signed anything without holding their key. Registered: ($known | str join ', ')"}
+    let known = registered-principals $pubkeys_dir
+    if $signer not-in $known {
+        error make {
+            msg: $"no key with fingerprint ($signer) in ($pubkeys_dir)/ — this verifier cannot say whether that key signed anything without holding it. Registered: ($known | str join ', ')"
+            help: "a principal is the sha256 of a key blob, 64 lowercase hex — `pubkey fingerprint` over a key line prints it. It is the same digest `ssh-keygen -lf` prints, written as hex rather than base64."
+        }
     }
     $signer
-}
-
-# A signer name, refused unless the trust list can express it. Exported
-# because `ssh-sign sign` is the other end of the same grammar: it takes the
-# name from `--name` or from a pubkey stem and writes it into a `.sig` file
-# name, and a name this rejects makes every later `verify` in that repo throw
-# while rendering the list. Better to refuse it where it enters.
-export def check-signer-name [name: string context: string]: nothing -> string {
-    if ($name | is-empty) {
-        error make {msg: $"($context): there is no signer name to use"}
-    }
-    if ($name =~ $FORBIDDEN_IN_PRINCIPAL) {
-        error make {msg: $"($context): a signer name cannot hold whitespace, quotes, `#`, `,`, `/`, `\\` or the pattern characters `*?!` — got ($name | to nuon)"}
-    }
-    $name
 }

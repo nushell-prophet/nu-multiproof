@@ -237,6 +237,56 @@ def fingerprint-of [dir: path line: string]: nothing -> string {
     ^ssh-keygen -lf $file | str trim | split row " " | get 1
 }
 
+# The same fingerprint written the way this project writes it. `ssh-keygen -lf`
+# prints `SHA256:<unpadded base64>`, and nushell's `decode base64` is strict RFC
+# 4648, so the padding a 32-byte digest drops has to be put back.
+def ssh-fingerprint-hex [dir: path line: string]: nothing -> string {
+    let b64 = fingerprint-of $dir $line | str replace "SHA256:" ""
+    $"($b64)=" | decode base64 | encode hex | str lowercase
+}
+
+# The outside oracle for the principal. Every principal this project writes —
+# the trust-list line, the `.sig` file name, `merkle verify --signer` — is this
+# digest, so a derivation that drifted from OpenSSH's own would mint identities
+# no other tool recognizes, and an operator comparing against `ssh-keygen -lf`
+# would be comparing two different things. Hex versus base64 is the only
+# difference the two spellings are allowed to have.
+@test
+def "fingerprint is the digest ssh-keygen prints, written as hex" [] {
+    let tmp_dir = $in.tmp_dir
+    let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
+        | each {|args|
+            let path = $"($tmp_dir)/fp-($args | str join '-')"
+            ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
+            open --raw $"($path).pub" | str trim
+        }
+
+    for key in ($generated ++ [$ED25519 $RSA $SK $SK_ECDSA]) {
+        let mine = $key | pubkey fingerprint
+        assert equal $mine (ssh-fingerprint-hex $tmp_dir $key) $"fingerprint diverges from ssh-keygen for ($key | str substring 0..40)"
+        assert ($mine =~ '^[0-9a-f]{64}$') $"a principal must be 64 lowercase hex, got ($mine)"
+        # The comment is not part of the identity: it is not part of the blob.
+        assert equal $mine ($"($key) someone-else@elsewhere" | pubkey fingerprint)
+    }
+}
+
+# The identity fork, one function further along than `canonical`. The digest is
+# taken over the blob bytes as they arrive, and the padded copy's blob differs —
+# so a `fingerprint` that hashed without canonicalizing would hand one key two
+# principals, which is the whole thing `canonical` exists to prevent. OpenSSH
+# reports one fingerprint for both, which is why the difference is invisible
+# unless it is pinned here.
+@test
+def "fingerprint refuses an encoding canonical refuses" [] {
+    let tmp_dir = $in.tmp_dir
+    assert equal (fingerprint-of $tmp_dir $RSA_PADDED_MODULUS) (fingerprint-of $tmp_dir $RSA) "the vector must be the same key to be a fork"
+    assert error {|| $RSA_PADDED_MODULUS | pubkey fingerprint }
+
+    # ...and the value it would have produced really is a second identity.
+    let unvalidated = $RSA_PADDED_MODULUS | split row " " | get 1 | decode base64 | hash sha256
+    assert not ($unvalidated == ($RSA | pubkey fingerprint)) "the padded blob hashes the same, so this pins nothing"
+}
+
 def canonical-accepts [line: string]: nothing -> bool {
     try { $line | pubkey canonical; true } catch { false }
 }

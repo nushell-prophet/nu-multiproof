@@ -185,7 +185,7 @@ export def prove [
 #                      to the signed root AND an accepted signature AND content
 #                      not contradicted. "Accepted" means >=1 valid signature from
 #                      any key in --pubkeys-dir, or — with --signer — a valid
-#                      signature from that principal.
+#                      signature from the key with that fingerprint.
 #   structure_valid  — leaf hash folds up the path to the signed root
 #   manifest_root    — the root rebuilt from tree-hashes.csv, or null when the
 #                      manifest does not travel with the artifact (the portable
@@ -214,29 +214,31 @@ export def prove [
 #
 # The default trust list ships inside the artifact under examination, so a
 # default `valid: true` states "this bundle is internally consistent", not
-# "the signer I expect endorsed this". --pubkeys-dir and --signer are how the
-# verifier states, from outside the bundle, which keys it actually trusts.
+# "the signer I expect endorsed this" — any key the bundle carries satisfies it,
+# and anyone can fork a repo, `init` with their own key and re-`seal`.
+# --pubkeys-dir points the check at a list the verifier holds; --signer names one
+# key by fingerprint, which is a statement about key material and so holds even
+# against the bundle's own list.
 @example "verify a proof, failing on invalid (for CI)" { merkle verify proof.json --fail }
 export def verify [
     proof_file: path
     --repo: path # Target git repo root (default: git root of current directory)
     --pubkeys-dir: path # Trusted *.pub directory (default: multiproofs/pubkeys of the target — i.e. the bundle's own keys)
-    --signer: string # Require a valid signature from this principal (pubkey stem). Needs --pubkeys-dir
+    --signer: string # Require a valid signature from the key with this fingerprint (see `pubkey fingerprint`)
     --fail # Exit non-zero when the result is not valid (for CI)
 ]: nothing -> record {
-    # Why --signer needs --pubkeys-dir: a principal is the *stem of a .pub
-    # file*, so it names a key only as strongly as the directory that file came
-    # from. Over the default list — the one travelling inside the artifact —
-    # `--signer alice` asks no more than "did a file named alice.pub sign
-    # this". Measured before this guard: mallory's key copied in as alice.pub
-    # gave `alice: valid`, `valid: true`. Refuse the combination rather than
-    # return a verdict that reads as an identity check and is not one; naming
-    # --pubkeys-dir (even at the bundle's own path) makes the trust list the
-    # verifier's stated choice. Pinned by tests/test_merkle.nu "signer
-    # flag against a bundle-supplied trust list is refused, not answered".
-    if $signer != null and $pubkeys_dir == null {
-        error make {msg: $"--signer ($signer) needs --pubkeys-dir: a principal is a .pub filename stem, and the default trust list travels inside the artifact — anyone can fork it and file their own key as ($signer).pub. Point --pubkeys-dir at a list you control."}
-    }
+    # Why --signer no longer needs --pubkeys-dir, where it used to be refused
+    # without it: a principal was the *stem of a .pub file*, so over the list
+    # travelling inside the artifact `--signer alice` asked no more than "did a
+    # file named alice.pub sign this" — and mallory's key copied in as alice.pub
+    # answered `alice: valid`, `valid: true`. A principal is now the key's own
+    # fingerprint, rendered from the key material rather than the file name, so
+    # the same question is "did the holder of THIS key sign this" whichever
+    # directory the key was read from. A bundle cannot rename a key into another
+    # principal; the most it can do is not carry the key at all, which
+    # check-signer-known reports as an error rather than a verdict. Pinned by
+    # tests/test_merkle.nu "a bundle cannot file a key under another key's
+    # fingerprint".
     let target = repo-root $repo
     # The trust list, settled before the artifact is even opened: it is the
     # verifier's own input, so a --signer this list holds no key for is an
@@ -294,9 +296,10 @@ export def verify [
     # Why --signer narrows this: `any { $in.valid }` is the right rule only when
     # the trust list came from outside. A list travelling inside the artifact
     # proves internal consistency, not identity — fork, re-init with your own
-    # key, re-seal, and any-key acceptance calls it valid. The guard above is
-    # what makes the narrowing real: $signer is only ever compared against
-    # stems the verifier chose, never against names the artifact carries.
+    # key, re-seal, and any-key acceptance calls it valid. What makes the
+    # narrowing real is where the compared name comes from: `$s.signer` is the
+    # fingerprint of the key found inside the signature, so this compares key
+    # material against the fingerprint the verifier typed.
     let signed_ok = if $signer != null {
         $sig_check.sigs | any {|s| $s.valid and $s.signer == $signer }
     } else {

@@ -47,7 +47,7 @@ This module's output is evidence. A bug here does not crash — it returns `vali
 - **Never write an artifact you have not parsed back.** `ots stamp` appended an unvalidated calendar body and reported success; the resulting `.ots` was unreadable and unrecoverable. `ots upgrade` gets this right — validate, then atomic-rename.
 - **A comment or README line may claim a security property only when a test pins it.** Name the test. `--signer` was documented as pinning a principal while it compared a filename; `check-block-header` was documented as rejecting low-work headers while it read the difficulty out of the header being checked.
 - **Reject, never normalize** — already the rule for leaf charsets; it holds everywhere.
-- **Trust lists**: a principal comes from key material, never from a filename; a name interpolated into `allowed_signers` must be rejected if it holds whitespace, quotes or newlines.
+- **Trust lists**: a principal is a key's fingerprint (`pubkey fingerprint`), derived from key material every time a list is rendered — never from a filename, a key comment or a flag. Key material is the only thing an `allowed_signers` line may carry; anything else interpolated into one needs a charset gate, and that gate is exactly what the filename-stem principal used to cost.
 
 ## Nushell traps this repo has already hit
 

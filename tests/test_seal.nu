@@ -5,6 +5,7 @@ use ../nu-multiproof/seal.nu
 use ../nu-multiproof/ssh-sign.nu
 use ../nu-multiproof/ots.nu
 use ../nu-multiproof/_sig.nu sig-files-for
+use ../nu-multiproof/pubkey.nu
 use ../nu-multiproof/_fs.nu list-files
 use _ots-fixtures.nu [build-calendar-response build-bitcoin-ots]
 
@@ -31,6 +32,12 @@ def make-sealable-repo [tmp_dir: path]: nothing -> record {
     {repo: $repo key: $key_path pubkeys: $pubkeys ots_dir: $"($repo)/multiproofs/ots-timestamps"}
 }
 
+# The principal a key signs under: the fingerprint of its public half, which is
+# what every `.sig` file here is named for.
+def principal-of [key: path]: nothing -> string {
+    open --raw $"($key).pub" | pubkey fingerprint
+}
+
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
 @before-each
@@ -49,7 +56,8 @@ def cleanup [] {
 def "seal produces manifest and signed root statement" [] {
     # The fixture leaves a SHA-1 repo, which seal must handle: it hashes file
     # contents itself rather than leaning on git's object hash.
-    let repo = (make-sealable-repo $in.tmp_dir).repo
+    let fx = make-sealable-repo $in.tmp_dir
+    let repo = $fx.repo
 
     let result = seal --repo $repo --no-stamp
 
@@ -64,7 +72,7 @@ def "seal produces manifest and signed root statement" [] {
     let root_file = $"($repo)/multiproofs/tree-root.txt"
     assert ($root_file | path exists) "root statement not created"
     assert equal (open --raw $root_file | into string) $"multiproof-merkle-v1 ($result.merkle_root)\n"
-    assert ($result.root_sig | str ends-with ".sshkey.sig")
+    assert ($result.root_sig | str ends-with $".(principal-of $fx.key).sig")
 }
 
 # Second seal must succeed even though the previous seal left a sig next to
@@ -100,7 +108,7 @@ def "a deliberate manifest signature survives an unchanged reseal" [] {
 
     seal --repo $fx.repo --no-stamp
     let kept = sig-files-for $manifest | each {|f| $f | path basename }
-    assert equal $kept ["tree-hashes.csv.sshkey.sig"] "seal deleted a signature over bytes it did not change"
+    assert equal $kept [$"tree-hashes.csv.(principal-of $fx.key).sig"] "seal deleted a signature over bytes it did not change"
     assert equal (ssh-sign verify $manifest --pubkeys-dir $fx.pubkeys | get valid) [true]
 
     # Changed content: the manifest's bytes change with it, and a sig over the
@@ -132,14 +140,16 @@ def "seal keeps a co-signer sig over unchanged bytes and clears it once they cha
     # them still verifies and must survive the reseal.
     seal --repo $fx.repo --no-stamp
     let kept = sig-files-for $root_file | each {|f| $f | path basename } | sort
-    assert equal $kept ["tree-root.txt.bob.sig" "tree-root.txt.sshkey.sig"] "seal deleted a co-signer sig over bytes it did not change"
+    assert equal $kept (
+        [$"tree-root.txt.(principal-of $bob_key).sig" $"tree-root.txt.(principal-of $fx.key).sig"] | sort
+    ) "seal deleted a co-signer sig over bytes it did not change"
     assert equal (ssh-sign verify $root_file --pubkeys-dir $fx.pubkeys | get valid) [true true]
 
     # Changed content: the root statement's bytes change, so bob's sig is stale
     # and goes; the sealer signs the new bytes.
     "v2\n" | save --force $"($fx.repo)/file.txt"
     seal --repo $fx.repo --no-stamp
-    assert equal (sig-files-for $root_file | each {|f| $f | path basename }) ["tree-root.txt.sshkey.sig"]
+    assert equal (sig-files-for $root_file | each {|f| $f | path basename }) [$"tree-root.txt.(principal-of $fx.key).sig"]
 }
 
 # Step 4, which every other test here skipped with --no-stamp. What it has to
@@ -169,7 +179,7 @@ def "seal stamps the root statement into the target repo and bundles its signatu
     # seal made in step 3 has to be snapshotted beside the frozen copy.
     assert equal (
         list-files $bundle --suffix ".sig" | each {|f| $f | path basename }
-    ) ["tree-root.txt.sshkey.sig"]
+    ) [$"tree-root.txt.(principal-of $fx.key).sig"]
 }
 
 # Step 1, the opportunistic upgrade loop, also skipped by every other test.

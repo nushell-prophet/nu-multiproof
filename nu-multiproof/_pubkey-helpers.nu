@@ -19,3 +19,11 @@ export def canonical-file [file: path]: nothing -> string {
         error make {msg: $"($file) is not an SSH public key: ($e.msg)"}
     }
 }
+
+# The principal a stored pubkey file claims — its key material's fingerprint,
+# never its name. Same failure reporting as canonical-file, which it goes
+# through: a file in a trust list that is not a public key has no principal, and
+# the operator needs the name to fix it.
+export def fingerprint-file [file: path]: nothing -> string {
+    canonical-file $file | pubkey fingerprint
+}

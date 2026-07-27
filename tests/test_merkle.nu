@@ -4,6 +4,7 @@ use std/testing *
 use ../nu-multiproof/merkle.nu
 use ../nu-multiproof/tree-hashes.nu
 use ../nu-multiproof/ssh-sign.nu
+use ../nu-multiproof/pubkey.nu
 use ../nu-multiproof/_merkle-helpers.nu [
     mth audit-path fold-path leaf-hash load-leaves
     root-statement parse-root-statement validate-leaf
@@ -34,6 +35,13 @@ def vector-leaf-hashes []: nothing -> list<binary> {
 
 def as-hex []: binary -> string {
     encode hex | str lowercase
+}
+
+# The principal a key signs under, and the value `--signer` takes: the
+# fingerprint of the key's public half. Never a file name — that is the whole
+# point of it (see nu-multiproof/pubkey.nu fingerprint).
+def principal-of [key: path]: nothing -> string {
+    open --raw $"($key).pub" | pubkey fingerprint
 }
 
 # Fixed 4-row manifest for golden-root pinning. Deliberately unsorted (builder
@@ -427,7 +435,7 @@ def "a directory row in a non-git bundle reports unverifiable, not valid" [] {
     mkdir $"($bundle)/multiproofs/pubkeys" $"($bundle)/sub"
     "anything at all\n" | save --force $"($bundle)/sub/inner.txt"
     cp $"($repo)/multiproofs/tree-root.txt" $"($bundle)/multiproofs/"
-    cp $"($repo)/multiproofs/tree-root.txt.sshkey.sig" $"($bundle)/multiproofs/"
+    cp $"($repo)/multiproofs/tree-root.txt.(principal-of $key_path).sig" $"($bundle)/multiproofs/"
     cp $"($repo)/multiproofs/pubkeys/sshkey.pub" $"($bundle)/multiproofs/pubkeys/"
 
     let result = merkle verify $dir_proof --repo $bundle
@@ -521,14 +529,14 @@ def "signed roundtrip works when the repo path holds glob metacharacters" [] {
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
 
     let root_result = merkle write-root --repo $repo
-    # --name is not passed: the signer name comes from matching key material
-    # against the registered pubkeys, which is one of the discovery steps.
+    # Signing reads pubkeys/ to check the key is registered, which is one of the
+    # discovery steps a glob pattern used to break.
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
 
     let result = merkle verify (merkle prove README.md --repo $repo) --repo $repo
     assert $result.valid "a repo path with glob metacharacters broke the roundtrip"
     assert equal ($result.signatures | where valid | length) 1
-    assert equal $result.signatures.0.signer "sshkey"
+    assert equal $result.signatures.0.signer (principal-of $key_path)
 }
 
 @test
@@ -595,22 +603,21 @@ def "signer flag pins the principal, not just any registered key" [] {
     # consistency only
     assert (merkle verify $proof --repo $repo).valid
 
-    # The verifier's own copy of the list. --signer is reachable only this way,
-    # so every assertion below is about stems the verifier chose.
+    # The verifier's own copy of the list, holding the same two keys.
     let trusted = $"($tmp_dir)/trusted"
     mkdir $trusted
     cp $"($alice).pub" $"($trusted)/alice.pub"
     cp $"($mallory).pub" $"($trusted)/mallory.pub"
 
     # Signature is cryptographically valid, but it is not alice's
-    let wrong = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer alice
+    let wrong = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $alice)
     assert $wrong.structure_valid "structure must still verify"
     assert not $wrong.valid "a signature from another principal was accepted"
-    assert ($wrong.error | str contains "alice")
-    assert equal ($wrong.signatures | where valid | get signer) [mallory]
-    assert error {|| merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer alice --fail }
+    assert ($wrong.error | str contains (principal-of $alice))
+    assert equal ($wrong.signatures | where valid | get signer) [(principal-of $mallory)]
+    assert error {|| merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $alice) --fail }
 
-    assert (merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer mallory).valid
+    assert (merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $mallory)).valid
 }
 
 # "alice did not sign this" is a claim; a verifier holding no key for alice
@@ -639,12 +646,14 @@ def "signer with no matching key in the trusted dir is an error, not invalid" []
     mkdir $trusted
     cp $"($bob).pub" $"($trusted)/bob.pub"
 
-    let err = try { merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer alice; null } catch {|e| $e.msg }
+    let alice = $"($tmp_dir)/alice"
+    ^ssh-keygen -t ed25519 -f $alice -N "" -q
+    let err = try { merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $alice); null } catch {|e| $e.msg }
     assert ($err != null) "a signer the trust list cannot answer for got a verdict"
-    assert ($err | str contains "no key for signer alice")
+    assert ($err | str contains $"no key with fingerprint (principal-of $alice)")
 
     # Same list, a principal it does hold: answered, not refused.
-    let answered = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer bob
+    let answered = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $bob)
     assert not $answered.valid "bob's key did not sign this root"
     assert $answered.structure_valid
 }
@@ -805,37 +814,56 @@ def "a manifest that no longer yields the signed root is caught" [] {
     assert equal $portable.manifest_root null
 }
 
+# The fork-and-file-it-as-alice shape, and the reason `--signer` no longer needs
+# `--pubkeys-dir`. Mallory's key is registered in the bundle's own pubkeys/ under
+# alice's file name and signs the root there. When the principal was a filename
+# stem, `--signer alice` answered `alice: valid` / `valid: true` for a key whose
+# comment is mallory@evil, which is why the flag used to be refused over a
+# bundle-supplied list. A principal is now rendered from the key material, so the
+# bundle can name its files anything and still cannot make its key answer for
+# alice's.
+#
+# Everything here is checked against the trust list travelling *inside* the
+# artifact — the weakest configuration the tool offers — because that is where
+# the hole was.
 @test
-def "signer flag against a bundle-supplied trust list is refused, not answered" [] {
+def "a bundle cannot file one key under the fingerprint of another" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
 
-    # The fork-and-file-it-as-alice shape: one key, mallory's, registered in
-    # the bundle's own pubkeys/ under alice's name and signing under it. The
-    # principal is a filename, so before the guard `--signer alice` reported
-    # `alice: valid` / `valid: true` for a key whose comment is mallory@evil.
     let mallory = $"($tmp_dir)/mallory"
+    let alice = $"($tmp_dir)/alice"
     ^ssh-keygen -t ed25519 -f $mallory -N "" -q -C "mallory@evil"
+    ^ssh-keygen -t ed25519 -f $alice -N "" -q
     let pubkeys = $"($repo)/multiproofs/pubkeys"
     mkdir $pubkeys
+    # Mallory's key, filed under alice's name AND under alice's fingerprint:
+    # neither one buys anything, because the rendered principal comes from the
+    # bytes in the file.
     cp $"($mallory).pub" $"($pubkeys)/alice.pub"
+    cp $"($mallory).pub" $"($pubkeys)/(principal-of $alice).pub"
 
     let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $mallory --name alice --pubkeys-dir $pubkeys
+    ssh-sign sign $root_result.path --key $mallory --pubkeys-dir $pubkeys
     let proof = merkle prove README.md --repo $repo
 
-    # Asking for a principal against a list the artifact supplies is not a
-    # question this command can answer — it refuses instead of returning a
-    # verdict that reads as an identity check.
-    assert error {|| merkle verify $proof --repo $repo --signer alice }
+    # Asking for alice over the bundle's own list: the bundle holds no key of
+    # alice's, whatever its files are called, so this cannot be answered — and
+    # "alice did not sign it" is not the answer either.
+    let err = try { merkle verify $proof --repo $repo --signer (principal-of $alice); null } catch {|e| $e.msg }
+    assert ($err != null) "the bundle answered for a key it does not hold"
+    assert ($err | str contains "no key with fingerprint")
 
-    # The same artifact, checked against alice's real key: not endorsed.
-    let alice = $"($tmp_dir)/alice"
-    ^ssh-keygen -t ed25519 -f $alice -N "" -q
+    # Asking for the key that really signed: answered, and named for what it is.
+    let honest = merkle verify $proof --repo $repo --signer (principal-of $mallory)
+    assert $honest.valid "the key that signed the root was not recognized"
+    assert equal ($honest.signatures | where valid | get signer) [(principal-of $mallory)]
+
+    # And against alice's real key, held outside the artifact: not endorsed.
     let trusted = $"($tmp_dir)/trusted"
     mkdir $trusted
     cp $"($alice).pub" $"($trusted)/alice.pub"
-    let result = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer alice
+    let result = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $alice)
     assert $result.structure_valid "structure must still verify"
     assert not $result.valid "mallory's key passed as alice"
     assert equal ($result.signatures | get error) [unrecognized_signer]
@@ -891,7 +919,7 @@ def "portable bundle: proof verifies offline in a non-git directory" [] {
     mkdir $"($bundle)/multiproofs/pubkeys"
     cp $"($repo)/README.md" $"($bundle)/README.md"
     cp $"($repo)/multiproofs/tree-root.txt" $"($bundle)/multiproofs/"
-    cp $"($repo)/multiproofs/tree-root.txt.sshkey.sig" $"($bundle)/multiproofs/"
+    cp $"($repo)/multiproofs/tree-root.txt.(principal-of $key_path).sig" $"($bundle)/multiproofs/"
     cp $"($repo)/multiproofs/pubkeys/sshkey.pub" $"($bundle)/multiproofs/pubkeys/"
     let root_hash = open --raw $"($repo)/multiproofs/tree-root.txt" | hash sha256 | decode hex
     let ots_bundle = $"($bundle)/multiproofs/ots-timestamps/tree-root.cafe0000"

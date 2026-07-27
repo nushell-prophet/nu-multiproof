@@ -15,7 +15,9 @@ Each proof type is independent. Use either or both.
 
 `ssh-sign` is not a third claim — it is the signing step under both. It signs a file with an SSH key, and verifies every `.sig` beside a file against the keys in `multiproofs/pubkeys/`, separating "content changed" from "key not registered". `seal` uses it to sign the root statement and `merkle verify` to check that signature. It also runs standalone on any file.
 
-Neither proves identity. A signer name here is the filename of a `.pub` in `multiproofs/pubkeys/` — chosen by whoever committed that key, and travelling inside the very thing under examination. Binding a key to a person is the verifier's own step: compare the fingerprint against a list you hold. See "Verifying commit signatures" below.
+A signer here is a **key fingerprint**: the SHA-256 of the key blob, 64 lowercase hex — the digest `ssh-keygen -lf` prints as `SHA256:<base64>`, written in hex so that one form is legal in a filename, in an `allowed_signers` line and on a command line. `pubkey fingerprint` over a key line prints it. It is the only name this project gives a key: keys are stored as `multiproofs/pubkeys/<fingerprint>.pub`, signatures are `<file>.<fingerprint>.sig`, and `--signer` takes it. Nothing is derived from a file name or a key comment, and there is no flag to choose one — so a trust list that files mallory's key as `alice.pub` still renders mallory's fingerprint.
+
+That is not the same as proving identity. A fingerprint names a key, not a person, and the trust list travels inside the very thing under examination. Binding a fingerprint to a person is the verifier's own step: compare it against one you hold from elsewhere. See "Verifying commit signatures" below.
 
 Both hash file contents themselves, so neither constrains the repo: any git repo works, SHA-1 or SHA-256.
 
@@ -43,6 +45,8 @@ nu-multiproof ots verify multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root
 nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ~/.ssh/id_ed25519
 # Verify signatures against bundled public keys
 nu-multiproof ssh-sign verify multiproofs/tree-root.txt
+# The principal a key signs under — what `merkle verify --signer` takes
+open --raw ~/.ssh/id_ed25519.pub | nu-multiproof pubkey fingerprint
 
 # Derive the merkle root over the manifest and write multiproofs/tree-root.txt (seal does this automatically)
 nu-multiproof merkle write-root
@@ -88,7 +92,7 @@ The root also authenticates the whole catalogue, indirectly: it is computed from
 
 A consumer's full artifact set: the proof file (`merkle prove <filepath>`), `tree-root.txt`, a `.sig` over it, the signer's pubkey from `multiproofs/pubkeys/`, and — for the time anchor — the `tree-root.*` OTS bundle.
 
-The trust list it checks against is, by default, the one inside the target — for a portable bundle, the bundle's own `multiproofs/pubkeys/`. A default `valid: true` therefore says the artifact set is internally consistent, not that the signer you expect endorsed it: anyone can fork the repo, `init` with their own key and re-`seal`. `--pubkeys-dir` points the check at a list you control, and `--signer <name>` narrows that further to a valid signature from that principal instead of from any registered key. A principal is only the *stem of a `.pub` filename*, so `--signer` needs `--pubkeys-dir` and is refused without it: asked over the bundle's own list it would mean no more than "a file named `<name>.pub` signed this", and mallory's key copied in as `alice.pub` answered `alice: valid` (pinned by the test "signer flag against a bundle-supplied trust list is refused, not answered"). A `--signer` your own list holds no key for is an error too, not `valid: false`: "alice did not sign this" is a claim, and without alice's key the verifier cannot make it (pinned by "signer with no matching key in the trusted dir is an error, not invalid"). Which keys count is a statement only the verifier can make — the same verifier-side policy described under "Verifying commit signatures" below.
+The trust list it checks against is, by default, the one inside the target — for a portable bundle, the bundle's own `multiproofs/pubkeys/`. A default `valid: true` therefore says the artifact set is internally consistent, not that the signer you expect endorsed it: anyone can fork the repo, `init` with their own key and re-`seal`. `--pubkeys-dir` points the check at a list you control, and `--signer <fingerprint>` narrows further to a valid signature from that one key instead of from any registered key. Because a principal is the key's own fingerprint, `--signer` is a statement about key material and holds even over the bundle's own list: a bundle can call its key files anything, and the rendered principal still comes from the bytes inside them, so it cannot make its key answer for yours (pinned by the test "a bundle cannot file one key under the fingerprint of another"). What a bundle *can* do is not carry the key at all, and a `--signer` the trust list holds no key for is an error, not `valid: false`: "alice did not sign this" is a claim, and without alice's key the verifier cannot make it (pinned by "signer with no matching key in the trusted dir is an error, not invalid"). Which fingerprints count is still a statement only the verifier can make — the same verifier-side policy described under "Verifying commit signatures" below.
 
 `merkle verify` folds the proof to the signed root, checks the SSH signatures over the root statement, re-hashes the on-disk file against the proven `content_sha256` when present, and reports the OTS anchor as a status (`absent`/`pending`/`anchored` — a fresh seal stays pending until Bitcoin confirms, hours or days). A proof whose embedded root differs from the signed root is for a different seal and fails loudly rather than reporting invalid.
 
@@ -101,8 +105,8 @@ The artifact set is portable. Lay it out in a plain directory — no git, no clo
 ```
 bundle/
   README.md                                # the proven file, at the leaf's filepath
-  multiproofs/tree-root.txt                # + its .<signer>.sig alongside
-  multiproofs/pubkeys/<signer>.pub
+  multiproofs/tree-root.txt                # + its .<fingerprint>.sig alongside
+  multiproofs/pubkeys/<fingerprint>.pub
   multiproofs/ots-timestamps/tree-root.*/  # optional — without it OTS reports `absent`
 ```
 
@@ -142,7 +146,7 @@ An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is 
 
 - `<stem>.<ext>` — frozen content snapshot (the stamped file's bytes at stamp time)
 - `<stem>.ots` — Bitcoin-anchored timestamp over the snapshot's hash
-- `<stem>.<ext>.<signer>.sig` — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig). Every signature sitting beside the stamped file is copied, the bare `<stem>.<ext>.sig` form included, so a bundle carries one per signer rather than one (pinned by the test "stamp snapshots every signature beside the file it stamps"). `seal` signs before it stamps, so its own bundles always carry at least its own (pinned by "seal stamps the root statement into the target repo and bundles its signature")
+- `<stem>.<ext>.<fingerprint>.sig` — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig). Every signature sitting beside the stamped file is copied, the bare `<stem>.<ext>.sig` form included, so a bundle carries one per signer rather than one (pinned by the test "stamp snapshots every signature beside the file it stamps"). `seal` signs before it stamps, so its own bundles always carry at least its own (pinned by "seal stamps the root statement into the target repo and bundles its signature")
 - `<stem>.<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots` — a previous proof of the same content, archived by the re-stamp that replaced it. Same content, different nonce and calendar response, so it is an independent attestation worth keeping; the hash in the name makes the archive name collision-proof for two stamps in one second (pinned by the test "rapid re-stamps each keep their own proof")
 
 `seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. New seals produce only `tree-root.*` bundles: the manifest is neither signed nor stamped anymore, since the root statement is derived from every manifest row, so its signature and Bitcoin anchor cover the full CSV. Archival `tree-hashes.*` bundles (including `origin-proofs/`) stay valid as-is; the transition-era ones may also carry a CSV sig.

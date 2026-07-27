@@ -14,7 +14,9 @@
 # Canonical form: `<type> <base64>` plus a trailing newline — no comment, no
 # extra whitespace. Why the comment goes: it is mutable metadata (`user@host`
 # drifts across machines and re-saves) and would silently fork one key into
-# several identities. The human label lives in the pubkey's file *name*.
+# several identities. Nothing human survives: a key's name in this project is
+# its fingerprint (see `fingerprint` below), which is why the comment has
+# nowhere to go rather than moving to the file name.
 
 use _temp-helpers.nu with-temp-dir
 
@@ -73,6 +75,37 @@ export def canonical []: string -> string {
         ] | str join "\n")}
     }
     $"($candidate)\n"
+}
+
+# The key's principal: the SHA-256 of its key blob, lowercase hex.
+#
+# This is the one identity this project hands out — the principal in every
+# rendered `allowed_signers`, the signer label in `<file>.<signer>.sig`, and the
+# value `merkle verify --signer` takes. It is derived from key material and from
+# nothing else, so no file name and no flag can claim it: mallory's key filed as
+# `alice.pub` renders mallory's fingerprint, and there is no name left for a
+# verifier to be fooled by. Everything the old filename-as-principal grammar
+# needed — a charset gate on stems and `--name`, twin detection, name derivation
+# from a key comment — is gone with it.
+#
+# Why lowercase hex and not OpenSSH's `SHA256:<base64>` spelling of the very
+# same digest: base64 holds `/`, and a principal becomes a path component
+# (`<principal>.pub`, `<file>.<principal>.sig`). One form that is legal in a
+# filename, in an allowed_signers line and on a command line beats two forms to
+# keep in sync — and hex is what every other digest in this project is written
+# as. `ssh-keygen -lf` prints the same bytes; the two are pinned against each
+# other by tests/test_pubkey.nu "fingerprint is the digest ssh-keygen prints".
+#
+# Why `canonical` first, rather than hashing whatever arrives: the digest is
+# over the blob bytes as given, and a padded copy of a key has different blob
+# bytes while OpenSSH reports the same fingerprint for it. Hashing an
+# unvalidated line would hand one key a second principal — the identity fork
+# `canonical` exists to close, re-opened one function along.
+@example "the principal a stored public key signs under" {
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOi7LinplEQewM3/l8Ol9rE85+YwhvLPKf+ZUUf36Xuf" | pubkey fingerprint
+} --result "b610a91de8fa99e224f6b2e7fb6bb8c9e8f0303f8d72d14e5a494ab8d1c68011"
+export def fingerprint []: string -> string {
+    $in | canonical | str trim | split row " " | get 1 | decode base64 | hash sha256
 }
 
 # The key line as OpenSSH itself would write it, or an error naming why it

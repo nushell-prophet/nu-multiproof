@@ -5,13 +5,22 @@ use _layout.nu pubkeys-dir
 use _sig.nu [sig-files-for signer-from-sig sig-path-for original-for-sig]
 use _key-helpers.nu with-signing-key
 use _temp-helpers.nu with-temp-file
-use _fs.nu list-files
-use _allowed-signers.nu [allowed-signers-body check-signer-name NAMESPACE]
-use _pubkey-helpers.nu canonical-file
+use _allowed-signers.nu [allowed-signers-body registered-principals NAMESPACE]
+use _pubkey-helpers.nu fingerprint-file
 
-# Match the signing key against registered pubkeys; return the registered stem.
-# Why: signer identity = filename in multiproofs/pubkeys/, not the private-key filename.
-def lookup-signer-name [key: path pubkeys_dir: path]: nothing -> string {
+# The principal this key signs under: its own fingerprint, from its public half.
+#
+# Why it is not looked up in pubkeys/ any more: the signer used to be the *stem*
+# of whichever registered file held matching key material, so the same key filed
+# twice made every signature fail with "multiple pubkeys match", and a stem the
+# trust-list renderer refused made every later verify in that repo throw. A
+# fingerprint is a property of the key, so neither question arises.
+#
+# Registration is still required, and that is the only reason pubkeys/ is read
+# here: a signature by a key the trust list does not hold is one nothing reading
+# the artifact can check. There is no `--name` escape hatch, deliberately — a
+# principal is not the signer's to choose.
+def signing-principal [key: path pubkeys_dir: path]: nothing -> string {
     let pub_path = if ($key | str ends-with ".pub") { $key } else {
         let candidate = $"($key).pub"
         if not ($candidate | path exists) {
@@ -19,33 +28,20 @@ def lookup-signer-name [key: path pubkeys_dir: path]: nothing -> string {
         }
         $candidate
     }
-    let signing = canonical-file $pub_path
-
-    # A `for` so that a broken file in pubkeys/ reports its own name, instead of
-    # the closure wrapper's "Eval block failed with pipeline input".
-    mut matches = []
-    for file in (list-files $pubkeys_dir --suffix ".pub") {
-        if (canonical-file $file) == $signing {
-            $matches = ($matches | append ($file | path parse | get stem))
-        }
+    let principal = fingerprint-file $pub_path
+    if $principal not-in (registered-principals $pubkeys_dir) {
+        error make {msg: $"the signing key \(($principal)\) is not registered in ($pubkeys_dir)/ — register it with `init --pubkey ($pub_path)`, or nothing reading this artifact can check the signature"}
     }
-
-    if ($matches | is-empty) {
-        error make {msg: $"signing key not registered in ($pubkeys_dir)/ — add its pubkey or pass --name explicitly"}
-    }
-    if ($matches | length) > 1 {
-        error make {msg: $"multiple pubkeys match in ($pubkeys_dir)/: ($matches | str join ', ')"}
-    }
-    $matches | first
+    $principal
 }
 
 # Sign a file with an SSH key.
-# Creates {path}.{name}.sig alongside the input file.
+# Creates {path}.{fingerprint}.sig alongside the input file, where the
+# fingerprint is the signing key's own (see `pubkey fingerprint`).
 @example "sign the root statement with the git signing key" { ssh-sign sign multiproofs/tree-root.txt }
 export def sign [
     path: path # File to sign
     --key: path # SSH private key (default: from git config user.signingKey)
-    --name: string # Signer name for the .sig file (default: stem of matching pubkey in --pubkeys-dir)
     --pubkeys-dir: path # Directory of registered *.pub files (default: multiproofs/pubkeys from git root)
 ] {
     # Why default from git config: makes `ssh-sign sign <file>` usable with no
@@ -53,20 +49,9 @@ export def sign [
     # The closure form bounds the key's lifetime: an inline `key::` config is
     # materialized to a temp file, which with-signing-key deletes on the way out.
     with-signing-key --key $key {|key|
-        # Checked against the trust list's own grammar, not just used: the name
-        # ends up as a principal there, and `sign` accepted names the renderer
-        # refuses — a key filed as `al ice.pub` signed fine and then made every
-        # later `verify` in that repo throw while rendering allowed_signers.
-        # It also keeps `--name` from putting the sig outside the target's
-        # directory, where `sig-files-for` would never find it.
-        let signer_name = check-signer-name (
-            if $name != null { $name } else {
-                let dir = if $pubkeys_dir != null { $pubkeys_dir } else {
-                    pubkeys-dir (repo-root)
-                }
-                lookup-signer-name $key $dir
-            }
-        ) "signer name"
+        let signer_name = signing-principal $key (
+            if $pubkeys_dir != null { $pubkeys_dir } else { pubkeys-dir (repo-root) }
+        )
 
         # Why the content goes in over stdin instead of naming the file: given a
         # file, ssh-keygen writes the signature to the fixed name `<path>.sig`,
@@ -118,7 +103,10 @@ export def sign [
 # Naming a .sig file verifies that one signature; naming the original verifies
 # every signature `_sig.nu sig-files-for` finds beside it — both the named
 # `{path}.{signer}.sig` form and the bare `{path}.sig`.
-# Returns a table of {signer, valid, error?}. --fail exits non-zero if any
+# Returns a table of {signer, valid, error?}, where `signer` is the fingerprint
+# of the key that made the signature — read out of the signature itself. Only an
+# `unrecognized_signer` row falls back to the label the sig's file name carries,
+# since there is no registered key to name. --fail exits non-zero if any
 # signature is invalid (for CI), instead of a silent pass the caller must inspect.
 @example "verify all signatures on the root statement" { ssh-sign verify multiproofs/tree-root.txt }
 export def verify [
@@ -143,8 +131,10 @@ export def verify [
     if ($signers | str trim | is-empty) {
         error make {msg: $"no public keys found in ($pubkeys_dir)/"}
     }
-    # One allowed_signers file with every registered key (principal = stem), so
-    # find-principals identifies the signer in a single call per sig.
+    # One allowed_signers file with every registered key (principal = the key's
+    # fingerprint), so find-principals identifies the signer in a single call per
+    # sig — and identifies it from the key inside the signature, not from what
+    # the sig's file name claims.
     let results = with-temp-file "allowed-signers" {|signers_file|
         $signers | save --force $signers_file
         # Why naming a sig wins over discovery: `verify foo.csv.alice.sig`

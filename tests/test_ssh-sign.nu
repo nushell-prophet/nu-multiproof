@@ -2,13 +2,23 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/ssh-sign.nu
+use ../nu-multiproof/pubkey.nu
 # Tested here rather than in its own suite: `ssh-sign sign` is what the key
 # lifetime exists for, and signing an inline `key::` key needs an agent.
 use ../nu-multiproof/_key-helpers.nu with-signing-key
+use ../nu-multiproof/_sig.nu sig-files-for
 
 # Why a const: the namespace test asks what the *command line* accepts, which
 # only a separate nu process can answer.
 const MODULE_DIR = path self ../nu-multiproof
+
+# The principal a key signs under: the fingerprint of its public half. Every
+# expectation about a `.sig` file name and about a reported signer goes through
+# this, because that is where a signer's identity comes from — not from what the
+# key's file, or its entry in pubkeys/, happens to be called.
+def principal-of [key: path]: nothing -> string {
+    open --raw $"($key).pub" | pubkey fingerprint
+}
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -22,8 +32,10 @@ def cleanup [] {
     rm --recursive --force $in.tmp_dir
 }
 
+# The registered file is called `alice.pub` and the private key `somekey`, and
+# neither name reaches the signature: the sig is named for the key's fingerprint.
 @test
-def "sign creates named sig file" [] {
+def "sign names the sig file after the key, not after either file holding it" [] {
     let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/somekey"
     let test_file = $"($tmp_dir)/test.txt"
@@ -35,8 +47,31 @@ def "sign creates named sig file" [] {
     "hello world" | save --force $test_file
 
     ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
-    assert ($"($test_file).alice.sig" | path exists)
+    assert ($"($test_file).(principal-of $key_path).sig" | path exists)
+    assert (not ($"($test_file).alice.sig" | path exists)) "the sig was named after a file name"
     assert (not ($"($test_file).sig" | path exists))
+}
+
+# A key nobody registered can still sign anything — that is what `ssh-keygen -Y
+# sign` does — but a signature no trust list can name is one nothing reading the
+# artifact can check. Refused at signing time, where the operator can still fix
+# it, rather than at somebody else's verify.
+@test
+def "sign refuses a key the trust list does not hold" [] {
+    let tmp_dir = $in.tmp_dir
+    let key_path = $"($tmp_dir)/stranger"
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    ^ssh-keygen -t ed25519 -f $"($tmp_dir)/other" -N "" -q
+    mkdir $pubkeys_dir
+    cp $"($tmp_dir)/other.pub" ($pubkeys_dir | path join "other.pub")
+    "hello world" | save --force $test_file
+
+    let outcome = try { ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir; "signed" } catch {|e| $e.msg }
+    assert ($outcome | str contains "not registered") $"got: ($outcome)"
+    assert equal (ls --all $tmp_dir | get name | each { path basename } | where {|f| $f | str ends-with ".sig" }) []
 }
 
 # The namespace is written into every allowed_signers line, right beside the
@@ -104,17 +139,19 @@ def "with-signing-key leaves an explicit key alone" [] {
     assert ($key_path | path exists)
 }
 
+# `--name` let the signer pick their own principal: it became the `.sig` file
+# name and, through the pubkey stem it was matched against, a trust-list entry.
+# A principal is key material now, so there is nothing left for a flag to say —
+# and the flag going missing is what this pins. `--name alice` on mallory's key
+# is the shape it enabled.
 @test
-def "sign with custom name" [] {
-    let tmp_dir = $in.tmp_dir
-    let key_path = $"($tmp_dir)/mykey"
-    let test_file = $"($tmp_dir)/test.txt"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    "hello world" | save --force $test_file
-
-    ssh-sign sign $test_file --key $key_path --name bob
-    assert ($"($test_file).bob.sig" | path exists)
+def "the signer name cannot be set by a caller" [] {
+    let out = ^nu -c $"use ($MODULE_DIR)/ssh-sign.nu; ssh-sign sign f --name alice" | complete
+    assert equal $out.exit_code 1 $"ssh-sign sign still takes a name: ($out)"
+    # Not `str contains "--name"`: nushell echoes the offending source line in
+    # every parse error, and that line holds `--name`. The error *class* is what
+    # says the flag is gone.
+    assert ($out.stderr | str contains "unknown_flag") $"expected an unknown-flag error, got: ($out.stderr)"
 }
 
 @test
@@ -134,7 +171,7 @@ def "sign and verify round-trip" [] {
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | length) 1
     assert equal ($results | first | get valid) true
-    assert equal ($results | first | get signer) "test"
+    assert equal ($results | first | get signer) (principal-of $key_path)
 }
 
 @test
@@ -155,8 +192,8 @@ def "multiple signers" [] {
 
     ssh-sign sign $test_file --key $key_alice --pubkeys-dir $pubkeys_dir
     ssh-sign sign $test_file --key $key_bob --pubkeys-dir $pubkeys_dir
-    assert ($"($test_file).alice.sig" | path exists)
-    assert ($"($test_file).bob.sig" | path exists)
+    assert ($"($test_file).(principal-of $key_alice).sig" | path exists)
+    assert ($"($test_file).(principal-of $key_bob).sig" | path exists)
 
     let results = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
     assert equal ($results | length) 2
@@ -177,8 +214,15 @@ def "verify fails with wrong key" [] {
     mkdir $pubkeys_dir
     cp $"($wrong_key).pub" ($pubkeys_dir | path join "wrong.pub")
 
+    # The signer's own list, holding the signer's own key: signing requires the
+    # key to be registered somewhere, and the point here is a *verifier* whose
+    # list does not hold it.
+    let signer_dir = $"($tmp_dir)/signer-trust"
+    mkdir $signer_dir
+    cp $"($sign_key).pub" ($signer_dir | path join "signer.pub")
+
     "hello world" | save --force $test_file
-    ssh-sign sign $test_file --key $sign_key --name attacker
+    ssh-sign sign $test_file --key $sign_key --pubkeys-dir $signer_dir
 
     # Why: sig is cryptographically valid (good format, matches content) but
     # the signer's key isn't in pubkeys_dir. Must surface as `unrecognized_signer`,
@@ -212,7 +256,7 @@ def "verify fails with tampered content" [] {
 }
 
 @test
-def "verify infers original from .sig path with hyphenated signer" [] {
+def "verify infers the original from a named .sig path" [] {
     let tmp_dir = $in.tmp_dir
     let key_path = $"($tmp_dir)/test_key"
     let test_file = $"($tmp_dir)/test.txt"
@@ -220,19 +264,20 @@ def "verify infers original from .sig path with hyphenated signer" [] {
 
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $pubkeys_dir
-    cp $"($key_path).pub" ($pubkeys_dir | path join "maxim-uvarov2.pub")
+    cp $"($key_path).pub" ($pubkeys_dir | path join "test.pub")
 
     "hello world" | save --force $test_file
     ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
 
-    # Why: signer names can contain `-`. The infer branch uses a regex on the
-    # `.sig` path to recover the original; `\w` excludes `-` so this would fail.
-    let sig_path = $"($test_file).maxim-uvarov2.sig"
+    # Naming the sig has to recover `test.txt` from `test.txt.<fingerprint>.sig`.
+    # The grammar itself is _sig.nu's, and tests/test_sig.nu pins its shapes; what
+    # this asks is that `verify` reads it through that one implementation.
+    let sig_path = $"($test_file).(principal-of $key_path).sig"
     assert ($sig_path | path exists) $"sig not written at expected path: ($sig_path)"
     let results = ssh-sign verify $sig_path --pubkeys-dir $pubkeys_dir
     assert equal ($results | length) 1
     assert equal ($results | first | get valid) true
-    assert equal ($results | first | get signer) "maxim-uvarov2"
+    assert equal ($results | first | get signer) (principal-of $key_path)
 }
 
 @test
@@ -281,23 +326,25 @@ def "verify with a positional sig file checks only that signature" [] {
     cp $"($alice_key).pub" ($pubkeys_dir | path join "alice.pub")
     cp $"($bob_key).pub" ($pubkeys_dir | path join "bob.pub")
 
-    ssh-sign sign $test_file --key $alice_key --name alice --pubkeys-dir $pubkeys_dir
-    ssh-sign sign $test_file --key $bob_key --name bob --pubkeys-dir $pubkeys_dir
+    ssh-sign sign $test_file --key $alice_key --pubkeys-dir $pubkeys_dir
+    ssh-sign sign $test_file --key $bob_key --pubkeys-dir $pubkeys_dir
 
-    let one = (ssh-sign verify $"($test_file).alice.sig" --pubkeys-dir $pubkeys_dir)
-    assert equal ($one | get signer) ["alice"]
+    let one = (ssh-sign verify $"($test_file).(principal-of $alice_key).sig" --pubkeys-dir $pubkeys_dir)
+    assert equal ($one | get signer) [(principal-of $alice_key)]
 
     # The original still fans out to every sig — the two forms stay distinct.
     let all = (ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir)
-    assert equal ($all | get signer | sort) ["alice" "bob"]
+    assert equal ($all | get signer | sort) ([(principal-of $alice_key) (principal-of $bob_key)] | sort)
 }
 
 # A hand-written trust list, not one `init` produced: keys stored with two
-# spaces between type and material. The old key comparison split on a single
-# space and took the first two fields, so both keys reduced to `ssh-ed25519 `
-# — equal to each other, and the lookup refused with "multiple pubkeys match".
+# spaces between type and material. Registration is decided on key material, and
+# an earlier comparison split on a single space and took the first two fields, so
+# both keys reduced to `ssh-ed25519 ` — equal to each other, and signing refused
+# with "multiple pubkeys match". Both keys must still be recognized as
+# registered, each under its own fingerprint.
 @test
-def "the signer lookup compares key material, not the spacing around it" [] {
+def "registration compares key material, not the spacing around it" [] {
     let tmp_dir = $in.tmp_dir
     let test_file = $"($tmp_dir)/test.txt"
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
@@ -315,8 +362,10 @@ def "the signer lookup compares key material, not the spacing around it" [] {
     }
 
     ssh-sign sign $test_file --key $alice_key --pubkeys-dir $pubkeys_dir
-    assert ($"($test_file).alice.sig" | path exists)
-    assert (not ($"($test_file).bob.sig" | path exists))
+    ssh-sign sign $test_file --key $bob_key --pubkeys-dir $pubkeys_dir
+    assert equal (
+        sig-files-for $test_file | each {|f| $f | path basename } | sort
+    ) ([$"test.txt.(principal-of $alice_key).sig" $"test.txt.(principal-of $bob_key).sig"] | sort)
 }
 
 # A bare `<file>.sig` — what plain `ssh-keygen -Y sign` writes, and what an
@@ -339,7 +388,7 @@ def "verify resolves the bare sig form of a file with an extension" [] {
     ^ssh-keygen -Y sign -f $key_path -n file $test_file
 
     let result = (ssh-sign verify $"($test_file).sig" --pubkeys-dir $pubkeys_dir)
-    assert equal ($result | get signer) ["alice"]
+    assert equal ($result | get signer) [(principal-of $key_path)]
     assert equal ($result | get valid) [true]
 }
 
@@ -364,7 +413,7 @@ def "a file whose name starts with a dash can be signed and verified" [] {
     # ssh-keygen waits for standard input forever.
     "" | ssh-sign sign "-weird.txt" --key $key_path --pubkeys-dir $pubkeys_dir
     let result = (ssh-sign verify "-weird.txt" --pubkeys-dir $pubkeys_dir)
-    assert equal ($result | get signer) ["alice"]
+    assert equal ($result | get signer) [(principal-of $key_path)]
     assert equal ($result | get valid) [true]
 }
 
@@ -389,7 +438,7 @@ def "signing never writes through the shared <file>.sig name" [] {
 
     ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
 
-    assert ($"($test_file).alice.sig" | path exists)
+    assert ($"($test_file).(principal-of $key_path).sig" | path exists)
     assert equal (open --raw $bare_sig) "not a signature, and not ours to touch"
 }
 
@@ -417,7 +466,9 @@ def "concurrent signs of one file keep their own signatures" [] {
     # find-principals names the signer from the key inside the sig; the file
     # name claims one too. They must agree for every signature.
     let result = (ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir)
-    assert equal ($result | get signer | sort) $signers
+    assert equal ($result | get signer | sort) (
+        $signers | each {|s| principal-of $"($tmp_dir)/($s)_key" } | sort
+    )
     assert equal ($result | get valid) [true true true true]
 }
 
@@ -427,37 +478,51 @@ def "concurrent signs of one file keep their own signatures" [] {
 # tree-root.txt whose sig it deliberately kept, so one cancelled Touch ID
 # prompt was enough. A stubbed ssh-keygen stands in for the fail-open: it
 # reports success for `-Y sign` and emits bytes that are not a signature.
+#
+# Why the stub delegates everything else to the real binary: signing now derives
+# the signer from key material, which is OpenSSH's answer to give — so a stub
+# that refused every other subcommand would fail before reaching the ceremony,
+# and the test would pass for the wrong reason.
 @test
 def "a failed signing ceremony leaves the previous signature alone" [] {
     let tmp_dir = $in.tmp_dir
     let test_file = $"($tmp_dir)/doc.txt"
-    let sig_path = $"($test_file).alice.sig"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let key_path = $"($tmp_dir)/alice_key"
     let stub_dir = $"($tmp_dir)/stub"
+    let real_keygen = which ssh-keygen | get 0.path
 
-    mkdir $stub_dir
+    mkdir $stub_dir $pubkeys_dir
     "hello world" | save --force $test_file
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    cp $"($key_path).pub" ($pubkeys_dir | path join "alice.pub")
+    let sig_path = $"($test_file).(principal-of $key_path).sig"
     "THE SIGNATURE FROM AN EARLIER GOOD RUN" | save --force $sig_path
     [
         "#!/bin/sh"
         # `-Y sign` succeeds and writes junk; check-novalidate then refuses it.
         'for a in "$@"; do case "$a" in sign) m=sign ;; check-novalidate) m=check ;; esac; done'
         'if [ "$m" = sign ]; then echo NOT-A-SIGNATURE; exit 0; fi'
-        'exit 1'
+        'if [ "$m" = check ]; then exit 1; fi'
+        $"exec ($real_keygen) \"$@\""
     ] | str join "\n" | save --force $"($stub_dir)/ssh-keygen"
     ^chmod +x $"($stub_dir)/ssh-keygen"
     $env.PATH = ([$stub_dir] ++ $env.PATH)
 
-    assert error {|| ssh-sign sign $test_file --key $"($tmp_dir)/nokey" --name alice }
+    assert error {|| ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir }
     assert equal (open --raw $sig_path) "THE SIGNATURE FROM AN EARLIER GOOD RUN"
 }
 
-# The two ends of one grammar. A signer name becomes a principal in the trust
-# list, so a name the renderer refuses signs a file that can then never be
-# verified — `al ice.pub` signed fine and made every later verify in that repo
-# throw. And `--name` is interpolated into the sig's file name, so a slash put
-# the signature in another directory, out of discovery's reach.
+# What used to be a grammar and is now nothing to state. A signer name became a
+# principal in the trust list, so `sign` had to refuse the names the renderer
+# refused — `al ice.pub` signed fine and then made every later verify in that repo
+# throw — and `--name` was interpolated into the sig's file name, so a slash put
+# the signature in another directory, out of discovery's reach. Both entry points
+# for such a name are gone: `--name` does not exist, and the pubkey file's own
+# name is not read. So the hostile names below are all *file* names, and every one
+# of them signs and verifies.
 @test
-def "sign refuses a signer name the trust list cannot express" [] {
+def "a pubkey file name the trust list could never express still signs and verifies" [] {
     let tmp_dir = $in.tmp_dir
     let test_file = $"($tmp_dir)/doc.txt"
     let pubkeys_dir = $"($tmp_dir)/pubkeys"
@@ -466,20 +531,17 @@ def "sign refuses a signer name the trust list cannot express" [] {
     mkdir $pubkeys_dir
     "hello world" | save --force $test_file
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    let principal = principal-of $key_path
 
-    for bad in ["al ice" "a/../b" "*" "ali,ce" 'ali"ce'] {
-        let outcome = (try {
-            ssh-sign sign $test_file --key $key_path --name $bad --pubkeys-dir $pubkeys_dir
-            "signed"
-        } catch {|e| $e.msg })
-        assert ($outcome | str contains "signer name") $"name ($bad) got: ($outcome)"
+    for stem in ["al ice" "*" "ali,ce" 'ali"ce' "ali\u{200b}ce"] {
+        let registered = $pubkeys_dir | path join $"($stem).pub"
+        cp $"($key_path).pub" $registered
+
+        ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir
+        let result = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
+        assert equal ($result | get signer) [$principal] $"pubkey named ($stem | to nuon) changed the signer"
+        assert equal ($result | get valid) [true]
+
+        rm $registered $"($test_file).($principal).sig"
     }
-    # nothing was written under any of them
-    assert equal (ls --all $tmp_dir | get name | each { path basename } | sort) ["alice_key" "alice_key.pub" "doc.txt" "pubkeys"]
-
-    # the lookup path is the same grammar: a pubkey stem the renderer refuses
-    # must fail at signing time, not at the next verify
-    cp $"($key_path).pub" ($pubkeys_dir | path join "al ice.pub")
-    let outcome = (try { ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir; "signed" } catch {|e| $e.msg })
-    assert ($outcome | str contains "signer name") $"got: ($outcome)"
 }
