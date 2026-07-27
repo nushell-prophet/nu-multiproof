@@ -168,7 +168,11 @@ def "init refuses inline key:: material that is not a public key" [] {
 
     let outcome = (try { init --repo $repo; "ok" } catch { |e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
-    assert ($outcome | str contains "public key") $"expected a public-key message, got ($outcome)"
+    # The inner refusal must survive: private key material is multi-line, and
+    # `pubkey canonical` names that exact reason. A bare `str contains "public
+    # key"` was satisfied by the wholesale replacement text just as well.
+    assert ($outcome | str contains "not a single-line SSH public key") $"expected canonical's own refusal, got ($outcome)"
+    assert ($outcome | str contains "user.signingKey") $"the error does not name where the key came from: ($outcome)"
 
     assert equal (registered $repo) []
 }
@@ -308,6 +312,55 @@ def "init refuses a second encoding of a key it already holds" [] {
     # what makes this a fork rather than two keys.
     assert equal (fingerprint-of $"($tmp_dir)/alice.pub") (fingerprint-of $"($tmp_dir)/mallory.pub")
     assert equal (registered $repo) [$"(principal-of $"($tmp_dir)/alice.pub").pub"]
+}
+
+# The same padded-encoding refusal through the inline `key::` path. The catch
+# there used to replace every inner error with "is not an SSH public key" — but
+# this key IS a real public key, and the canonical error naming both encodings
+# (given vs what OpenSSH writes) is the one thing telling the operator what is
+# actually wrong with it. It must reach them intact.
+@test
+def "an inline key:: padded encoding surfaces the canonical error naming both encodings" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-repo $tmp_dir
+
+    ^git -C $repo config user.signingKey $"key::($RSA_PADDED_MODULUS)"
+    let outcome = try { init --repo $repo; "ok" } catch {|e| $e.msg }
+    assert ($outcome | str contains "not the encoding OpenSSH writes") $"canonical's refusal was replaced: ($outcome)"
+    assert ($outcome | str contains $RSA_PADDED_MODULUS) $"the given encoding is missing: ($outcome)"
+    assert ($outcome | str contains $RSA_ALICE) $"the encoding OpenSSH writes is missing: ($outcome)"
+    assert equal (registered $repo) []
+}
+
+# The toolchain refusal (310c29b) through the inline `key::` path: with
+# ssh-keygen off PATH the same catch replaced "this is a toolchain problem"
+# with a verdict about the key — undoing exactly what 310c29b fixed one frame
+# below. Same probe shape as tests/test_pubkey.nu "a missing ssh-keygen is
+# reported as a toolchain problem, not a bad key"; git joins the PATH because
+# init reads the key out of git config before any parsing happens.
+@test
+def "a missing ssh-keygen through key:: stays a toolchain problem, not a bad key" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-repo $tmp_dir
+
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    ^git -C $repo config user.signingKey $"key::(open --raw $"($key_path).pub" | str trim)"
+
+    let bin = $"($tmp_dir)/bin"
+    mkdir $bin
+    for tool in ["nu" "git" "chmod"] {
+        ^ln -s (which $tool | get 0.path) $"($bin)/($tool)"
+    }
+    let script = $"($tmp_dir)/probe.nu"
+    [
+        $"use ($MODULE_DIR)/init.nu"
+        $"try { init --repo ($repo) } catch {|e| print $e.msg }"
+    ] | str join "\n" | save --force $script
+
+    let out = ^bash -c $"PATH=($bin) exec ($bin)/nu ($script)" | complete
+    assert ($out.stdout | str contains "toolchain problem") $"expected a toolchain message, got: ($out.stdout)($out.stderr)"
+    assert (not ($out.stdout | str contains "not an SSH public key")) $"a good key was blamed: ($out.stdout)"
 }
 
 # The key type used to reach a file name when the key carried no comment, so a

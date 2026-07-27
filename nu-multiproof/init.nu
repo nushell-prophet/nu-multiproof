@@ -59,8 +59,15 @@ def resolve-key [root: path, pubkey: any]: nothing -> any {
     let raw = $git_key.stdout | str trim
     if ($raw | str starts-with "key::") {
         let key_data = $raw | str replace "key::" ""
-        return (try { $key_data | pubkey canonical } catch {
-            error make {msg: "user.signingKey inline `key::` value is not an SSH public key — pubkeys/ must hold public keys only"}
+        # Why the inner message survives (same shape as canonical-file, which
+        # names the source file; the source here is git config): replacing it
+        # wholesale answered "is not an SSH public key" for every refusal alike
+        # — a padded second encoding of a REAL key lost the canonical error
+        # naming both encodings, and a missing ssh-keygen (310c29b) read as a
+        # verdict about the key. Either way the operator went looking for the
+        # wrong problem — see resolve-pubkey-file below.
+        return (try { $key_data | pubkey canonical } catch {|e|
+            error make {msg: $"user.signingKey inline `key::` value: ($e.msg)"}
         })
     }
     let expanded = $raw | path expand
