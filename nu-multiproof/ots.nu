@@ -285,7 +285,7 @@ export def stamp [file: path --out-dir: path --response-file: path] {
         # exposes the status, --allow-errors returns a non-200 instead of throwing
         # raw, and /digest expects raw bytes (application/octet-stream).
         let response = (
-            http post --full --allow-errors --max-time $NETWORK_TIMEOUT
+            http post --full --allow-errors --raw --max-time $NETWORK_TIMEOUT
             --content-type "application/octet-stream"
             $"($DEFAULT_CALENDAR)/digest"
             $merkle_tip
@@ -293,7 +293,18 @@ export def stamp [file: path --out-dir: path --response-file: path] {
         if $response.status != 200 {
             error make {msg: $"calendar returned status ($response.status)"}
         }
-        $response.body
+        # Why --raw + into binary: the body's shape used to depend on the
+        # Content-Type the calendar chose. An application/json body arrived as
+        # a record, so `bytes add` threw a type error naming neither the
+        # calendar nor the cause; an all-ASCII body arrived as a string. --raw
+        # stops the content-type parsing; into binary covers the string case.
+        # Measured limit (0.114.1, no flag turns it off): a text/* body with a
+        # non-UTF-8 charset is transcoded to UTF-8 at the HTTP layer, before
+        # either of these — such a body still arrives corrupted, and the
+        # rejected-recovery file then keeps the transcoding, not what the
+        # calendar sent. Not pinned by a test: triggering any of this needs a
+        # live server choosing the header, and the suite has no local one.
+        $response.body | into binary
     }
 
     let nonce_len = ($nonce | bytes length) | encode-varint
@@ -497,7 +508,7 @@ export def upgrade [ots_file: path --response-file: path --calendar: string] {
         }
         let url = $"($base_url)/timestamp/($hash_hex)"
         let response = (
-            http get --full --allow-errors --max-time $NETWORK_TIMEOUT
+            http get --full --allow-errors --raw --max-time $NETWORK_TIMEOUT
             --headers {Accept: "application/vnd.opentimestamps.v1"}
             $url
         )
@@ -507,7 +518,10 @@ export def upgrade [ots_file: path --response-file: path --calendar: string] {
         if $response.status != 200 {
             error make {msg: $"calendar returned status ($response.status)"}
         }
-        $response.body
+        # Why --raw + into binary: same as the calendar POST in `stamp` —
+        # without them the body's shape depends on the Content-Type the server
+        # chose. The charset-transcoding limit measured there applies here too.
+        $response.body | into binary
     }
 
     let prefix = $buf | bytes at 0..($parsed.att_offset - 1)
