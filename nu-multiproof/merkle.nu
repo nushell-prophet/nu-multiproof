@@ -151,7 +151,6 @@ export def write-root [
 export def prove [
     filepath: string # Manifest row to prove (as listed in tree-hashes.csv)
     --repo: path # Target git repo root (default: git root of current directory)
-    --out: path # Proof destination (default: multiproofs/inclusion-proofs/<filepath>.multiproof.json)
 ]: nothing -> path {
     let target = repo-root $repo
     let leaves = load-leaves (manifest-path $target)
@@ -170,11 +169,10 @@ export def prove [
         # Self-description only — verify trusts the SIGNED root file, never this copy
         root: (mth $leaf_hashes | encode hex | str lowercase)
     }
-    # Default under multiproofs/ (excluded from the manifest), never next to
-    # the source file — that would pollute the worktree and the next manifest.
-    let out = if $out != null { $out } else {
-        inclusion-proofs-dir $target | path join $"($filepath).multiproof.json"
-    }
+    # Under multiproofs/ (excluded from the manifest), never next to the source
+    # file — that would pollute the worktree and the next manifest. Not a
+    # --out flag: nothing ever passed one, and `mv` is the escape hatch.
+    let out = inclusion-proofs-dir $target | path join $"($filepath).multiproof.json"
     mkdir ($out | path dirname)
     $proof | to json --indent 2 | save --raw --force $out
     print $"Proof: ($out)"

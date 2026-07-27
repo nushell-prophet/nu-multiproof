@@ -17,17 +17,21 @@ use _key-helpers.nu with-signing-key
 #      in-process pass emits per-file, per-dir and the root "." row together, so
 #      the manifest is written once, complete. Then derive the merkle root
 #      statement (multiproofs/tree-root.txt) from the fresh manifest
-#   3. ssh-sign — sign the root statement (--no-sign to skip)
+#   3. ssh-sign — sign the root statement
 #   4. ots stamp — timestamp the root statement (--no-stamp to skip)
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
 # context (message, scope, timing).
+#
+# No --key and no --no-sign. The signing key comes from --repo's git config,
+# which is where a repo's identity belongs, and `ssh-sign sign --key` still
+# gives explicit key choice for a one-off. "Seal but do not sign" is
+# `tree-hashes` followed by `merkle write-root` — the two commands this step
+# wraps — so the flag bought a second name for a path that already exists.
 @example "full seal of the current repo" { seal }
 @example "seal without timestamping" { seal --no-stamp }
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
-    --key: path # SSH private key (default: from git config user.signingKey)
-    --no-sign # Skip SSH signing (on by default — seal should be complete)
     --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
 ] {
     let root = repo-root $repo
@@ -79,9 +83,9 @@ export def main [
 
     # Why: a sig from a previous seal signs the previous bytes — stale exactly
     # when regen changed them. Clear those before step 3 signs fresh; sigs
-    # over unchanged bytes are still valid and survive (so --no-sign doesn't
-    # behave as "remove signatures"). Uses the shared discovery so the bare
-    # `.sig` form is cleared too, not just `.<signer>.sig`.
+    # over unchanged bytes are still valid and survive, whoever made them — a
+    # co-signer's sig is not this seal's to delete. Uses the shared discovery
+    # so the bare `.sig` form is cleared too, not just `.<signer>.sig`.
     #
     # Why the manifest goes through the same rule instead of being swept
     # unconditionally: `ssh-sign sign multiproofs/tree-hashes.csv` is a public
@@ -107,17 +111,15 @@ export def main [
     # derived from every manifest row (the "." root-CID row included), so it
     # authenticates the full CSV indirectly: rebuild the tree, compare roots.
     # The transitional whole-CSV signature was dropped as unneeded legacy.
-    if not $no_sign {
-        # Why resolve here and not let `ssh-sign sign` do it: the key comes from
-        # --repo's git config, and ssh-sign reads the CWD's repo. The closure
-        # form bounds an inline `key::` temp file to the signing call.
-        # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
-        # git root, but seal may target a different repo via --repo.
-        let root_sig = with-signing-key --key $key --root $root {|signing_key|
-            ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
-        }
-        $result = ($result | insert root_sig $root_sig)
+    # Why resolve here and not let `ssh-sign sign` do it: the key comes from
+    # --repo's git config, and ssh-sign reads the CWD's repo. The closure form
+    # bounds an inline `key::` temp file to the signing call.
+    # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's git
+    # root, but seal may target a different repo via --repo.
+    let root_sig = with-signing-key --root $root {|signing_key|
+        ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
     }
+    $result = ($result | insert root_sig $root_sig)
 
     # 4. OTS timestamp — anchors the root statement to Bitcoin. The manifest
     # is not stamped: the root is derived from every row, so its anchor

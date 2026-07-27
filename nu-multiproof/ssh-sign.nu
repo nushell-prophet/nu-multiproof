@@ -115,14 +115,13 @@ export def sign [
 }
 
 # Verify a file's SSH signatures against public keys in a directory.
-# Naming a .sig file (positionally or via --sig) verifies that one signature;
-# naming the original verifies every {path}.*.sig found beside it.
+# Naming a .sig file verifies that one signature; naming the original verifies
+# every {path}.*.sig found beside it.
 # Returns a table of {signer, valid, error?}. --fail exits non-zero if any
 # signature is invalid (for CI), instead of a silent pass the caller must inspect.
 @example "verify all signatures on the root statement" { ssh-sign verify multiproofs/tree-root.txt }
 export def verify [
     path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
-    --sig: path # Specific signature file (default: all .sig files)
     --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
     --fail # Exit non-zero if any signature is invalid (for CI)
 ] {
@@ -147,16 +146,13 @@ export def verify [
     # find-principals identifies the signer in a single call per sig.
     let results = with-temp-file "allowed-signers" {|signers_file|
         $signers | save --force $signers_file
-        # Why the positional sig wins over discovery: `verify foo.csv.alice.sig`
+        # Why naming a sig wins over discovery: `verify foo.csv.alice.sig`
         # reads as "check alice's signature", but discovery would also pull in
-        # bob's — reporting on sigs the caller never named.
-        let sig_files = if $sig != null {
-            [$sig]
-        } else if $target.sig != null {
-            [$target.sig]
-        } else {
-            sig-files-for $path
-        }
+        # bob's — reporting on sigs the caller never named. Not also a --sig
+        # flag: it said the same thing without inferring the original, so
+        # `verify doc.txt --sig doc.txt.alice.sig` had to repeat what the sig
+        # name already carries.
+        let sig_files = if $target.sig != null { [$target.sig] } else { sig-files-for $path }
 
         if ($sig_files | is-empty) {
             error make {msg: $"no signature files found for ($path)"}
