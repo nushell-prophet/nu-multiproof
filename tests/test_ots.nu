@@ -361,6 +361,45 @@ def "a pending URI holding characters the format forbids is refused" [] {
     assert ($outcome | str contains "characters the format does not allow") $"expected a refusal, got: ($outcome)"
 }
 
+# The reference client caps a pending URI at MAX_URI_LENGTH=1000 bytes
+# (opentimestamps-client notary.py). Deleting the length clause kept the suite
+# green: the fixtures' builder writes one-byte varint lengths, so it cannot
+# even express a URI this long. The two-byte LEB128 lengths are hand-built —
+# 1001 is E9 07 under a 1003-byte payload EB 07; 1000 is E8 07 under EA 07.
+@test
+def "the pending URI length cap is the reference client 1000 bytes" [] {
+    let tmp_dir = $in.tmp_dir
+    # Refused: 1001 bytes, every one of them in the allowed charset, so only
+    # the length clause can be what refuses this.
+    let over = $"($tmp_dir)/uri-1001.ots"
+    $OTS_HEADER
+    | bytes add --end 0x[01 08]
+    | bytes add --end $ZERO_HASH
+    | bytes add --end 0x[08]
+    | bytes add --end 0x[00]
+    | bytes add --end 0x[83dfe30d2ef90c8e]
+    | bytes add --end 0x[EB 07]
+    | bytes add --end 0x[E9 07]
+    | bytes add --end ("" | fill --character "a" --width 1001 | into binary)
+    | save --raw --force $over
+    let outcome = try { ots info $over; "accepted" } catch {|e| $e.msg }
+    assert ($outcome | str contains "exceeds 1000 bytes") $"expected the length refusal, got: ($outcome)"
+
+    # Accepted: exactly 1000 — the reference cap is >, not >=.
+    let at_cap = $"($tmp_dir)/uri-1000.ots"
+    $OTS_HEADER
+    | bytes add --end 0x[01 08]
+    | bytes add --end $ZERO_HASH
+    | bytes add --end 0x[08]
+    | bytes add --end 0x[00]
+    | bytes add --end 0x[83dfe30d2ef90c8e]
+    | bytes add --end 0x[EA 07]
+    | bytes add --end 0x[E8 07]
+    | bytes add --end ("" | fill --character "a" --width 1000 | into binary)
+    | save --raw --force $at_cap
+    assert equal (ots info $at_cap | get attestation.url) ("" | fill --character "a" --width 1000)
+}
+
 # --- upgrade: the URL in the file is attacker input ---
 
 @test

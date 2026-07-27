@@ -90,8 +90,9 @@ def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
 # to, so no byte sequence survives normalization into something accepted.
 # The length must be measured before, though — 1000 bytes is not 1000 chars.
 # Reject, never normalize. The limit and the character set are the reference
-# client's (notary.py:165-186); pinned as a set by tests/test_ots.nu "the
-# accepted URI charset is exactly the reference set", since nothing in this
+# client's (notary.py:165-186); pinned by tests/test_ots.nu — the set by "the
+# accepted URI charset is exactly the reference set", the cap by "the pending
+# URI length cap is the reference client 1000 bytes" — since nothing in this
 # repo carries that file and a comment naming an absent source is not a check.
 def check-uri [raw: binary]: nothing -> string {
     if ($raw | bytes length) > 1000 {
