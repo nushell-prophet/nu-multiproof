@@ -522,8 +522,9 @@ def "stamp writes a proof its own parser can read" [] {
     assert equal (open --raw $result.copy) "hello world"
 }
 
-# A bundle has to answer "signer X endorsed content C at time T" out of its own
-# directory, so it snapshots EVERY signature sitting beside the stamped file,
+# A bundle has to answer "signer X endorsed content C" out of its own directory
+# (the anchor dates C, not the endorsement — see README, "Bundle contract"), so
+# it snapshots EVERY signature sitting beside the stamped file,
 # not one and not only the seal's own. Planted stub sigs on purpose: what is
 # being pinned is discovery and copying, and `stamp` neither reads nor verifies
 # these — a valid signature here would test ssh-keygen, not this.

@@ -438,10 +438,14 @@ export def stamp [file: path --out-dir: path --response-file: path] {
     print $"Frozen copy: ($copy_path)"
     print $"Timestamped: ($ots_path)"
 
-    # Why: a self-contained bundle must answer "signer X endorsed content C at
-    # time T, anchored to Bitcoin block B" using only files in the bundle dir.
-    # Snapshot any sibling sig next to the frozen copy so the binding
-    # survives the next `seal` (which overwrites the live sig). Shared
+    # Why: a self-contained bundle must answer "content C existed at time T,
+    # anchored to Bitcoin block B, and signer X endorsed C" using only files in
+    # the bundle dir. The anchor dates C and not the endorsement — this proof
+    # commits to the stamped file's hash, so a sig copied in here is a
+    # filesystem fact beside it, and one made today fits a year-old bundle.
+    # Dating a signature is a stamp over that signature (README, "Dating the
+    # endorsement"). Snapshot any sibling sig next to the frozen copy so the
+    # binding survives the next `seal` (which overwrites the live sig). Shared
     # discovery, so the bare `<file>.sig` form is bundled too.
     let sigs = sig-files-for $file
     let bundled_sigs = $sigs | each {|sig|

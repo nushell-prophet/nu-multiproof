@@ -180,7 +180,7 @@ These are archival artifacts. Ongoing operational timestamps live in [`multiproo
 
 ### Bundle contract
 
-An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is self-contained provenance: every file needed to assert *"signer X endorsed content C at time T, anchored to Bitcoin block B"* lives in the directory, with no reference to anything outside it.
+An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is self-contained provenance: every file needed to assert *"content C existed at time T, anchored to Bitcoin block B, and signer X endorsed C"* lives in the directory, with no reference to anything outside it. Read the two halves separately: the anchor covers the stamped snapshot's hash and nothing else, so it dates C, not the endorsement. A `.sig` copied in here sits *beside* the proof — a filesystem fact, not something the chain commits to — and a signature made today can be dropped into a bundle stamped a year ago. To date an endorsement, stamp the signature; see "Dating the endorsement" below.
 
 - `<stem>.<ext>` — frozen content snapshot (the stamped file's bytes at stamp time)
 - `<stem>.ots` — the timestamp over the snapshot's hash. A fresh `ots stamp` writes a *pending* calendar attestation here; `ots upgrade` replaces it in place with the Bitcoin-anchored one once a block confirms it, hours or days later. Until that upgrade runs, the bundle carries the content and the signature but not yet the anchor, so it cannot make the "at time T, in block B" half of the claim above
