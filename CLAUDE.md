@@ -1,6 +1,12 @@
 # nu-multiproof
 
-The software is in pre-alpha stage. There's no consumers. We do not need any backward compability. We need a working copy.
+The crypto layer under `nu-cybergraph`: CIDs, merkle trees, ssh signatures, seals, OpenTimestamps. Pre-alpha, one consumer, no backwards compatibility to keep.
+
+## Goal / Done — frozen as of 2026-07-28
+
+The suite is green (192/192, run 2026-07-28) and this layer is already over-built for the one thing it has to carry: the journal's cybergraph regeneration in `bostrom-journal`, branch `nu-cybergraph-regen`. That exercise is the acceptance test for this repo too — it is what "working copy" means here.
+
+So a change lands only when the exercise hits a defect, or when `nu-cybergraph` needs an interface this layer does not have. No new audit sweeps, no new hardening passes, no new surface — `ots` is already 18% of this repo for a mechanism bj002 never asks for. Findings parked in `todo/` (including `STABILIZE.md`, which wrote this same freeze rule once already) are a record, not a work queue: pick one up when the acceptance test needs it, not because the file is there and looks actionable.
 
 ## Module layout
 
