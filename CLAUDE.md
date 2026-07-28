@@ -68,6 +68,12 @@ Four of these are enforced by `tests/test_lint.nu`, not by memory: the glob rule
 - Paths come from `_layout.nu`, signature names from `_sig.nu`, directory listings from `_fs.nu`, temp paths from `_temp-helpers.nu`. Don't re-derive any of them inline; that is how `ssh-sign verify` ended up resolving the wrong original file.
 - `@example` must run offline in a throwaway directory. nutest does not execute them, so a broken one is invisible until a human tries it.
 
+## Commit messages
+
+The prefix is the command the change is about, spelled as the user types it — `ots:`, `ots stamp:`, `merkle:`, `merkle verify:`, `ssh-sign:`, `seal:`, `pubkey:`, `init:`, `tree-hashes:`, `tracked:`, `cid-v0:`. That is `mod.nu`'s export list, so the prefix survives a file rename and a reader can go straight from the log to the command. Use a conventional type — `docs:`, `fix:`, `refactor:`, `test:` — only when no single command owns the change.
+
+The subject is a sentence stating what is true *after* the commit, not a label for the diff: `ssh-sign: a named sig path that is not on disk throws, never a verdict`, `merkle write-root: an empty repo's one-row manifest is as constant as no rows`. This is denser than a conventional-commit summary and it is why the log of this repo reads as a list of invariants — keep it.
+
 ## Running tests
 
 ```sh
