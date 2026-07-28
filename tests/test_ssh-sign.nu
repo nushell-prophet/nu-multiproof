@@ -391,6 +391,47 @@ def "verify with a positional sig file checks only that signature" [] {
     assert equal ($all | get signer | sort) ([(principal-of $alice_key) (principal-of $bob_key)] | sort)
 }
 
+# Every verdict says which signature file it is about, whatever its outcome.
+# A caller acting per-signature cannot get that from `signer`: an unreadable
+# row has none, and two rows may share a principal. Without it `merkle verify`
+# re-ran discovery and verified one signature twice to recover the mapping.
+# All four row shapes here, because the column has to be on the failures too —
+# those are the rows a caller most needs to trace back to a file.
+@test
+def "every verdict row names the signature file it is about" [] {
+    let tmp_dir = $in.tmp_dir
+    let test_file = $"($tmp_dir)/test.txt"
+    let pubkeys_dir = $"($tmp_dir)/pubkeys"
+    let alice_key = $"($tmp_dir)/alice"
+    let mallory_key = $"($tmp_dir)/mallory"
+
+    mkdir $pubkeys_dir
+    "hello world" | save --force $test_file
+    ^ssh-keygen -t ed25519 -f $alice_key -N "" -q
+    ^ssh-keygen -t ed25519 -f $mallory_key -N "" -q
+    cp $"($alice_key).pub" ($pubkeys_dir | path join "alice.pub")
+
+    # valid
+    let good = ssh-sign sign $test_file --key $alice_key --pubkeys-dir $pubkeys_dir
+    # unrecognized_signer: real signature, key never registered
+    let unknown = $"($test_file).mallory.sig"
+    open --raw $test_file | into binary | ^ssh-keygen -Y sign -q -f $mallory_key -n file | save --raw --force $unknown
+    # unreadable_signature: junk planted at a signature name
+    let junk = $"($test_file).junk.sig"
+    "not a signature" | save --raw --force $junk
+
+    let rows = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
+    assert equal ($rows | get sig | sort) ([$good $unknown $junk] | sort)
+    assert equal ($rows | where sig == $good | get valid) [true]
+    assert equal ($rows | where sig == $unknown | get error) ["unrecognized_signer"]
+    assert equal ($rows | where sig == $junk | get error) ["unreadable_signature"]
+
+    # invalid_signature: registered key, content changed under it
+    "tampered" | save --force $test_file
+    let after = ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir
+    assert equal ($after | where sig == $good | get error) ["invalid_signature"]
+}
+
 # A hand-written trust list, not one `init` produced: keys stored with two
 # spaces between type and material. Registration is decided on key material, and
 # an earlier comparison split on a single space and took the first two fields, so

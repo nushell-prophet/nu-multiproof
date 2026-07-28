@@ -76,14 +76,24 @@ export def sign [
 # Naming a .sig file verifies that one signature; naming the original verifies
 # every signature `_sig.nu sig-files-for` finds beside it — both the named
 # `{path}.{signer}.sig` form and the bare `{path}.sig`.
-# Returns a table of {signer, valid, error?}, where `signer` is the fingerprint
-# of the key that made the signature — read out of the signature itself. Only an
+# Returns a table of {signer, valid, sig, error?}, where `signer` is the
+# fingerprint of the key that made the signature — read out of the signature
+# itself. Only an
 # `unrecognized_signer` row falls back to the label the sig's file name carries,
 # since there is no registered key to name. A sig that fails even keyless
 # checking yields `{signer: null, error: unreadable_signature, sig: <path>}` —
 # no signing key was established, so nothing read off a file name is reported
 # as a principal. --fail exits non-zero if any
 # signature is invalid (for CI), instead of a silent pass the caller must inspect.
+#
+# Why every row carries `sig`, not just the unreadable one: a verdict is about
+# one signature file, and a caller that has to act per-signature could not tell
+# which. `signer` does not answer it — an unreadable row has none, and two rows
+# can share a principal. Without the column, `merkle verify` re-ran discovery
+# and verified a named signature a second time to recover the mapping, which
+# duplicated `sig-files-for` outside the module that owns it and printed the
+# same signature's verdict twice. A path is not an identity: read `sig` as
+# "which file this verdict is about", never as who signed.
 @example "verify all signatures on the root statement" { ssh-sign verify multiproofs/tree-root.txt }
 export def verify [
     path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
@@ -147,11 +157,11 @@ export def verify [
                 } | complete)
                 if $v.exit_code == 0 {
                     print $"($signer): valid"
-                    {signer: $signer valid: true}
+                    {signer: $signer valid: true sig: ($sig_path | into string)}
                 } else {
                     # Registered key, but the content no longer matches the sig.
                     print $"($signer): invalid signature"
-                    {signer: $signer valid: false error: "invalid_signature"}
+                    {signer: $signer valid: false error: "invalid_signature" sig: ($sig_path | into string)}
                 }
             } else {
                 # Signer's key isn't registered. Why check-novalidate: distinguish
@@ -162,7 +172,7 @@ export def verify [
                 if $cn.exit_code == 0 {
                     let label = (signer-from-sig $path $sig_path | default "unknown")
                     print $"($label): unrecognized signer \(sig cryptographically valid but key not in pubkeys_dir\)"
-                    {signer: $label valid: false error: "unrecognized_signer"}
+                    {signer: $label valid: false error: "unrecognized_signer" sig: ($sig_path | into string)}
                 } else {
                     # Even keyless checking failed: junk bytes planted at a sig
                     # name, or a foreign key's sig over content it never signed.
