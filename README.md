@@ -55,7 +55,9 @@ open --raw ~/.ssh/id_ed25519.pub | nu-multiproof pubkey fingerprint
 # The canonical pubkey bytes the fingerprint is taken over (type + base64 + \n)
 open --raw ~/.ssh/id_ed25519.pub | nu-multiproof pubkey canonical
 
-# Derive the merkle root over the manifest and write multiproofs/tree-root.txt (seal does this automatically)
+# Derive the merkle root over the manifest and write multiproofs/tree-root.txt.
+# `seal` runs this itself; run it directly to seal under a key other than the
+# repo's — see "Sealing under an explicit key" below.
 nu-multiproof merkle write-root
 # Extract a compact inclusion proof for one manifest row
 nu-multiproof merkle prove README.md
@@ -72,7 +74,23 @@ nu-multiproof seal --repo path/to/other/repo   # seal a repo other than the CWD'
 open --raw README.md | nu-multiproof cid-v0
 ```
 
-The signing key comes from the target repo's `git config user.signingKey`; `seal` has no `--key` flag, because a repo's signing identity belongs in its config rather than in each invocation. `ssh-sign sign --key` still gives explicit key choice for a one-off.
+### Sealing under an explicit key
+
+The signing key comes from the target repo's `git config user.signingKey`; `seal` has no `--key` flag, because a repo's signing identity belongs in its config rather than in each invocation. To seal under a different key, run the steps `seal` wraps:
+
+```nushell no-run
+nu-multiproof init --pubkey ./otherkey.pub          # register it: sign refuses an unregistered key
+nu-multiproof tree-hashes                           # regenerate the manifest
+nu-multiproof merkle write-root                     # mint the root statement over it
+nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ./otherkey
+nu-multiproof ots stamp multiproofs/tree-root.txt   # optional — the time anchor
+```
+
+That is what `merkle write-root` is for on its own: it is the only way to mint `tree-root.txt` without `seal`, and therefore without `seal`'s key. What follows it is a plain `ssh-sign sign`, so a second signer is added the same way — sign the existing `tree-root.txt`, no re-rooting.
+
+Two things this path does not buy. Staying offline is one: `seal --no-stamp` already skips the calendar post, so reach for the manual chain only for the key. The other is a repo elsewhere — `ssh-sign sign` takes `--pubkeys-dir` but no `--repo`, so run the chain from inside the target repo.
+
+Its cost is state between steps: a manifest regenerated after the root was signed leaves a CSV no signature covers. `merkle verify` catches exactly that and reports it as `manifest_root` — see "Merkle inclusion proofs" below.
 
 ## Prerequisites
 
