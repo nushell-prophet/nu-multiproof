@@ -196,6 +196,33 @@ One more form is written **outside** any bundle, directly under `multiproofs/ots
 
 Every bundle committed to this repo predates the fingerprint principal, so none of them matches the `.sig` grammar above — read them as history, not as examples. Their signatures carry a key-file label where a fingerprint now goes (`tree-root.txt.maxim-uvarov2.sig`), and the two `origin-proofs/` bundles carry a signature over the **`.ots`** rather than over the frozen snapshot (`tree-hashes.ots.maxim-uvarov2.sig`), added by hand after stamping. `ots stamp` writes neither shape: it copies the signatures sitting beside the file it stamps, and `ssh-sign sign` names them by fingerprint.
 
+### Dating the endorsement
+
+`seal` stamps `tree-root.txt`, so a sealed repo can prove *when its content existed* and *who endorsed it*, but never *when the endorsement happened*. An SSH signature carries no timestamp field, and the bundle's anchor commits to the snapshot's hash, so nothing on disk bounds the moment of signing.
+
+Stamp the signature to get that bound. `ots stamp` takes any file, so this needs no new machinery:
+
+```sh
+nu-multiproof ots stamp multiproofs/tree-root.txt.<fingerprint>.sig
+```
+
+The result is a second bundle beside the first, and the two claims stay independent — each is checked by hashing a file you hold and comparing it to what the proof commits to, with no key material involved:
+
+| bundle | commits to | claim |
+| --- | --- | --- |
+| `tree-root.<hash-prefix>/tree-root.ots` | sha256 of `tree-root.txt` | the content existed by T |
+| `tree-root.txt.<fingerprint>.<hash-prefix>/….ots` | sha256 of the `.sig` | the endorsement existed by T |
+
+(Pinned by the test "a stamp over a signature commits to the signature bytes, not to the signed file".) A second calendar post costs nothing on-chain: OTS calendars aggregate every digest they receive into one merkle tree per Bitcoin transaction, so batching is already the calendar's job — an object holding both digests would only re-implement it a layer up.
+
+Two limits, both real. `seal` does not do this, so it is a manual step per seal. And `merkle verify` will not report it: stamp discovery matches proofs committing to the *root's* hash, so the signature's bundle is opened, found not to match, and skipped silently — the evidence is there and checks out under `ots verify`, but no single command folds it into the verdict.
+
+Worth the step when a signature has to outlive its key: after a compromise and revocation at time R, only a signature datable before R still means anything, and the same argument covers key rotation across a long archive. It also settles which of several co-signers endorsed first. For dating content alone — prior art, ordering two seals, proving a snapshot falls inside a retention window — the root's own stamp already answers, and this adds nothing.
+
+One direction it does *not* give: OTS bounds a time from above only ("no later than T"), never from below. A lower bound has to come from inside the signed bytes — some recent unpredictable value the signer could not have known earlier.
+
+The two `origin-proofs/` bundles do the reverse of this — a signature over the `.ots` rather than a stamp over the signature (see the note above). That dates nothing extra; read them as history.
+
 ## Verifying a timestamp
 
 `ots info` only echoes the block height the calendar server reported, and `ots upgrade` splices that height into the file after checking that it parses — neither checks it against Bitcoin. `ots verify` does. It does not trust the calendar at all:

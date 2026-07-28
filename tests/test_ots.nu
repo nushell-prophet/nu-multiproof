@@ -550,6 +550,30 @@ def "stamp snapshots every signature beside the file it stamps" [] {
     assert equal (open --raw $"($result.dir)/doc.txt.alice.sig" | str trim) "alice-sig"
 }
 
+# Pins the README's "Dating the endorsement": a signature is dated by stamping
+# the signature, and `ots stamp` is already general enough to take one — no
+# mechanism is needed for it. What has to hold is that the resulting proof
+# commits to the SIGNATURE's bytes and not to the signed file's, because that
+# is the whole difference between dating an endorsement and dating content.
+#
+# The sig here is a stub: `stamp` hashes the bytes it is handed and never reads
+# them as a signature, so a real ssh-keygen sig would pin ssh-keygen, not this.
+@test
+def "a stamp over a signature commits to the signature bytes, not to the signed file" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    let sig = $"($file).alice.sig"
+    "hello world" | save --force $file
+    "alice-sig" | save --force $sig
+    build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
+
+    let result = (ots stamp $sig --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
+
+    let stamped = (ots info $result.ots | get hash)
+    assert equal $stamped (open --raw $sig | hash sha256)
+    assert ($stamped != (open --raw $file | hash sha256)) "the stamp dated the signed file, not the signature"
+}
+
 # The failure this guard exists for: only the HTTP status was checked, so a
 # calendar answering 200 with a garbage body produced a success record, exit 0,
 # and an .ots that `info` cannot read — while the digest had already reached
