@@ -2,6 +2,8 @@
 
 The crypto layer under `nu-cybergraph`: CIDs, merkle trees, ssh signatures, seals, OpenTimestamps. Pre-alpha, one consumer, no backwards compatibility to keep.
 
+The design decisions here were made by agents, so they may drift from the user's intent. The user regrets building this so fast without proper checks, and needs your help to stabilize the functionality. So do not trust the comments and the README on their own. Check the git history and the Claude Code project sessions to recover the user's intent. Or plainly ask him.
+
 ## Module layout
 
 - `nu-multiproof/mod.nu` defines the public API. It re-exports the non-`_`
