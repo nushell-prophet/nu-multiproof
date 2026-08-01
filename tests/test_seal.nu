@@ -8,6 +8,8 @@ use ../nu-multiproof/_sig.nu sig-files-for
 use ../nu-multiproof/pubkey.nu
 use ../nu-multiproof/_fs.nu [list-files list-dirs]
 use _ots-fixtures.nu [build-calendar-response build-bitcoin-ots]
+use ../nu-multiproof/_commit-proposal.nu seal-commit-line
+use ../nu-multiproof/_layout.nu MULTIPROOFS_DIR
 
 # A repo with one commit and one registered signer — the state every test here
 # starts from. Returns the paths the assertions need.
@@ -73,6 +75,73 @@ def "seal produces manifest and signed root statement" [] {
     assert ($root_file | path exists) "root statement not created"
     assert equal (open --raw $root_file | into string) $"multiproof-merkle-v1 ($result.merkle_root)\n"
     assert ($result.root_sig | str ends-with $".(principal-of $fx.key).sig")
+}
+
+# `commandline edit` only reaches a prompt from the REPL. Outside one it still
+# writes the engine's repl buffer — it is harmless, not a no-op — and only the
+# REPL reads that back, so the flag is inert in a script without being an error.
+# "Inert" is a claim about a command that runs, so it is pinned here rather than
+# assumed. What the proposal SAYS is tested against a known result in
+# test_commit-proposal.nu; this pins only that asking for it changes nothing
+# else about the seal.
+@test
+def "asking for a commit proposal leaves the seal result untouched" [] {
+    let repo = (make-sealable-repo $in.tmp_dir).repo
+
+    let plain = seal --repo $repo --no-stamp
+    let proposed = seal --repo $repo --no-stamp --propose-commit
+
+    assert equal $proposed $plain
+}
+
+# Never write an artifact you have not parsed back. The proposal is Nushell
+# source handed to a prompt ready to run, so the only honest check is to run it
+# and read what git ended up with — a string assertion proves the builder agrees
+# with itself, never that the block parses.
+@test
+def "the proposed block runs and produces the commit it describes" [] {
+    let fx = make-sealable-repo $in.tmp_dir
+    let result = seal --repo $fx.repo --no-stamp
+    let signer = principal-of $fx.key
+
+    # `complete` so git's own chatter does not leak into the test report — and
+    # so a failure reports the block's stderr, which a bare throw would drop.
+    let run = do { ^nu --commands (seal-commit-line $result $fx.repo $signer) } | complete
+    assert equal $run.exit_code 0 $"the proposed block did not run: ($run.stderr)"
+
+    let message = ^git -C $fx.repo log -1 --format=%B
+    assert str contains $message $"seal: multiproofs/ describes the tree at merkle root ($result.merkle_root | str substring 0..<8)"
+    assert str contains $message $"Merkle root: ($result.merkle_root)"
+    assert str contains $message $"Signed by: ($signer)"
+    # A blank line between subject and body, or `git log --oneline` prints the
+    # whole record as the subject.
+    assert equal ($message | lines | get 1) ""
+
+    # The seal's own artifacts are what landed, and nothing outside multiproofs/.
+    let committed = ^git -C $fx.repo show --name-only --format= HEAD | lines | where $it != ""
+    assert ($committed | all {|f| $f | str starts-with $"($MULTIPROOFS_DIR)/"})
+    assert ($"($MULTIPROOFS_DIR)/tree-root.txt" in $committed)
+    assert ($"($MULTIPROOFS_DIR)/tree-hashes.csv" in $committed)
+}
+
+# The escaping only matters where it is USED. `quote-arg` has its own tests, but
+# nothing pinned that `seal-commit-line` actually calls it: both calls could be
+# replaced with raw interpolation and the whole suite stayed green. Round-tripping
+# the builder proves self-consistency, never that a hostile path is handled.
+@test
+def "a repo root holding a quote and a backslash still commits" [] {
+    let hostile = $in.tmp_dir | path join 'we"ird\dir'
+    let fx = make-sealable-repo $hostile
+    let result = seal --repo $fx.repo --no-stamp
+
+    let run = do {
+        ^nu --commands (seal-commit-line $result $fx.repo (principal-of $fx.key))
+    } | complete
+    assert equal $run.exit_code 0 $"the proposed block did not run: ($run.stderr)"
+
+    # The commit landed, so the path survived as ONE argument to `git -C`.
+    let committed = ^git -C $fx.repo show --name-only --format= HEAD | lines | where $it != ""
+    assert ($"($MULTIPROOFS_DIR)/tree-root.txt" in $committed)
 }
 
 # Second seal must succeed even though the previous seal left a sig next to

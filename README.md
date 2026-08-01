@@ -2,7 +2,7 @@
 
 Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git`, `ssh-keygen` and `chmod` — network calls use Nushell's built-in `http`.
 
-🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: 222 tests, every verifier guard mutation-checked, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
+🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: 235 tests, every verifier guard mutation-checked, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
 
 ## What you can prove
 
@@ -73,6 +73,7 @@ nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.js
 # everything below is written in terms of.
 nu-multiproof seal
 nu-multiproof seal --repo path/to/other/repo   # seal a repo other than the CWD's
+nu-multiproof seal --propose-commit            # leave the git commit in the prompt, unrun
 
 # What the folder holds: one row per bundle, with the anchor state of the content
 # it froze and of each signature beside it. Read-only, and not a verdict — see
@@ -100,6 +101,40 @@ That is what `merkle write-root` is for on its own: it is the only way to mint `
 Two things this path does not buy. Staying offline is one: `seal --no-stamp` already skips the calendar post, so reach for the manual chain only for the key. The other is a repo elsewhere — `ssh-sign sign` takes `--pubkeys-dir` but no `--repo`, so run the chain from inside the target repo.
 
 Its cost is state between steps: a manifest regenerated after the root was signed leaves a CSV no signature covers. `merkle verify` catches exactly that and reports it as `manifest_root` — see "Merkle inclusion proofs" below.
+
+### Committing a seal
+
+`seal` does not commit, and `--propose-commit` does not change that. It writes the commit into your prompt with `commandline edit` and stops there, so nothing runs until you read it, edit it and press enter. What it removes is the other failure: a seal landing under "wip", or spread over three commits, which makes the log useless for the one question it should answer — when was this root sealed.
+
+```nushell no-run
+nu-multiproof seal --propose-commit
+```
+
+The prompt then holds this, unrun:
+
+```nushell no-run
+let repo = "/path/to/repo"
+let msg = "seal: multiproofs/ describes the tree at merkle root 9365958e
+
+Root CID: QmPs9R2UGwGc5bDshLfVKvJp2pdntuGBaj2iR4kqcRQt4c
+Merkle root: 9365958e2a87d29014a3ee71f502fc55bd50a1970220083092c325334e06efb0
+Signed by: ed2386359d82cbeba2214f993392a15db8c99627173532f32f01934957799dc2
+Bundle: multiproofs/ots-timestamps/tree-root.9A5D59BA
+Anchors: content + 1 endorsement, pending until Bitcoin confirms"
+
+git -C $repo add -- multiproofs
+git -C $repo commit -m $msg
+```
+
+A block with variables rather than one long line, because the message is meant to be edited before it runs and a body escaped into `\n` inside a quoted argument is the one shape that cannot be edited comfortably. `$msg` gives the body real lines; `$repo` is used twice. Splitting `add` from `commit` costs nothing: Nushell throws on a non-zero external exit, so a failed `add` still stops before `commit`.
+
+Three things about it are deliberate. `git -C <root>` because `seal --repo` may target another repo, and even locally the `multiproofs` pathspec resolves against the CWD, so a bare `git add` fails from any subdirectory (pinned by "git is aimed at the sealed repo rather than the current directory"). `add -- multiproofs` rather than the paths `seal` returned, because a seal also *deletes* inside that directory — a signature over bytes regen changed is cleared — and a deletion appears in no result field, so a proposal naming only written files would commit a folder git still holds a cleared signature for. And `Signed by` is the principal `seal` resolved from key material before signing, never a name read back off `<file>.<fingerprint>.sig` — the filename-as-identity shape this repo removed (pinned by "the signer is the principal passed in, not anything read off a filename").
+
+Everything interpolated into the block is escaped with `to nuon` — nuon *is* Nushell's own string-literal syntax, so its serializer already owns the job of staying in step with the parser. A repo path is data and the block is handed to a prompt ready to run, so what is pinned is the escaping **at its use site**: a repo checked out to a directory holding a quote and a backslash is sealed, and the emitted block is executed for real, in "a repo root holding a quote and a backslash still commits". Testing the escaper alone is not enough — both calls to it could be replaced with raw interpolation and the rest of the suite stayed green.
+
+What this does not do is sanitize for display. A control character in the path reaches the prompt raw, so a directory named with ANSI escapes could repaint the line you are meant to read before pressing enter. That is a deliberate limit, not an oversight: the guarantee is that the block *parses* as one command with one argument, never that it *renders* honestly. The repo root is a path you chose, not attacker-supplied input.
+
+Outside a REPL `commandline edit` still writes the engine's repl buffer — it is harmless, not a no-op — and only the REPL reads that back, so the flag is inert in a script rather than an error (pinned by "asking for a commit proposal leaves the seal result untouched").
 
 ## Prerequisites
 

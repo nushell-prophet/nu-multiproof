@@ -8,6 +8,7 @@ use _sig.nu sig-files-for
 use _fs.nu list-files
 use _key-helpers.nu [with-signing-key signing-principal]
 use _stamps.nu [scan-stamps pick-stamp format-stamp]
+use _commit-proposal.nu seal-commit-line
 
 # Full seal pipeline: hash+root-cid → sign → stamp.
 #
@@ -27,7 +28,10 @@ use _stamps.nu [scan-stamps pick-stamp format-stamp]
 #      answers "this content existed by T, and signer X endorsed it by T2"
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
-# context (message, scope, timing).
+# context (message, scope, timing). `--propose-commit` does not weaken that: it
+# writes the command into the prompt for the user to read, edit and run, and
+# what it removes is a seal landing under "wip" or split over three commits,
+# which makes the log useless for finding when a root was sealed.
 #
 # No --key and no --no-sign. The signing key comes from --repo's git config,
 # which is where a repo's identity belongs, and `ssh-sign sign --key` still
@@ -56,6 +60,7 @@ export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
     --response-file: path # Calendar answer for step 4, instead of posting the digest
+    --propose-commit # Leave a `git commit` for this seal in the prompt, unrun
 ] {
     let root = repo-root $repo
     let manifest_path = manifest-path $root
@@ -68,9 +73,13 @@ export def main [
     # left a regenerated manifest, a new unsigned root, and possibly a deleted
     # co-signer signature behind. Same check `ssh-sign sign` runs — asked
     # early, not enforced twice: sign keeps it for standalone use.
-    with-signing-key --root $root {|signing_key|
+    # Bound rather than ignored: --propose-commit names the signer, and this is
+    # the one place the principal comes from key material. Reading it back out
+    # of `<file>.<fingerprint>.sig` would be the filename-as-identity shape this
+    # repo removed.
+    let signer = with-signing-key --root $root {|signing_key|
         signing-principal $signing_key (pubkeys-dir $root)
-    } | ignore
+    }
 
     # Fingerprint every artifact regen rewrites, before regen: a sig covers
     # exact bytes, so it only goes stale when the bytes actually change. This is
@@ -218,6 +227,18 @@ export def main [
             ots stamp $sig --into $root_stamp.dir --response-file $response_file | get ots
         }
         $result = ($result | insert sig_ots $sig_stamps)
+    }
+
+    # Last, so the buffer holds the proposal for a seal that finished. Outside a
+    # REPL this is harmless rather than a no-op: `commandline edit` writes the
+    # engine's repl buffer unconditionally, and only the REPL ever reads it back
+    # — so the flag is inert in a script without being an error there.
+    if $propose_commit {
+        # No --replace: replacing is `commandline edit`'s documented default, so
+        # naming it would imply a choice was made among its four modes. The one
+        # that must never appear here is --accept, which runs the buffer
+        # immediately — the opposite of the guarantee this flag exists for.
+        commandline edit (seal-commit-line $result $root $signer)
     }
 
     $result
