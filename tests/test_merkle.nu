@@ -1084,6 +1084,129 @@ def "ots discovery: corrupt archival stamps skipped, anchored preferred" [] {
     assert equal $result.ots.ots $"($bundle)/tree-root.ots"
 }
 
+# --- endorsements: dating the signature, not just the content ---
+
+# A signed repo plus a second registered signer, because dating endorsements
+# is only interesting when there is more than one. Stamps are hand-built so a
+# test chooses what each commits to — a stamp produced by `seal` could only
+# ever agree with itself.
+def make-cosigned-repo [tmp_dir: path]: nothing -> record {
+    let repo = make-test-repo $tmp_dir
+    let alice = $"($tmp_dir)/alice"
+    let bob = $"($tmp_dir)/bob"
+    let pubkeys = $"($repo)/multiproofs/pubkeys"
+    ^ssh-keygen -t ed25519 -f $alice -N "" -q
+    ^ssh-keygen -t ed25519 -f $bob -N "" -q
+    mkdir $pubkeys
+    cp $"($alice).pub" $"($pubkeys)/alice.pub"
+    cp $"($bob).pub" $"($pubkeys)/bob.pub"
+
+    let root_result = merkle write-root --repo $repo
+    let alice_sig = ssh-sign sign $root_result.path --key $alice --pubkeys-dir $pubkeys
+    let bob_sig = ssh-sign sign $root_result.path --key $bob --pubkeys-dir $pubkeys
+    let bundle = $"($repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
+    mkdir $bundle
+
+    {
+        repo: $repo
+        proof: (merkle prove README.md --repo $repo)
+        root_file: $root_result.path
+        alice_sig: $alice_sig
+        bob_sig: $bob_sig
+        alice: (principal-of $alice)
+        bob: (principal-of $bob)
+        bundle: $bundle
+    }
+}
+
+# The property the whole design turns on: a stamp over a SIGNATURE dates that
+# endorsement, and it is matched to its signer by hashing the signature file —
+# never by a .sig file name, which whoever wrote the file chose. Two signers
+# here because one row cannot show that the rows are per-signature.
+@test
+def "each signature gets its own dated endorsement" [] {
+    let fx = make-cosigned-repo $in.tmp_dir
+
+    # Nothing stamped yet: both endorsements are real but undated.
+    let bare = merkle verify $fx.proof --repo $fx.repo
+    assert equal ($bare.endorsements | get status | uniq) ["absent"]
+    assert equal ($bare.endorsements | get signer | sort) ([$fx.alice $fx.bob] | sort)
+
+    # Alice's signature stamped, bob's not.
+    let alice_hash = open --raw $fx.alice_sig | hash sha256 | decode hex
+    build-bitcoin-ots --hash $alice_hash | save --raw --force $"($fx.bundle)/alice.ots"
+    let one = merkle verify $fx.proof --repo $fx.repo
+    assert equal ($one.endorsements | where signer == $fx.alice | get status) ["anchored"]
+    assert equal ($one.endorsements | where signer == $fx.bob | get status) ["absent"]
+
+    # Bob's too, still pending — the two are independent.
+    let bob_hash = open --raw $fx.bob_sig | hash sha256 | decode hex
+    build-pending-ots --hash $bob_hash | save --raw --force $"($fx.bundle)/bob.ots"
+    let both = merkle verify $fx.proof --repo $fx.repo
+    assert equal ($both.endorsements | where signer == $fx.alice | get status) ["anchored"]
+    assert equal ($both.endorsements | where signer == $fx.bob | get status) ["pending"]
+}
+
+# Hostile artifact: a real signature over this exact root by a key the trust
+# list does not hold, with a genuine stamp over it. Everything about it checks
+# out cryptographically — it is simply not an endorsement anyone here trusts,
+# so it must not appear as a dated one. `ssh-sign verify` returns such a row as
+# {valid: false, error: unrecognized_signer} WITH a principal attached, so
+# listing rows without filtering on `valid` would show mallory's dated
+# endorsement of your root beside the real ones.
+@test
+def "a dated signature by an unregistered key is not an endorsement" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-cosigned-repo $tmp_dir
+    let mallory = $"($tmp_dir)/mallory"
+    ^ssh-keygen -t ed25519 -f $mallory -N "" -q
+    let mallory_sig = $"($fx.root_file).mallory.sig"
+    open --raw $fx.root_file | into binary | ^ssh-keygen -Y sign -q -f $mallory -n file | save --raw --force $mallory_sig
+    build-bitcoin-ots --hash (open --raw $mallory_sig | hash sha256 | decode hex)
+    | save --raw --force $"($fx.bundle)/mallory.ots"
+
+    let result = merkle verify $fx.proof --repo $fx.repo
+    assert equal ($result.endorsements | get signer | sort) ([$fx.alice $fx.bob] | sort)
+    assert equal ($result.endorsements | where status != "absent" | length) 0
+}
+
+# Hostile artifact: a stamp over bytes that are not any signature here. The
+# match is on the signature's own hash, so a stamp of something else beside it
+# dates nothing — pinning that discovery cannot be satisfied by proximity.
+@test
+def "a stamp over unrelated bytes dates no endorsement" [] {
+    let fx = make-cosigned-repo $in.tmp_dir
+    build-bitcoin-ots --hash ("some other file" | hash sha256 | decode hex)
+    | save --raw --force $"($fx.bundle)/unrelated.ots"
+
+    let result = merkle verify $fx.proof --repo $fx.repo
+    assert equal ($result.endorsements | get status | uniq) ["absent"]
+}
+
+# Hostile artifact: alice's genuine signature over SOMETHING ELSE, planted at a
+# name beside the root and stamped. Her key is registered, so `ssh-sign verify`
+# identifies her and returns {valid: false, error: invalid_signature} — a row
+# carrying a trusted principal. Dating bytes says when they existed, never that
+# they endorse anything, so this must add no dated endorsement and must not
+# upgrade the honest-but-unstamped row that already carries her name.
+@test
+def "a stamped signature over other content adds no endorsement" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-cosigned-repo $tmp_dir
+    let decoy = $"($tmp_dir)/decoy.txt"
+    "not the root statement" | save --force $decoy
+    let decoy_sig = ssh-sign sign $decoy --key $"($tmp_dir)/alice" --pubkeys-dir $"($fx.repo)/multiproofs/pubkeys"
+    let planted = $"($fx.root_file).planted.sig"
+    cp $decoy_sig $planted
+    build-bitcoin-ots --hash (open --raw $planted | hash sha256 | decode hex)
+    | save --raw --force $"($fx.bundle)/planted.ots"
+
+    let result = merkle verify $fx.proof --repo $fx.repo
+    # alice appears once, from her real signature, and it is undated
+    assert equal ($result.endorsements | where signer == $fx.alice | get status) ["absent"]
+    assert equal ($result.endorsements | where status != "absent" | length) 0
+}
+
 @test
 def "proof against a different seal root throws loudly" [] {
     let tmp_dir = $in.tmp_dir

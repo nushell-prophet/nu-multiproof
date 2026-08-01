@@ -3,6 +3,8 @@
 # 32-byte file hash, ops, attestation. The `_` name keeps nutest from picking
 # this up as a suite (discovery matches test_*.nu); import names explicitly.
 
+use ../nu-multiproof/_varint.nu encode-varint
+
 export const OTS_HEADER = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 export const ZERO_HASH = 0x[0000000000000000000000000000000000000000000000000000000000000000]
 export const ATT_PENDING_TAG = 0x[83dfe30d2ef90c8e]
@@ -36,9 +38,15 @@ export def build-pending-ots [
     | bytes add --end $url_bytes
 }
 
-# Bitcoin attestation over --hash at block height 123456.
-export def build-bitcoin-ots [--hash: binary = $ZERO_HASH] {
-    # Block height 123456 as LEB128 = 0xC0C407 (3 bytes)
+# Bitcoin attestation over --hash at --height (default 123456).
+#
+# --height exists so a test can put two anchors of the SAME content in one
+# bundle: "existed no later than T" makes the lowest block the strongest claim,
+# and picking between them was `ls` order until an assertion could see the
+# difference.
+export def build-bitcoin-ots [--hash: binary = $ZERO_HASH --height: int = 123456] {
+    let h = $height | encode-varint
+    let payload = (($h | bytes length) | encode-varint) | bytes add --end $h
     $OTS_HEADER
     | bytes add --end 0x[01 08]
     | bytes add --end $hash
@@ -46,7 +54,7 @@ export def build-bitcoin-ots [--hash: binary = $ZERO_HASH] {
     | bytes add --end 0x[08]
     | bytes add --end 0x[00]
     | bytes add --end $ATT_BITCOIN_TAG
-    | bytes add --end 0x[03 C0C407]
+    | bytes add --end $payload
 }
 
 # What the calendar returns from POST /digest: the tail of the timestamp chain

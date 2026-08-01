@@ -13,8 +13,8 @@ use _cid-helpers.nu [file-node node-cid]
 # main way to use this command — hit a bare `Type mismatch` on a binary-only
 # signature. `into binary` on that string yields the same bytes back, so this
 # widens the accepted type without changing what gets hashed.
-@example "CID v0 of in-memory bytes" { "hello" | into binary | cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
-@example "same bytes arriving as a string, as `open --raw` returns them" { "hello" | cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
+@example "CID v0 of in-memory bytes" { "hello" | into binary | nu-multiproof cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
+@example "same bytes arriving as a string, as `open --raw` returns them" { "hello" | nu-multiproof cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
 export def main []: [binary -> string, string -> string] {
     $in | into binary | file-node | node-cid
 }

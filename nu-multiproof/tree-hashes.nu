@@ -88,7 +88,7 @@ def build-tree [
 # into the existing manifest — no new artifact to track. tree-hashes.csv is
 # excluded from its own manifest (build-tree filters multiproofs/ out), so the
 # root CID covers all listed files but not the CSV itself.
-@example "compute and record the IPFS root CID" { tree-hashes root-cid }
+@example "compute and record the IPFS root CID" { nu-multiproof tree-hashes root-cid }
 export def root-cid [
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> string {
@@ -99,7 +99,7 @@ export def root-cid [
 
 # Generate tree hashes. Saves to multiproofs/tree-hashes.csv and returns its
 # path; --echo instead returns the table (and does not save).
-@example "preview the manifest without saving" { tree-hashes --echo }
+@example "preview the manifest without saving" { nu-multiproof tree-hashes --echo }
 export def main [
     --echo # Output as nushell table instead of saving to file
     --repo: path # Target git repo root (default: git root of current directory)

@@ -3,10 +3,11 @@ use merkle.nu
 use ots.nu
 use ssh-sign.nu
 use _repo.nu repo-root
-use _layout.nu [manifest-path merkle-root-path ots-dir pubkeys-dir]
+use _layout.nu [manifest-path merkle-root-path ots-dir pubkeys-dir multiproofs-dir]
 use _sig.nu sig-files-for
 use _fs.nu list-files
 use _key-helpers.nu [with-signing-key signing-principal]
+use _stamps.nu [scan-stamps pick-stamp format-stamp]
 
 # Full seal pipeline: hash+root-cid → sign → stamp.
 #
@@ -19,7 +20,11 @@ use _key-helpers.nu [with-signing-key signing-principal]
 #      the manifest is written once, complete. Then derive the merkle root
 #      statement (multiproofs/tree-root.txt) from the fresh manifest
 #   3. ssh-sign — sign the root statement
-#   4. ots stamp — timestamp the root statement (--no-stamp to skip)
+#   4. ots stamp — timestamp the root statement AND every signature over it
+#      (--no-stamp to skip), so the content and each endorsement are dated
+#      separately. A proof commits to one file's hash, so two claims need two —
+#      but both land in ONE bundle, the root statement's, so a single directory
+#      answers "this content existed by T, and signer X endorsed it by T2"
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
 # context (message, scope, timing).
@@ -44,8 +49,8 @@ use _key-helpers.nu [with-signing-key signing-principal]
     "hello" | save file.txt
     git add file.txt
     git commit -q -m "init"
-    init
-    seal --no-stamp
+    nu-multiproof init
+    nu-multiproof seal --no-stamp
 }
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
@@ -150,10 +155,36 @@ export def main [
     }
     $result = ($result | insert root_sig $root_sig)
 
-    # 4. OTS timestamp — anchors the root statement to Bitcoin. The manifest
-    # is not stamped: the root is derived from every row, so its anchor
-    # time-bounds the full CSV — the same argument that dropped the whole-CSV
-    # signature. Archival tree-hashes.* bundles from the stamping era stay.
+    # 4. OTS timestamps — two of them, because an OTS proof commits to the hash
+    # of one file and these are two separate claims:
+    #   the root statement -> the CONTENT existed by T
+    #   the signature      -> the ENDORSEMENT existed by T
+    # Stamping only the root left the second unanswered. An SSH signature holds
+    # no timestamp field, so a .sig made today fitted a year-old bundle and
+    # nothing on disk contradicted it — which is exactly the claim that has to
+    # survive a key compromise, where only a signature datable before the
+    # revocation still means anything.
+    #
+    # Why two stamps rather than one object naming both files by digest: a
+    # calendar aggregates every digest it receives into one merkle tree per
+    # Bitcoin transaction, so the second post costs nothing on-chain and such an
+    # object would only re-implement that batching a layer up — while adding an
+    # artifact, a grammar and a parser. Two stamps also generalize for free:
+    # every signature beside the root is stamped, so a co-signer's endorsement
+    # is dated by the same loop, where a single object names one signature and
+    # would need machinery per extra signer.
+    #
+    # Why not stamp the signature ALONE, which dates the content transitively:
+    # it makes the most durable claim depend on the most fragile one. Content
+    # time would stop being a bare hash compare and start needing the pubkey,
+    # ssh-keygen and a key type OpenSSH still reads — three things that can rot
+    # where a hash cannot, so a bundle that keeps a good key-free content anchor
+    # today would then have none.
+    #
+    # The manifest is not stamped: the root is derived from every row, so its
+    # anchor time-bounds the full CSV — the same argument that dropped the
+    # whole-CSV signature. Archival tree-hashes.* bundles from the stamping era
+    # stay.
     # Why pass out-dir explicitly: ots stamp defaults it to the CWD's git root,
     # but seal may target a different repo via --repo (same fix as pubkeys-dir
     # in step 3). Without it, `seal --repo /other` writes the bundle into the
@@ -167,7 +198,154 @@ export def main [
     if not $no_stamp {
         let root_stamp = ots stamp $root_statement_path --out-dir $ots_dir --response-file $response_file
         $result = ($result | insert root_ots $root_stamp.ots)
+
+        # Every signature over the root, not only the one step 3 just made: a
+        # co-signer's endorsement is as undated as seal's own was, and this
+        # loop is the whole cost of dating it. Shared discovery, so the bare
+        # `<file>.sig` form is stamped too.
+        #
+        # Why --into the root's bundle instead of --out-dir: one seal moment is
+        # one bundle. Derived naming gave each signature a bundle of its own,
+        # keyed by a name that already carried the signer's 64-hex fingerprint —
+        # so the fingerprint appeared three times in one tree, the .sig appeared
+        # twice, and neither directory could make the whole claim README calls
+        # the bundle contract: the content bundle held an endorsement it could
+        # not date, and the signature bundle held a date for content it did not
+        # carry. Stamping into the content's bundle puts all four files together
+        # and costs nothing elsewhere — `merkle verify` matches proofs by content
+        # commitment over one directory level, never by bundle name.
+        let sig_stamps = sig-files-for $root_statement_path | each {|sig|
+            ots stamp $sig --into $root_stamp.dir --response-file $response_file | get ots
+        }
+        $result = ($result | insert sig_ots $sig_stamps)
     }
 
     $result
+}
+
+# What the multiproofs/ folder holds: one row per bundle, with the anchor state
+# of the content it froze and of each signature beside it.
+#
+# Why this exists: the folder answers "is this sealed, and is it dated yet" only
+# by reading long directory names and running `ots info` by hand. `merkle verify`
+# answers it for one proof against one root; this answers it for everything on
+# disk, which is what a person opening the folder actually wants to know.
+#
+# Read-only, and deliberately NOT a verdict. It reports what the files say — no
+# signature is checked here, so `signers` counts signature *files* and never
+# claims a signature is valid or names who made it. A name on disk is not
+# evidence of a signer (that is why a principal is a key's fingerprint), so the
+# command that renders a name must not be the one that vouches for it: use
+# `ssh-sign verify` or `merkle verify` for verdicts.
+#
+# Columns:
+#   bundle   — directory under multiproofs/, relative to the repo root
+#   file     — the frozen content snapshot in it
+#   current  — the live artifact of that name under multiproofs/ has these exact
+#              bytes, i.e. this is the seal in force rather than a previous one
+#   content  — anchor over the snapshot: `absent`, `pending`, or `anchored
+#              <height>` — the Bitcoin block the proof binds to. That height is
+#              the only time an .ots carries; a block's wall-clock time is in its
+#              header, which no proof holds, so a date needs `ots verify` and the
+#              network. This command stays offline, so it reports the height
+#   signers  — how many signature files sit in the bundle
+#   endorsed — anchor over each of those signatures, same order, comma-joined,
+#              and empty when `signers` is 0. A string and not a list because a
+#              list cell renders as "[list 1 item]", which hides the one thing the
+#              column exists to show; the values are still exact, so `where
+#              endorsed =~ anchored` works
+#
+# A bundle whose only stamped content is a signature — the layout `seal` wrote
+# before the two anchors shared a directory — reads `file: null, content: absent`
+# with `signers: 1` and a dated `endorsed`. That is the honest shape: it carries
+# an endorsement and its date but no content snapshot, and `signers` is what
+# separates it from a bundle holding nothing.
+#
+# Bundles reached through a symlinked directory are not listed: `list-files
+# --recursive` descends real directories only, for the same reason `--regular`
+# drops symlinked files below.
+#
+# Not a `list` subcommand: `list` is a Nushell type keyword, and this returns a
+# join over three sources rather than a listing of one.
+@example "report a throwaway repo with nothing sealed yet" {
+    cd (mktemp --directory)
+    git init -q
+    mkdir multiproofs
+    nu-multiproof seal status
+}
+export def status [
+    --repo: path # Target git repo root (default: git root of current directory)
+]: nothing -> table {
+    let root = repo-root $repo
+    let mp = multiproofs-dir $root
+
+    # Why --recursive here where `merkle verify` walks one level: verify consults
+    # the operational set under ots-timestamps/, while this describes the whole
+    # folder — including archival trees like origin-proofs/, which a person can
+    # see and would otherwise wonder why the report omits. Real directories only,
+    # so a bundle behind a symlink is not listed.
+    let stamps = scan-stamps $mp --recursive
+
+    # Bundles are the directories those proofs live in, discovered from the
+    # proofs rather than from a name pattern — the same reason verify matches by
+    # content commitment. A directory holding no proof is not a bundle.
+    $stamps | get file | each {|f| $f | path dirname } | uniq | sort | each {|dir|
+        # --regular: every path below is opened and its bytes read as that name's
+        # own content, and a symlink's are not. Without it a link to a directory
+        # (nushell types it `symlink`, not `dir`) or a dangling one reached `open`
+        # and threw "Eval block failed with pipeline input", naming no file — a
+        # report that describes the archive must not die on it.
+        let files = list-files $dir --regular
+        let sigs = $files | where {|f| $f | path basename | str ends-with ".sig" } | sort
+        let here = $stamps | where {|s| ($s.file | path dirname) == $dir }
+        # The snapshot is the non-signature file a proof in this bundle commits
+        # to — the same content-commitment rule the rest of this layer discovers
+        # by, not "the first file that is neither a proof nor a signature". That
+        # positional reading let any stray file in a bundle become the reported
+        # snapshot, and then its unanchored hash reported the bundle's content as
+        # `absent` while the real frozen copy sat beside it anchored. A file no
+        # proof commits to is not what the bundle attests, so it is not named
+        # here; a bundle with none reports `null` (the oldest ones, see README).
+        let candidates = $files
+            | where {|f| not ($f | path basename | str ends-with ".ots") }
+            | where {|f| not ($f | path basename | str ends-with ".sig") }
+            | each {|f| {file: $f hash: (open --raw $f | hash sha256)} }
+            | where {|c| $c.hash in ($here | get hash) }
+        # More than one stamped non-signature file in a bundle is what --into
+        # permits, and `get 0?` then picked by `ls` order — so a bundle could
+        # report a file it is not named after and drop the other anchor silently.
+        # The bundle's own name settles it: it is `<stem>.<8 hex of the hash>`,
+        # and that hash is this bundle's reason to exist. Uppercase in the name,
+        # lowercase from `hash sha256`, hence the fold.
+        #
+        # Applied unconditionally, not only when there are several candidates: the
+        # filter can only shrink the set, and an empty result falls back to the
+        # old reading, so a bundle whose name carries no `.<8 hex>` — a hand-made
+        # one — behaves exactly as before instead of taking a second code path.
+        let prefix = $dir | path basename | parse --regex '\.(?<p>[0-9A-Fa-f]{8})$' | get p?.0? | default ""
+        let keyed = $candidates
+            | where {|c| $prefix != "" and ($c.hash | str starts-with ($prefix | str lowercase)) }
+        let snapshot = ($keyed | get 0?) | default ($candidates | get 0?)
+        {
+            bundle: ($dir | path relative-to $root)
+            file: (if $snapshot == null { null } else { $snapshot.file | path basename })
+            # null, not false, when there is nothing to compare against: `false`
+            # reads as "a later seal superseded this", and a bundle over a file
+            # that is not a multiproofs/ top-level artifact has no live
+            # counterpart at all.
+            current: (if $snapshot == null { null } else {
+                let live = $mp | path join ($snapshot.file | path basename)
+                if not ($live | path exists) { null } else {
+                    (open --raw $live | hash sha256) == $snapshot.hash
+                }
+            })
+            content: (if $snapshot == null { "absent" } else {
+                format-stamp (pick-stamp ($here | where hash == $snapshot.hash))
+            })
+            signers: ($sigs | length)
+            endorsed: ($sigs | each {|s|
+                format-stamp (pick-stamp ($here | where hash == (open --raw $s | hash sha256)))
+            } | str join ", ")
+        }
+    }
 }

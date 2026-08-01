@@ -102,7 +102,7 @@ export def canonical []: string -> string {
 # unvalidated line would hand one key a second principal — the identity fork
 # `canonical` exists to close, re-opened one function along.
 @example "the principal a stored public key signs under" {
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOi7LinplEQewM3/l8Ol9rE85+YwhvLPKf+ZUUf36Xuf" | pubkey fingerprint
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOi7LinplEQewM3/l8Ol9rE85+YwhvLPKf+ZUUf36Xuf" | nu-multiproof pubkey fingerprint
 } --result "b610a91de8fa99e224f6b2e7fb6bb8c9e8f0303f8d72d14e5a494ab8d1c68011"
 export def fingerprint []: string -> string {
     $in | canonical | str trim | split row " " | get 1 | decode base64 | hash sha256

@@ -10,12 +10,13 @@ use _repo.nu repo-root
 use _fs.nu [list-files list-dirs]
 use _tracked.nu [content-tree resolve-leaf-file]
 use _cid-helpers.nu node-cid
-use _layout.nu [manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir MERKLE_ROOT_FILE]
+use _layout.nu [manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir]
 use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
     root-statement parse-root-statement validate-leaf
 ]
 use _allowed-signers.nu check-signer-known
+use _stamps.nu [scan-stamps pick-stamp]
 use ssh-sign.nu
 use ots.nu
 
@@ -95,7 +96,7 @@ def derive-dir-cid [target: path, leaf: record]: nothing -> any {
 
 # Build the tree from the manifest and write the root statement file
 # (multiproofs/tree-root.txt) — the artifact seal signs and stamps.
-@example "derive and record the merkle root" { merkle write-root }
+@example "derive and record the merkle root" { nu-multiproof merkle write-root }
 export def write-root [
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> record {
@@ -124,7 +125,7 @@ export def write-root [
 # Extract a compact inclusion proof for one manifest row. The consumer's full
 # artifact set: this proof file + tree-root.txt + a .sig over it + the
 # signer's pubkey (+ the tree-root OTS bundle for the time anchor).
-@example "extract a compact inclusion proof" { merkle prove README.md }
+@example "extract a compact inclusion proof" { nu-multiproof merkle prove README.md }
 export def prove [
     filepath: string # Manifest row to prove (as listed in tree-hashes.csv)
     --repo: path # Target git repo root (default: git root of current directory)
@@ -152,7 +153,6 @@ export def prove [
     let out = inclusion-proofs-dir $target | path join $"($filepath).multiproof.json"
     mkdir ($out | path dirname)
     $proof | to json --indent 2 | save --raw --force $out
-    print $"Proof: ($out)"
     $out
 }
 
@@ -182,10 +182,21 @@ export def prove [
 #                      re-derive the commitment from — the target is not a git
 #                      repo root, or the row commits to no content at all)
 #   signatures       — ssh-sign results over the root statement file
-#   ots              — {status: absent|pending|anchored, ots} — a status, NOT
-#                      pass/fail: a fresh seal stays pending for hours/days
-#                      until Bitcoin confirms. Offline check only; run
+#   ots              — {status: absent|pending|anchored, ots, height} — a
+#                      status, NOT pass/fail: a fresh seal stays pending for
+#                      hours/days until Bitcoin confirms. `height` is the
+#                      Bitcoin block the anchor binds to, null while pending.
+#                      Offline check only; run
 #                      `ots verify` for the independent Bitcoin block check.
+#                      Dates the CONTENT: a stamp committing to tree-root.txt
+#   endorsements     — one row {signer, status, ots, height} per signature that
+#                      verified, saying when that endorsement was dated. Same
+#                      status values, same offline-only caveat. An SSH
+#                      signature carries no timestamp, so without a stamp over
+#                      the signature itself a valid signature could have been
+#                      made at any time — including after the key that made it
+#                      was compromised. `absent` means the endorsement is real
+#                      but undated. Signatures that did not verify get no row
 # A proof whose embedded root differs from the signed root is a proof for a
 # DIFFERENT seal — that throws loudly instead of reporting invalid.
 #
@@ -196,7 +207,7 @@ export def prove [
 # --pubkeys-dir points the check at a list the verifier holds; --signer names one
 # key by fingerprint, which is a statement about key material and so holds even
 # against the bundle's own list.
-@example "verify a proof, failing on invalid (for CI)" { merkle verify proof.json --fail }
+@example "verify a proof, failing on invalid (for CI)" { nu-multiproof merkle verify proof.json --fail }
 export def verify [
     proof_file: path
     --repo: path # Target git repo root (default: git root of current directory)
@@ -304,34 +315,36 @@ export def verify [
         }
     }
 
-    # OTS status for the root statement, discovered by content commitment
-    # (info.hash), not by bundle name — stale bundles from previous seals are
-    # archival, so "no stamp commits to THIS root" is absent, not invalid.
+    # Stamps are discovered by content commitment (info.hash), never by bundle
+    # name — stale bundles from previous seals are archival, so "no stamp
+    # commits to THIS file" is absent, not invalid. One pass over every bundle,
+    # because the same rule answers two questions: which stamp dates the root,
+    # and which dates a given signature. Both now live in the same bundle
+    # (`seal` stamps the signatures --into the root's), but nothing here depends
+    # on that: a `.sig` stamped separately, or a bundle from before the merge, is
+    # found by the same hash comparison. Filtering dirs by stem was an
+    # optimization that would have excluded the endorsement anchors back when
+    # they had bundles of their own — the comparison below is what decides, so
+    # the filter only ever risked hiding evidence.
+    let stamps = scan-stamps (ots-dir $target)
+
     let root_hash = open --raw $root_file | hash sha256
-    let root_stem = $MERKLE_ROOT_FILE | path parse | get stem
-    let matching_ots = list-dirs (ots-dir $target)
-        | where {|d| ($d | path basename | str starts-with $"($root_stem).") }
-        | each {|d| list-files $d --suffix ".ots" }
-        | flatten
-        | each {|f|
-            # A corrupt/truncated archival .ots must not block verification of
-            # an unrelated proof — skip it with a note and keep looking.
-            let info = try { ots info $f } catch {|e|
-                print $"note: skipping unparsable OTS file ($f): ($e.msg)"
-                null
-            }
-            if $info != null and $info.hash == $root_hash {
-                {file: $f type: $info.attestation.type}
-            } else { null }
-        }
-    let ots_status = if ($matching_ots | is-empty) {
-        {status: "absent" ots: null}
-    } else {
-        # Prefer an anchored match: listing order can put an archived
-        # still-pending <stem>.<timestamp>.ots before the anchored <stem>.ots.
-        let anchored = $matching_ots | where type == "bitcoin"
-        let pick = if ($anchored | is-not-empty) { $anchored | first } else { $matching_ots | first }
-        {status: (if $pick.type == "bitcoin" { "anchored" } else { "pending" }) ots: $pick.file}
+    let ots_status = pick-stamp ($stamps | where hash == $root_hash)
+
+    # When each endorsement was made, one row per signature that actually
+    # verified. An unverified signature is not an endorsement, so it gets no
+    # row: an untrusted key's signature checks out cryptographically and comes
+    # back with a principal attached, and listing it here would present
+    # mallory's dated endorsement of your root beside the real one.
+    #
+    # Matched by hashing the signature file the verdict names — `sig` on the
+    # row, so no second discovery pass and no re-verification. A stamp over a
+    # signature says only "these bytes existed by T"; that it is an endorsement
+    # OF THIS ROOT is what the signature check establishes, which is why both
+    # halves have to hold before a row appears.
+    let endorsements = $sig_check.sigs | where valid | each {|s|
+        let sig_hash = open --raw $s.sig | hash sha256
+        pick-stamp ($stamps | where hash == $sig_hash) | insert signer $s.signer
     }
 
     # No status branch returns null: only `$content_verified == true` passes.
@@ -380,6 +393,9 @@ export def verify [
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
     print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (directory CID needs the tracked tree)' })"
     print $"ots:       ($ots_status.status)"
+    for e in $endorsements {
+        print $"endorsed:  ($e.status) — ($e.signer)"
+    }
 
     if $fail and not $valid {
         error make {msg: $"proof not valid: ($error)"}
@@ -393,6 +409,7 @@ export def verify [
         content_verified: $content_verified
         signatures: $sig_check.sigs
         ots: $ots_status
+        endorsements: $endorsements
         error: $error
     }
 }

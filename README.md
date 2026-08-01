@@ -2,7 +2,7 @@
 
 Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git`, `ssh-keygen` and `chmod` — network calls use Nushell's built-in `http`.
 
-🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: 192 tests, every verifier guard mutation-checked, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
+🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: 222 tests, every verifier guard mutation-checked, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
 
 ## What you can prove
 
@@ -34,17 +34,14 @@ nu-multiproof init
 # Generate content manifest (SHA-256, git hash, IPFS CID v0)
 nu-multiproof tree-hashes
 
-# Timestamp a file via OpenTimestamps
-nu-multiproof ots stamp multiproofs/tree-root.txt
-# Upgrade pending attestation to Bitcoin (hours/days later)
-nu-multiproof ots upgrade multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
-# Inspect a timestamp
-nu-multiproof ots info tree-root.ots
-# Independently verify the Bitcoin anchor against real block headers
-nu-multiproof ots verify multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
+# Derive the merkle root over the manifest and write multiproofs/tree-root.txt —
+# the one artifact the two steps below sign and stamp, so it has to exist first.
+# `seal` runs this itself; run it directly to seal under a key other than the
+# repo's — see "Sealing under an explicit key" below.
+nu-multiproof merkle write-root
 
-# Sign a file with your SSH key. The key must already be registered in
-# multiproofs/pubkeys/ — signing resolves the principal out of the trust list,
+# Sign the root statement with your SSH key. The key must already be registered
+# in multiproofs/pubkeys/ — signing resolves the principal out of the trust list,
 # so an unregistered key is refused rather than signing under a name nothing
 # reading the artifact could resolve. `init --pubkey` is what registers one.
 nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ~/.ssh/id_ed25519
@@ -55,10 +52,17 @@ open --raw ~/.ssh/id_ed25519.pub | nu-multiproof pubkey fingerprint
 # The canonical pubkey bytes the fingerprint is taken over (type + base64 + \n)
 open --raw ~/.ssh/id_ed25519.pub | nu-multiproof pubkey canonical
 
-# Derive the merkle root over the manifest and write multiproofs/tree-root.txt.
-# `seal` runs this itself; run it directly to seal under a key other than the
-# repo's — see "Sealing under an explicit key" below.
-nu-multiproof merkle write-root
+# Timestamp the signed statement via OpenTimestamps. Stamping after signing is
+# what puts the signature in the bundle — `ots stamp` copies in the signatures
+# sitting beside the file at stamp time; see "Bundle contract" below.
+nu-multiproof ots stamp multiproofs/tree-root.txt
+# Upgrade pending attestation to Bitcoin (hours/days later)
+nu-multiproof ots upgrade multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
+# Inspect a timestamp
+nu-multiproof ots info multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
+# Independently verify the Bitcoin anchor against real block headers
+nu-multiproof ots verify multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
+
 # Extract a compact inclusion proof for one manifest row
 nu-multiproof merkle prove README.md
 # Verify it: fold to the signed root, check signatures, content, OTS status
@@ -69,6 +73,11 @@ nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.js
 # everything below is written in terms of.
 nu-multiproof seal
 nu-multiproof seal --repo path/to/other/repo   # seal a repo other than the CWD's
+
+# What the folder holds: one row per bundle, with the anchor state of the content
+# it froze and of each signature beside it. Read-only, and not a verdict — see
+# "Reading the folder" below.
+nu-multiproof seal status
 
 # The CID v0 of any bytes, standalone — the same one tree-hashes puts in content_cid
 open --raw README.md | nu-multiproof cid-v0
@@ -132,7 +141,7 @@ The root CID names content, it does not publish it. Nothing here talks to IPFS, 
 
 The root also authenticates the whole catalogue, indirectly: it is computed from every row, so anyone holding the full CSV can rebuild the tree and must land on the signed root — alter one row and the roots diverge. That is why `seal` itself no longer signs the CSV: earlier versions did during a transition, and git tag `pre-drop-manifest-sig` marks the last version that produced such a signature. `ssh-sign sign multiproofs/tree-hashes.csv` still works, and a signature over the manifest is cleared by exactly the same rule as one over the root statement — it survives a reseal that regenerates identical bytes, and goes when the bytes change (pinned by "a deliberate manifest signature survives an unchanged reseal"). One deliberate boundary: the root commits to the parsed row data, not the CSV's exact bytes (column order, quoting style) — leaf serialization uses parsed field values because CSV quoting is not canonical.
 
-A consumer's full artifact set: the proof file (`merkle prove <filepath>`), `tree-root.txt`, a `.sig` over it, the signer's pubkey from `multiproofs/pubkeys/`, and — for the time anchor — the `tree-root.*` OTS bundle.
+A consumer's full artifact set: the proof file (`merkle prove <filepath>`), `tree-root.txt`, a `.sig` over it, the signer's pubkey from `multiproofs/pubkeys/`, and — for the time anchors — the `tree-root.*` OTS bundle, which carries both (`<stem>.ots` dates the content, `<stem>.<ext>.<fingerprint>.ots` dates the endorsement; see "Dating the endorsement").
 
 The trust list it checks against is, by default, the one inside the target — for a portable bundle, the bundle's own `multiproofs/pubkeys/`. A default `valid: true` therefore says the artifact set is internally consistent, not that the signer you expect endorsed it: anyone can fork the repo, `init` with their own key and re-`seal`. `--pubkeys-dir` points the check at a list you control, and `--signer <fingerprint>` narrows further to a valid signature from that one key instead of from any registered key. Because a principal is the key's own fingerprint, `--signer` is a statement about key material and holds even over the bundle's own list: a bundle can call its key files anything, and the rendered principal still comes from the bytes inside them, so it cannot make its key answer for yours (pinned by the test "a bundle cannot file one key under the fingerprint of another"). What a bundle *can* do is not carry the key at all, and a `--signer` the trust list holds no key for is an error, not `valid: false`: "alice did not sign this" is a claim, and without alice's key the verifier cannot make it (pinned by "signer with no matching key in the trusted dir is an error, not invalid"). Which fingerprints count is still a statement only the verifier can make — the same verifier-side policy described under "Verifying commit signatures" below.
 
@@ -161,7 +170,8 @@ bundle/
   README.md                                # the proven file, at the leaf's filepath
   multiproofs/tree-root.txt                # + its .<fingerprint>.sig alongside
   multiproofs/pubkeys/<fingerprint>.pub
-  multiproofs/ots-timestamps/tree-root.*/  # optional — without it OTS reports `absent`
+  multiproofs/ots-timestamps/tree-root.*/  # optional — without it `ots` reports `absent`;
+                                           #   its <stem>.<ext>.<fingerprint>.ots dates the endorsement
 ```
 
 ```nushell no-run
@@ -198,48 +208,71 @@ These are archival artifacts. Ongoing operational timestamps live in [`multiproo
 
 ### Bundle contract
 
-An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is self-contained provenance: every file needed to assert *"content C existed at time T, anchored to Bitcoin block B, and signer X endorsed C"* lives in the directory, with no reference to anything outside it. Read the two halves separately: the anchor covers the stamped snapshot's hash and nothing else, so it dates C, not the endorsement. A `.sig` copied in here sits *beside* the proof — a filesystem fact, not something the chain commits to — and a signature made today can be dropped into a bundle stamped a year ago. To date an endorsement, stamp the signature; see "Dating the endorsement" below.
+An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is self-contained provenance: every file needed to assert *"content C existed at time T, anchored to Bitcoin block B, and signer X endorsed C by time T2"* lives in the directory, with no reference to anything outside it. Read each anchor separately — a proof commits to the hash of one file and nothing else, so the snapshot's anchor dates C while a signature's anchor dates that endorsement. One seal moment is one bundle: `seal` stamps the root statement and every signature over it *into the same directory* (pinned by "seal puts the root statement, its signature and both anchors in one bundle"), so the two claims sit side by side instead of in two directories neither of which could make both.
 
 - `<stem>.<ext>` — frozen content snapshot (the stamped file's bytes at stamp time)
 - `<stem>.ots` — the timestamp over the snapshot's hash. A fresh `ots stamp` writes a *pending* calendar attestation here; `ots upgrade` replaces it in place with the Bitcoin-anchored one once a block confirms it, hours or days later. Until that upgrade runs, the bundle carries the content and the signature but not yet the anchor, so it cannot make the "at time T, in block B" half of the claim above
-- `<stem>.<ext>.<fingerprint>.sig` — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig). Every signature sitting beside the stamped file is copied, the bare `<stem>.<ext>.sig` form included, so a bundle carries one per signer rather than one (pinned by the test "stamp snapshots every signature beside the file it stamps"). `seal` signs before it stamps, so its own bundles always carry at least its own (pinned by "seal stamps the root statement into the target repo and bundles its signature")
+- `<stem>.<ext>.<fingerprint>.sig` — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig). Every signature sitting beside the stamped file is copied, the bare `<stem>.<ext>.sig` form included, so a bundle carries one per signer rather than one (pinned by the test "stamp snapshots every signature beside the file it stamps"). `seal` signs before it stamps, so its own bundles always carry at least its own (pinned by "seal puts the root statement, its signature and both anchors in one bundle")
+- `<stem>.<ext>.<fingerprint>.ots` — the timestamp over *that signature's* hash, so the bundle dates the endorsement and not only the content. Same naming rule as `<stem>.ots` one level in: strip `.ots` and the sibling it proves is what remains. Written by `ots stamp <sig> --into <bundle>`, which joins an existing bundle instead of deriving a directory of its own (pinned by "stamp --into joins the named bundle instead of deriving one"). The bundle must already exist *as a real directory* — a typo would otherwise create a directory outside this grammar (pinned by "stamp refuses an --into bundle that does not exist"), and a regular file or a symlink to a directory both lose the proof after the digest is already posted (pinned by "stamp refuses an --into that exists but is not a real directory"). It also refuses to take a `<stem>.ots` name when that proof covers a *different file still in the bundle*, since two files can share a stem and only one can own the name (pinned by "stamp --into refuses to take the .ots name that another file proof holds"), or when the incumbent proof cannot be read at all, since an unplaceable proof cannot be shown safe to archive (pinned by "stamp --into refuses when the incumbent proof cannot be read"). What it does *not* refuse is a superseded proof of the same name: re-signing with a randomized key (ECDSA, ecdsa-sk) makes new signature bytes under the same `.sig`, so a second `seal` over unchanged content re-anchors that signature and archives the previous proof (pinned by "a second seal over unchanged content re-anchors the new signature")
 - `<stem>.<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots` — a previous proof of the same content, archived by the re-stamp that replaced it. Same content, different nonce and calendar response, so it is an independent attestation worth keeping; the hash in the name makes the archive name collision-proof for two stamps in one second (pinned by the test "rapid re-stamps each keep their own proof")
 - `<stem>.<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots`, **written by a failed stamp** — when `<stem>.ots` cannot be written (another stamp won the race), this run's assembled proof is parked beside it rather than dropped: the nonce binding it to this file exists only in that run. The name shape is identical to the archived form above, so the two are not distinguishable on disk — both are genuine proofs of the bundle's content, which is why `merkle verify` discovers proofs by content rather than by name. The command still exits non-zero and names the path
 
 One more form is written **outside** any bundle, directly under `multiproofs/ots-timestamps/`:
 
-- `<stem>.<hash-prefix>.rejected-<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots` — a calendar answer that did not parse into a readable proof. No bundle is created, and these bytes are deliberately not a proof; they are kept because the digest already reached the calendar and the nonce is unrecoverable otherwise. The reference `ots` CLI reads constructs this parser refuses (forks, for one), so recovery may still be possible from them (pinned by the test "rejected stamps in the same second each keep their nonce")
+- `<stem>.<hash-prefix>.rejected-<YYYYmmdd-HHMMSS>-<8 hex of its own sha256>.ots` — a calendar answer that did not parse into a readable proof. No bundle is created, and these bytes are deliberately not a proof; they are kept because the digest already reached the calendar and the nonce is unrecoverable otherwise. The reference `ots` CLI reads constructs this parser refuses (forks, for one), so recovery may still be possible from them (pinned by the test "rejected stamps in the same second each keep their nonce"). Under `--into` they go to the bundle's *parent*, for the same reason: a bundle is the one place bytes that are not a proof must not be mistaken for one (pinned by "a rejected response under --into lands outside the bundle", and for a relative `--into` by "a rejected response under a relative --into is still parked, not lost")
 
-`seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. New seals produce only `tree-root.*` bundles: the manifest is neither signed nor stamped anymore, since the root statement is derived from every manifest row, so its signature and Bitcoin anchor cover the full CSV. Archival `tree-hashes.*` bundles (including `origin-proofs/`) stay valid as-is; the transition-era ones may also carry a CSV sig.
+`seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. Each new seal produces one `tree-root.*` bundle holding the root statement, its signatures and an anchor for each: the manifest is neither signed nor stamped anymore, since the root statement is derived from every manifest row, so its signature and Bitcoin anchor cover the full CSV. Archival `tree-hashes.*` bundles (including `origin-proofs/`) stay valid as-is; the transition-era ones may also carry a CSV sig.
 
-Every bundle committed to this repo predates the fingerprint principal, so none of them matches the `.sig` grammar above — read them as history, not as examples. Their signatures carry a key-file label where a fingerprint now goes (`tree-root.txt.maxim-uvarov2.sig`), and the two `origin-proofs/` bundles carry a signature over the **`.ots`** rather than over the frozen snapshot (`tree-hashes.ots.maxim-uvarov2.sig`), added by hand after stamping. `ots stamp` writes neither shape: it copies the signatures sitting beside the file it stamps, and `ssh-sign sign` names them by fingerprint.
+The bundles committed to this repo are history, not examples, and they show the layout arriving in stages. Every `.sig` in them now carries a fingerprint, but the older ones were named after a key *file* until they were renamed in place — one key was filed under two names (`maxim-uvarov2` and `id_ecdsa_sk_rk`) for the same ECDSA-SK key, which is the double identity the fingerprint principal exists to remove. Renaming changed nothing a verifier reads: a label is not part of the signed bytes, and the principal comes from key material via `find-principals`. Two things about them do not match the grammar above and cannot be fixed by a rename. The `origin-proofs/` bundles carry a signature over the **`.ots`** rather than over the frozen snapshot, added by hand after stamping — a shape `ots stamp` never writes, since it copies the signatures sitting beside the file it stamps. And only `tree-root.EE947CD6/` holds an endorsement anchor: the ten older bundles have none and cannot get one, because a stamp made today would date those July signatures to today and make the folder read as though they were dated when sealed.
+
+### Reading the folder
+
+`nu-multiproof seal status` reports every bundle in one table, so "is this sealed, and is it dated yet" needs no reading of directory names and no `ots info` by hand:
+
+This repo's own output, with the `bundle` column shortened to its last path segment to fit (it is really repo-relative, `multiproofs/origin-proofs/tree-hashes.93223B2F` and so on):
+
+```
+╭────┬──────────────────────┬─────────────────┬─────────┬─────────────────┬─────────┬──────────╮
+│  # │        bundle        │      file       │ current │     content     │ signers │ endorsed │
+├────┼──────────────────────┼─────────────────┼─────────┼─────────────────┼─────────┼──────────┤
+│  0 │ tree-hashes.93223B2F │ tree-hashes.csv │ false   │ anchored 940583 │       1 │ absent   │
+│ …  │ …                    │ …               │ …       │ …               │       … │ …        │
+│  8 │ tree-root.050186F7   │ tree-root.txt   │ false   │ anchored 958319 │       1 │ absent   │
+│  9 │ tree-root.25A4101E   │ tree-root.txt   │ false   │ anchored 958319 │       1 │ absent   │
+│ 10 │ tree-root.EE947CD6   │ tree-root.txt   │ true    │ pending         │       1 │ pending  │
+╰────┴──────────────────────┴─────────────────┴─────────┴─────────────────┴─────────┴──────────╯
+```
+
+`current` is a byte compare against the live artifact of that name under `multiproofs/`, which is the only thing separating the seal in force from the archive — they look alike on disk (pinned by "seal status marks only the bundle whose snapshot is the live artifact"). It is `null`, not `false`, when no live artifact shares the name: `false` says "a later seal superseded this", and a bundle over some other file was never in that race (pinned by "seal status reports current as null when no live artifact shares the name"). `content` and `endorsed` are `absent`, `pending`, or `anchored <height>`, and `endorsed` carries one per signature in the bundle. The number is the Bitcoin block the proof binds to — the only time an `.ots` carries, since a block's wall-clock time lives in its header and no proof holds one; a date therefore needs `ots verify`, which fetches headers and cross-checks explorers, so `status` stays offline and reports the height (pinned by "seal status reports the block height an anchor binds to"). Two seals can share a block, as rows 8 and 9 do: a calendar aggregates every digest it receives into one merkle tree per transaction.
+
+Bundles are found by the proofs they hold rather than by a name pattern, across the whole `multiproofs/` tree — so archival subtrees like `origin-proofs/` appear too, which the operational scan `merkle verify` uses does not cover (pinned by "seal status reports a bundle in an archival subtree, not just ots-timestamps"). Real directories only, so a bundle behind a symlink is not listed (pinned by "seal status does not list a bundle behind a symlinked directory"), and a parked rejected calendar answer is skipped rather than reported as a broken proof (pinned by "seal status says nothing about a parked rejected calendar answer"). The snapshot a row names is likewise the file a proof in that bundle *commits to*, so a stray file dropped into a bundle is not mistaken for its content; where a bundle holds two stamped non-signature files, the one it is *named* after wins, since that hash is the bundle's reason to exist (pinned by "seal status names the file the bundle is keyed by when it holds two"). Symlinks inside a bundle are skipped rather than followed — the bytes behind a link are not the ones the name describes, and following one used to abort the whole report (pinned by "seal status reports a bundle holding symlinks instead of failing").
+
+`endorsed` is empty when `signers` is 0, and otherwise carries one entry per signature in sorted signature-file order (pinned by "seal status reports one endorsement entry per signature"). A bundle whose only stamped content is a signature — the layout `seal` wrote before the two anchors shared a directory — reads `file: null`, `content: absent`, `signers: 1` and a dated `endorsed`: it carries an endorsement and its date but no content snapshot, and `signers` is what tells it apart from a bundle holding nothing (pinned by "seal status reports a signature-only bundle as an undated-content endorsement").
+
+It is **not** a verdict. No signature is checked, so `signers` counts signature *files* and the report never says a signature is valid or who made it: a name on disk is not evidence of a signer, which is the whole reason a principal is a key's fingerprint. Use `ssh-sign verify` or `merkle verify` for that.
 
 ### Dating the endorsement
 
-`seal` stamps `tree-root.txt`, so a sealed repo can prove *when its content existed* and *who endorsed it*, but never *when the endorsement happened*. An SSH signature carries no timestamp field, and the bundle's anchor commits to the snapshot's hash, so nothing on disk bounds the moment of signing.
+An OTS proof commits to the hash of one file, so "when did this content exist" and "when was it endorsed" are two claims needing two stamps. An SSH signature carries no timestamp field, so with only the root stamped, a `.sig` made today drops into a year-old bundle and nothing on disk contradicts it.
 
-Stamp the signature to get that bound. `ots stamp` takes any file, so this needs no new machinery:
+`seal` step 4 therefore stamps `tree-root.txt` **and every signature beside it**, all into the root statement's own bundle:
 
-```sh
-nu-multiproof ots stamp multiproofs/tree-root.txt.<fingerprint>.sig
-```
-
-The result is a second bundle beside the first, and the two claims stay independent — each is checked by hashing a file you hold and comparing it to what the proof commits to, with no key material involved:
-
-| bundle | commits to | claim |
+| stamp commits to | claim | reported as |
 | --- | --- | --- |
-| `tree-root.<hash-prefix>/tree-root.ots` | sha256 of `tree-root.txt` | the content existed by T |
-| `tree-root.txt.<fingerprint>.<hash-prefix>/….ots` | sha256 of the `.sig` | the endorsement existed by T |
+| sha256 of `tree-root.txt` | the content existed by T | `ots` |
+| sha256 of a `.sig` over it | that endorsement existed by T | one row in `endorsements` |
 
-(Pinned by the test "a stamp over a signature commits to the signature bytes, not to the signed file".) A second calendar post costs nothing on-chain: OTS calendars aggregate every digest they receive into one merkle tree per Bitcoin transaction, so batching is already the calendar's job — an object holding both digests would only re-implement it a layer up.
+Both stay checkable by hashing a file you already hold — no key material for either. `merkle verify` returns one `endorsements` row per signature that verified, `{signer, status, ots, height}`, with the same `absent | pending | anchored` values as `ots`; `height` is the Bitcoin block and is null while pending. Where several anchors of the same bytes exist, the reported one is the **lowest** block: the claim is "existed no later than T", so the earliest anchor is the strongest and the rest follow from it (pinned by "seal status reports the earliest anchor when a bundle holds several"). A stamp is matched to its signer by hashing the signature file, never by a `.sig` name, and a signature that did not verify gets no row at all: dating bytes says when they existed, never that they endorse anything. A real signature over this root by a key the trust list does not hold is exactly that case — cryptographically fine, stamped, and still not an endorsement anyone here trusts (pinned by "a dated signature by an unregistered key is not an endorsement").
 
-Two limits, both real. `seal` does not do this, so it is a manual step per seal. And `merkle verify` will not report it: stamp discovery matches proofs committing to the *root's* hash, so the signature's bundle is opened, found not to match, and skipped silently — the evidence is there and checks out under `ots verify`, but no single command folds it into the verdict.
+Because the loop runs over `sig-files-for`, a **co-signer is dated for free**: sign `tree-root.txt` out of band with a registered key, and the next `seal` stamps that signature alongside its own (pinned by "each signature gets its own dated endorsement").
 
-Worth the step when a signature has to outlive its key: after a compromise and revocation at time R, only a signature datable before R still means anything, and the same argument covers key rotation across a long archive. It also settles which of several co-signers endorsed first. For dating content alone — prior art, ordering two seals, proving a snapshot falls inside a retention window — the root's own stamp already answers, and this adds nothing.
+Why two stamps and not one object naming both files by digest: an OTS calendar aggregates every digest it receives into one merkle tree per Bitcoin transaction, so the second post costs nothing on-chain, and such an object would only re-implement that batching a layer up — while adding an artifact, a grammar, a parser, and a per-signer limit the loop above does not have. Why not stamp the signature *alone*, which dates the content transitively: it makes the most durable claim depend on the most fragile one. Content-time would stop being a bare hash compare and start needing the pubkey, `ssh-keygen`, and a key type OpenSSH still reads — three things that can rot where a hash cannot, so a bundle that keeps a good key-free content anchor today would then have none.
 
-One direction it does *not* give: OTS bounds a time from above only ("no later than T"), never from below. A lower bound has to come from inside the signed bytes — some recent unpredictable value the signer could not have known earlier.
+Worth having when a signature must outlive its key: after a compromise and revocation at time R, only a signature datable before R still means anything, and the same argument covers key rotation across a long archive. It also settles which of several co-signers endorsed first. For dating content alone — prior art, ordering two seals, proving a snapshot falls inside a retention window — the root's own stamp already answers, and the signature stamps add nothing.
 
-The two `origin-proofs/` bundles do the reverse of this — a signature over the `.ots` rather than a stamp over the signature (see the note above). That dates nothing extra; read them as history.
+One direction this does *not* give: OTS bounds a time from above only ("no later than T"), never from below. A lower bound has to come from inside the signed bytes — some recent unpredictable value the signer could not have known earlier.
+
+The two `origin-proofs/` bundles do the reverse — a signature over the `.ots` rather than a stamp over the signature (see the note above). A signature over a proof adds no time, since the proof's authority is the chain; read them as history.
 
 ## Verifying a timestamp
 
@@ -258,7 +291,9 @@ Pass `--sources` to cross-check against different explorers. It replaces the def
 
 ## Verifying commit signatures
 
-Commits in this repo are SSH-signed. Verifying an SSH-signed commit involves two distinct checks:
+Only the early commits in this repo are SSH-signed — up to and including `ab03ade` ("revoke claude-code signing key"). Everything after it, agent-made commits included, carries no signature, so `git log --show-signature` prints nothing for most of the log. The recipe stays here because `multiproofs/pubkeys/` is exactly what an `allowed_signers` file is rendered from, and the signed stretch is what it can be tried on.
+
+Verifying an SSH-signed commit involves two distinct checks:
 
 1. **Cryptographic validity** — does the signature mathematically match the commit bytes under some public key? Key-agnostic, no trust required.
 2. **Trust** — is that public key one *you* choose to recognize as a valid signer? Verifier-side policy.
@@ -274,8 +309,11 @@ Git conflates them: it refuses to verify SSH signatures unless `gpg.ssh.allowedS
 ```nushell no-run
 let signers = "/tmp/nu-multiproof-signers"
 ls --all multiproofs/pubkeys | get name | where ($it | path parse | get extension) == "pub" | each {|f| $"* namespaces=\"git\" (open --raw $f | split row --regex '\s+' | first 2 | str join ' ')" } | str join "\n" | save --force $signers
-git -c $"gpg.ssh.allowedSignersFile=($signers)" log --show-signature -1
+git -c $"gpg.ssh.allowedSignersFile=($signers)" log --format='%h %G? %an %s'   # G = good, N = unsigned
+git -c $"gpg.ssh.allowedSignersFile=($signers)" log --show-signature -1 ab03ade
 ```
+
+The first command is where to start: `%G?` marks every commit `G` or `N`, so it shows both that the trust list resolves and which commits it has anything to say about. `--show-signature -1` on plain `HEAD` prints no signature line at all.
 
 `first 2` keeps the key type and the base64 blob and drops the trailing comment (`alice@laptop`) — it is not part of the trust statement and differs per machine.
 

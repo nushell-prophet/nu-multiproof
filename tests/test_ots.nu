@@ -574,6 +574,111 @@ def "a stamp over a signature commits to the signature bytes, not to the signed 
     assert ($stamped != (open --raw $file | hash sha256)) "the stamp dated the signed file, not the signature"
 }
 
+# --- --into: one seal moment, one bundle ---
+
+# The point of --into. Derived naming filed a signature's proof in a bundle of
+# its own, keyed by a name already carrying a 64-hex fingerprint, so one seal
+# moment produced two directories and neither could make the full bundle claim:
+# the content bundle held an endorsement it could not date, the signature bundle
+# held a date for content it did not carry. Asserted on the whole directory
+# listing rather than on `$result.ots` alone, because the failure mode is a
+# second directory appearing — a stamp that ignored --into and derived its own
+# name would still return a plausible path.
+@test
+def "stamp --into joins the named bundle instead of deriving one" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    let sig = $"($file).alice.sig"
+    "hello world" | save --force $file
+    "alice-sig" | save --force $sig
+    build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
+
+    let content = (ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
+    let endorsement = (ots stamp $sig --into $content.dir --response-file $"($tmp_dir)/response.bin")
+
+    assert equal $endorsement.dir $content.dir "the signature's proof got a bundle of its own"
+    assert equal (ls --all $tmp_dir | where type == dir | get name | each {|d| $d | path basename }) [
+        ($content.dir | path basename)
+    ] "a second bundle directory appeared beside the first"
+
+    # All four files together, and each proof committing to the file beside it —
+    # that is what makes the one directory answer both halves of the claim. The
+    # two proofs cannot collide: a stem keeps the `.sig`'s full name, so the
+    # endorsement's proof is `doc.txt.alice.ots` beside the content's `doc.ots`,
+    # and the same "strip .ots, take the sibling it proves" reading covers both.
+    assert equal (ls --all $content.dir | get name | each {|f| $f | path basename } | sort) [
+        "doc.ots" "doc.txt" "doc.txt.alice.ots" "doc.txt.alice.sig"
+    ]
+    assert equal (ots info $content.ots | get hash) (open --raw $file | hash sha256)
+    assert equal (ots info $endorsement.ots | get hash) (open --raw $sig | hash sha256)
+}
+
+# --out-dir and --into say different things about where the proof goes, so a
+# silent precedence would file it somewhere the caller did not ask for. It has
+# to fail before the calendar post: that post is a permanent public write, and
+# a --response-file is deliberately NOT passed here so that reaching the network
+# is what a regression looks like.
+@test
+def "stamp refuses --out-dir together with --into" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+
+    let failed = try {
+        ots stamp $file --out-dir $tmp_dir --into $"($tmp_dir)/some.BUNDLE"
+        false
+    } catch {|e| $e.msg | str contains "alternatives" }
+    assert $failed "an ambiguous destination was accepted"
+    assert equal (ls --all $tmp_dir | get name | each {|f| $f | path basename }) ["doc.txt"] "the refusal still wrote something"
+}
+
+# The frozen-copy guard under --into. With derived naming a name clash inside a
+# bundle is a ~2^-32 hash coincidence; under --into the caller chose the
+# directory, so a clash is ordinary and the guard is what stops a stamp from
+# overwriting another file's snapshot while archiving the wrong .ots. Hostile
+# shape on purpose: the bundle is hand-built, not one `stamp` produced.
+@test
+def "stamp --into refuses a bundle holding different content under the same name" [] {
+    let tmp_dir = $in.tmp_dir
+    let bundle = $"($tmp_dir)/planted.BUNDLE"
+    mkdir $bundle
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    "some other content entirely" | save --force $"($bundle)/doc.txt"
+    build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
+
+    let failed = try {
+        ots stamp $file --into $bundle --response-file $"($tmp_dir)/response.bin"
+        false
+    } catch {|e| $e.msg | str contains "collision" }
+    assert $failed "the stamp overwrote a frozen copy of different content"
+    assert equal (open --raw $"($bundle)/doc.txt" | str trim) "some other content entirely"
+}
+
+# Rejected bytes are deliberately not a proof (README, "rejected"), and a bundle
+# is the one place they must not be mistaken for one — every file in a bundle is
+# read as part of its claim. So under --into they go to the bundle's PARENT,
+# which is where derived naming already put them.
+@test
+def "a rejected response under --into lands outside the bundle" [] {
+    let tmp_dir = $in.tmp_dir
+    let bundle = $"($tmp_dir)/existing.BUNDLE"
+    mkdir $bundle
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    "x" | save --raw --force $"($tmp_dir)/garbage.bin"
+
+    let failed = try {
+        ots stamp $file --into $bundle --response-file $"($tmp_dir)/garbage.bin"
+        false
+    } catch {|e| $e.msg | str contains "no bundle was written" }
+    assert $failed "a garbage calendar body was accepted"
+
+    assert equal (ls --all $bundle | get name) [] "rejected bytes were written inside the bundle"
+    let rejected = (ls --all $tmp_dir | get name | where {|f| $f | str contains ".rejected-" })
+    assert equal ($rejected | length) 1 "the assembled bytes were dropped instead of parked beside the bundle"
+}
+
 # The failure this guard exists for: only the HTTP status was checked, so a
 # calendar answering 200 with a garbage body produced a success record, exit 0,
 # and an .ots that `info` cannot read — while the digest had already reached
@@ -704,4 +809,140 @@ def "rapid re-stamps each keep their own proof" [] {
         let tag = (open --raw $archived | hash sha256 | str substring 0..<8)
         assert ($archived | path basename | str ends-with $"-($tag).ots") $"archive name is not bound to its bytes: ($archived)"
     }
+}
+
+# --into with no directory separator. `"mybundle" | path dirname` is the empty
+# string, so the rejected-response file was aimed at `/<name>`: the write failed
+# with a bare I/O error before the `error make` that names the parked path, and
+# the assembled proof went nowhere — with a live calendar the digest has already
+# been posted by then and the nonce only exists in that run. The earlier test of
+# this path passed an absolute --into and so never saw it.
+#
+# `cd` into the temp dir on purpose: a relative --into is only relative to
+# something, and that is what the bug needed.
+@test
+def "a rejected response under a relative --into is still parked, not lost" [] {
+    let tmp_dir = $in.tmp_dir
+    cd $tmp_dir
+    mkdir "mybundle"
+    "hello world" | save --force "doc.txt"
+    "x" | save --raw --force "garbage.bin"
+
+    let err = try {
+        ots stamp "doc.txt" --into "mybundle" --response-file "garbage.bin"
+        null
+    } catch {|e| $e.msg }
+    assert ($err != null) "a garbage calendar body was accepted"
+    assert ($err | str contains "no bundle was written") $"the failure did not reach the recovery message: ($err)"
+
+    assert equal (ls --all "mybundle" | get name) [] "rejected bytes were written inside the bundle"
+    let rejected = ls --all $tmp_dir | get name | where {|f| $f | str contains ".rejected-" }
+    assert equal ($rejected | length) 1 "the assembled proof and its nonce were lost"
+}
+
+# Two files sharing a stem in one bundle. `<stem>.ots` is named from the stem
+# alone, so stamping `tree-root.md` into `tree-root.txt`'s bundle took
+# `tree-root.ots` and filed the .txt proof under the archival name, whose README
+# meaning is "a previous proof of the SAME content". What was left was a
+# `tree-root.ots` that does not prove the `tree-root.txt` beside it. The
+# frozen-copy guard cannot see this: the two files have different names.
+@test
+def "stamp --into refuses to take the .ots name that another file proof holds" [] {
+    let tmp_dir = $in.tmp_dir
+    let response = $"($tmp_dir)/response.bin"
+    build-calendar-response | save --raw --force $response
+    "content of txt" | save --force $"($tmp_dir)/doc.txt"
+    "content of md" | save --force $"($tmp_dir)/doc.md"
+
+    let first = ots stamp $"($tmp_dir)/doc.txt" --out-dir $tmp_dir --response-file $response
+    let before = open --raw $first.ots | into binary
+
+    let err = try {
+        ots stamp $"($tmp_dir)/doc.md" --into $first.dir --response-file $response
+        null
+    } catch {|e| $e.msg }
+    assert ($err != null) "a second stem took the first file's proof name"
+    assert ($err | str contains "is the proof of doc.txt") $"the refusal did not name the file it protects: ($err)"
+
+    # The incumbent is untouched: not archived, not overwritten.
+    assert equal (open --raw $first.ots | into binary) $before "the refused stamp still moved the proof it clashed with"
+    assert equal (
+        ls --all $first.dir | get name | each {|f| $f | path basename } | sort
+    ) ["doc.ots" "doc.txt"] "the refused stamp left files behind"
+}
+
+# --into means join THIS bundle. Creating one on a typo produces a directory
+# outside the `<stem>.<HASH8>` grammar, holding a proof no name-based reader can
+# place, which `seal status` then reports as a bundle. Checked before the calendar
+# post, so no --response-file: reaching the network is what a regression looks
+# like.
+@test
+def "stamp refuses an --into bundle that does not exist" [] {
+    let tmp_dir = $in.tmp_dir
+    "hello world" | save --force $"($tmp_dir)/doc.txt"
+
+    let err = try {
+        ots stamp $"($tmp_dir)/doc.txt" --into $"($tmp_dir)/typo-bundle"
+        null
+    } catch {|e| $e.msg }
+    assert ($err != null) "a non-existent --into bundle was created"
+    assert ($err | str contains "needs an existing bundle directory") $"unexpected refusal: ($err)"
+    assert not ($"($tmp_dir)/typo-bundle" | path exists) "the refusal still created the directory"
+}
+
+# The two shapes `path exists` lets through, both of which lose the proof after
+# the calendar post — so the check is `path type == "dir"`. No --response-file:
+# reaching the network is what a regression looks like.
+#
+#   a regular file — `mkdir` throws a bare "Already exists" naming nothing, past
+#     the point where the rejected-recovery branch could run
+#   a symlink to a directory — the bundle would be written through the link, where
+#     `seal status` cannot see it (it walks real directories only), and a rejected
+#     response would park in the link's parent rather than beside the bundle
+@test
+def "stamp refuses an --into that exists but is not a real directory" [] {
+    let tmp_dir = $in.tmp_dir
+    "hello world" | save --force $"($tmp_dir)/doc.txt"
+    "not a directory" | save --force $"($tmp_dir)/afile"
+    mkdir $"($tmp_dir)/realdir"
+    ^ln -s $"($tmp_dir)/realdir" $"($tmp_dir)/linkdir"
+
+    for target in ["afile" "linkdir"] {
+        let err = try {
+            ots stamp $"($tmp_dir)/doc.txt" --into $"($tmp_dir)/($target)"
+            null
+        } catch {|e| $e.msg }
+        assert ($err != null) $"--into ($target) was accepted"
+        assert ($err | str contains "needs an existing bundle directory") $"unexpected refusal for ($target): ($err)"
+    }
+    assert equal (ls --all $"($tmp_dir)/realdir" | get name) [] "the symlinked target was written through"
+    assert equal (open --raw $"($tmp_dir)/afile" | str trim) "not a directory" "the regular file was overwritten"
+}
+
+# An unreadable incumbent `<stem>.ots` cannot be placed, so it cannot be shown
+# safe to rename either — and the archival name it would get asserts "a previous
+# proof of the same content". It used to slip through the guard silently: the
+# corrupt file was archived and the new stamp took `<stem>.ots`, leaving the
+# `doc.txt` beside it paired with a proof of different content, which is the exact
+# state the guard exists to prevent.
+@test
+def "stamp --into refuses when the incumbent proof cannot be read" [] {
+    let tmp_dir = $in.tmp_dir
+    let bundle = $"($tmp_dir)/doc.DEADBEEF"
+    mkdir $bundle
+    "content of txt" | save --force $"($bundle)/doc.txt"
+    "not an OTS file at all" | save --raw --force $"($bundle)/doc.ots"
+    "content of md" | save --force $"($tmp_dir)/doc.md"
+    build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
+
+    let err = try {
+        ots stamp $"($tmp_dir)/doc.md" --into $bundle --response-file $"($tmp_dir)/response.bin"
+        null
+    } catch {|e| $e.msg }
+    assert ($err != null) "an unreadable incumbent was archived and its name taken"
+    assert ($err | str contains "not a readable proof") $"unexpected refusal: ($err)"
+    assert equal (open --raw $"($bundle)/doc.ots" | str trim) "not an OTS file at all" "the unreadable proof was moved anyway"
+    assert equal (
+        ls --all $bundle | get name | each {|f| $f | path basename } | sort
+    ) ["doc.ots" "doc.txt"] "the refused stamp left files behind"
 }

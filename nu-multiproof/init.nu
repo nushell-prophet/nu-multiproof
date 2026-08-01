@@ -10,7 +10,7 @@ use pubkey.nu
 # config. A key is stored as `<fingerprint>.pub` in `pubkey canonical` form —
 # `<type> <base64>\n`, comment stripped — so its file bytes hash identically
 # everywhere and its name says which key it is (see pubkey.nu).
-@example "bootstrap multiproofs/ in the current repo" { init }
+@example "bootstrap multiproofs/ in the current repo" { nu-multiproof init }
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --pubkey: path # SSH public key file to register (default: signing key from git config)

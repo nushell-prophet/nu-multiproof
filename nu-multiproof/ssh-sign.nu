@@ -11,7 +11,7 @@ use _pubkey-helpers.nu fingerprint-file
 # Sign a file with an SSH key.
 # Creates {path}.{fingerprint}.sig alongside the input file, where the
 # fingerprint is the signing key's own (see `pubkey fingerprint`).
-@example "sign the root statement with the git signing key" { ssh-sign sign multiproofs/tree-root.txt }
+@example "sign the root statement with the git signing key" { nu-multiproof ssh-sign sign multiproofs/tree-root.txt }
 export def sign [
     path: path # File to sign
     --key: path # SSH private key (default: from git config user.signingKey)
@@ -94,7 +94,7 @@ export def sign [
 # duplicated `sig-files-for` outside the module that owns it and printed the
 # same signature's verdict twice. A path is not an identity: read `sig` as
 # "which file this verdict is about", never as who signed.
-@example "verify all signatures on the root statement" { ssh-sign verify multiproofs/tree-root.txt }
+@example "verify all signatures on the root statement" { nu-multiproof ssh-sign verify multiproofs/tree-root.txt }
 export def verify [
     path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
     --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys from git root)

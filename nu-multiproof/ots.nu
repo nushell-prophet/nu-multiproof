@@ -6,6 +6,7 @@ use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
 use _sig.nu sig-files-for
+use _fs.nu list-files
 
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 # Op tags stay byte literals throughout (0x08 sha256, 0x03 RIPEMD-160, 0xf0
@@ -242,7 +243,7 @@ def replay-ops [ops: list]: binary -> binary {
 # `ots info x.ots | get attestation.height`. ops is a table ({type, data?} with
 # hex-encoded data); the default table rendering is already human-readable, so
 # no string-building is needed.
-@example "read the attestation from a proof" { ots info proof.ots | get attestation }
+@example "read the attestation from a proof" { nu-multiproof ots info proof.ots | get attestation }
 export def info [ots_file: path] {
     let parsed = open --raw $ots_file | into binary | parse-ots
     {
@@ -270,15 +271,73 @@ export def info [ots_file: path] {
 # reason: without it the assemble/validate/write path can only be exercised
 # against a live calendar, so it was not exercised at all.
 #
+# --into: join an existing bundle instead of deriving `<stem>.<HASH8>` under
+# --out-dir. What it is for: an OTS proof commits to one file's hash, so dating
+# content and dating its endorsement are two stamps — and derived naming filed
+# them in two directories, the second keyed by a name that already carried a
+# 64-hex fingerprint. One seal moment then produced two bundles, neither of
+# which could make the whole "content C existed at T and signer X endorsed it"
+# claim README calls the bundle contract. With --into, the signature's proof
+# lands beside the content it endorses and the bundle answers both halves.
+# Nothing about discovery changes: `merkle verify` matches proofs by content
+# commitment over one directory level, never by bundle name.
+#
 # The live form is `ots stamp multiproofs/tree-hashes.csv` with no flags — it
 # posts the file's digest to the public calendar, a permanent public write, so
 # it is named here in prose rather than in the @example: an example must be
 # safe to paste. A fully runnable offline example is impossible for this
 # command — a valid calendar answer only ever comes from a calendar — so the
 # example shows the offline seam and fails locally when the file is absent.
-@example "assemble a proof from a saved calendar answer, offline" { ots stamp multiproofs/tree-hashes.csv --response-file calendar-answer.bin }
-export def stamp [file: path --out-dir: path --response-file: path] {
-    let out_dir = if $out_dir != null { $out_dir } else {
+@example "assemble a proof from a saved calendar answer, offline" { nu-multiproof ots stamp multiproofs/tree-hashes.csv --response-file calendar-answer.bin }
+export def stamp [file: path --out-dir: path --into: path --response-file: path] {
+    # Why refused rather than given a precedence: the two say different things
+    # about where this proof goes, and picking one silently would file a stamp
+    # somewhere the caller did not ask for. Checked before the calendar post
+    # below — that post is a permanent public write, so an argument error has to
+    # fail while failing is still free.
+    if $out_dir != null and $into != null {
+        error make {msg: "--out-dir and --into are alternatives: --out-dir is the directory bundles are created in, --into is one existing bundle this stamp joins"}
+    }
+    # Why expanded before anything reads it: `"mybundle" | path dirname` is the
+    # empty string, so a --into with no directory separator aimed the
+    # rejected-response file below at `/<name>`, where the write failed with a
+    # bare I/O error BEFORE the error that names the parked path — losing the
+    # assembled proof and the nonce that binds it to this file, after the digest
+    # had already reached the calendar. That is the exact loss the validation
+    # guard below exists to prevent. Expanding also settles a trailing slash and
+    # `.`, which `path dirname` reads as one component too many.
+    let into = if $into != null { $into | path expand --no-symlink } else { null }
+    # Why the bundle must already exist AND be a real directory: --into means
+    # "join this bundle", and a typo would otherwise create one — a directory
+    # outside the `<stem>.<HASH8>` grammar, holding a proof no name-based reader
+    # can place, reported by `seal status` as a bundle. Derived naming has no such
+    # risk: it builds the name from the file's own hash.
+    #
+    # `path type` and not `path exists`, because the two shapes `exists` lets
+    # through both lose the proof after the calendar post — the loss this whole
+    # command is arranged to prevent:
+    #   a regular file — `mkdir` below throws a bare "Already exists" naming no
+    #     path, past the point where the rejected-recovery branch could run
+    #   a symlink to a directory — the bundle is written through the link, where
+    #     `seal status` cannot see it (it walks real directories only) and where
+    #     a rejected response would park in the link's parent rather than beside
+    #     the bundle. Same ground on which `_sig.nu` refuses a symlinked
+    #     signature: the bytes behind a link are not the ones the name describes.
+    if $into != null and ($into | path type) != "dir" {
+        error make {
+            msg: $"--into needs an existing bundle directory: ($into) is (($into | path type) | default 'not there')"
+            help: "pass the directory a previous `ots stamp` returned as `dir`, or omit --into to derive a new bundle from this file's hash"
+        }
+    }
+    # The directory bundles live in. With --into it is the bundle's parent, so
+    # the rejected-response file below still lands outside any bundle — those
+    # bytes are deliberately not a proof (README, "rejected"), and a bundle is
+    # the one place they must not be mistaken for one.
+    let out_dir = if $into != null {
+        $into | path dirname
+    } else if $out_dir != null {
+        $out_dir
+    } else {
         ots-dir (repo-root)
     }
     let file_hash = open --raw $file | hash sha256 | decode hex
@@ -376,7 +435,7 @@ export def stamp [file: path --out-dir: path --response-file: path] {
         ] | str join "\n")}
     }
 
-    let bundle_dir = $"($out_dir)/($stem).($hash_prefix)"
+    let bundle_dir = if $into != null { $into } else { $"($out_dir)/($stem).($hash_prefix)" }
     mkdir $bundle_dir
     let copy_path = (copy-path-for $file $bundle_dir)
     let ots_path = $"($bundle_dir)/($stem).ots"
@@ -386,10 +445,25 @@ export def stamp [file: path --out-dir: path --response-file: path] {
     # overwriting the frozen copy while archiving the wrong .ots, breaking
     # bundle self-consistency. Guard: an existing frozen copy must be the same
     # content (full-hash compare, not just the prefix). ~2^-32, one comparison.
+    #
+    # Under --into the odds stop being 2^-32 and the guard starts earning its
+    # keep: the caller names the directory, so anything already filed under this
+    # file's *name* is there by the caller's choice, not by a hash coincidence.
+    # It is also what makes the intended use free — `seal` stamps a signature
+    # into the bundle that already snapshotted that same signature, so the frozen
+    # copy it would write is byte-identical and the compare passes rather than
+    # fires. Keyed by the copy's name, so it says nothing about two files with
+    # different names sharing a stem — that clash is on the `.ots` name, and the
+    # guard for it sits below.
     if ($copy_path | path exists) {
         let existing_hash = open --raw $copy_path | hash sha256 | decode hex
         if $existing_hash != $file_hash {
-            error make {msg: $"hash-prefix collision in ($bundle_dir): the frozen copy there is different content that shares the 8-hex prefix ($hash_prefix)"}
+            let why = if $into != null {
+                $"($copy_path) already holds different content under this name"
+            } else {
+                $"the frozen copy there is different content that shares the 8-hex prefix ($hash_prefix)"
+            }
+            error make {msg: $"collision in ($bundle_dir): ($why)"}
         }
     }
 
@@ -406,8 +480,54 @@ export def stamp [file: path --out-dir: path --response-file: path] {
     # Binding the name to the bytes means a collision can only be the same
     # proof, so it costs nothing. Pinned by tests/test_ots.nu "rapid re-stamps
     # each keep their own proof".
+    #
+    # Why the incumbent is checked at all: `<stem>.ots` is named from the stem
+    # alone, and --into lets two files share a bundle — so `tree-root.md` stamped
+    # into `tree-root.txt`'s bundle took `tree-root.ots` and filed the .txt proof
+    # under the archival name, which README defines as "a previous proof of the
+    # same content". What was left is a `tree-root.ots` that does not prove the
+    # `tree-root.txt` beside it, breaking the one rule a reader uses to pair them.
+    # The frozen-copy guard above cannot see it: these two files have different
+    # names.
+    #
+    # Why the test is "would the rename ORPHAN a file here" and not "does the
+    # incumbent commit to other bytes": those bytes are also what a legitimate
+    # re-stamp looks like. Re-signing produces new signature bytes for the same
+    # name whenever the key is randomized — ECDSA and ecdsa-sk are, ed25519 is
+    # not, and this repo's own key is ecdsa-sk — so a second `seal` over
+    # unchanged content stamps a NEW signature under the same `.sig` name. A
+    # hash-inequality test refused that, after step 4 had already refreshed the
+    # frozen sig snapshot: the bundle was left holding an endorsement anchor over
+    # bytes that no longer existed anywhere, and `seal status` read `endorsed:
+    # absent` for a bundle that plainly held one. Asking whether some OTHER file
+    # in the bundle is what the incumbent proves separates the two: a superseded
+    # proof of this same name matches nothing on disk and is archived as before.
     let now = date now | format date "%Y%m%d-%H%M%S"
     if ($ots_path | path exists) {
+        let incumbent = try { open --raw $ots_path | into binary | parse-ots | get hash } catch { null }
+        # An unreadable incumbent under --into cannot be placed, so it cannot be
+        # shown to be safe to rename either. Refuse rather than file it under a
+        # name that asserts it proves this content. Under derived naming the
+        # directory is keyed by this file's own hash and stem, so no other file
+        # can own that proof and archiving is the only reading.
+        if $into != null and $incumbent == null {
+            error make {
+                msg: $"($ots_path) is not a readable proof, so this stamp cannot take its name safely"
+                help: "the archival name asserts a previous proof of the same content; move or delete the unreadable file first, or omit --into"
+            }
+        }
+        let orphans = if $incumbent == null { [] } else {
+            list-files $bundle_dir --regular
+                | where {|f| $f != $copy_path }
+                | where {|f| not ($f | path basename | str ends-with ".ots") }
+                | where {|f| (open --raw $f | hash sha256 | decode hex) == $incumbent }
+        }
+        if ($orphans | is-not-empty) {
+            error make {
+                msg: $"($ots_path) is the proof of ($orphans | first | path basename), which this stamp would take the name of"
+                help: $"a bundle names a proof `<stem>.ots`, and ($file | path basename) shares its stem with that file. Stamp it into a bundle of its own \(omit --into\)."
+            }
+        }
         let previous_tag = open --raw $ots_path | into binary | hash sha256 | str substring 0..<8
         let archived = $"($bundle_dir)/($stem).($now)-($previous_tag).ots"
         mv $ots_path $archived
@@ -440,11 +560,12 @@ export def stamp [file: path --out-dir: path --response-file: path] {
 
     # Why: a self-contained bundle must answer "content C existed at time T,
     # anchored to Bitcoin block B, and signer X endorsed C" using only files in
-    # the bundle dir. The anchor dates C and not the endorsement — this proof
-    # commits to the stamped file's hash, so a sig copied in here is a
-    # filesystem fact beside it, and one made today fits a year-old bundle.
-    # Dating a signature is a stamp over that signature (README, "Dating the
-    # endorsement"). Snapshot any sibling sig next to the frozen copy so the
+    # the bundle dir. THIS proof dates C and not the endorsement — it commits to
+    # the stamped file's hash, so a sig copied in here is a filesystem fact
+    # beside it, and one made today fits a year-old bundle. Dating a signature is
+    # a second stamp, over that signature, which `--into` files in this same
+    # directory (README, "Dating the endorsement"). Snapshot any sibling sig
+    # next to the frozen copy so the
     # binding survives the next `seal` (which overwrites the live sig). Shared
     # discovery, so the bare `<file>.sig` form is bundled too.
     let sigs = sig-files-for $file
@@ -495,7 +616,7 @@ def check-calendar-url [url: string] {
 # --calendar: contact this calendar instead of the one named in the proof.
 # Why an override and not a wider allowlist: the URL in the file is attacker
 # input, the URL on the command line is the operator's decision.
-@example "upgrade a pending proof once Bitcoin confirms it" { ots upgrade proof.ots }
+@example "upgrade a pending proof once Bitcoin confirms it" { nu-multiproof ots upgrade proof.ots }
 export def upgrade [ots_file: path --response-file: path --calendar: string] {
     let buf = open --raw $ots_file | into binary
     let parsed = $buf | parse-ots
@@ -642,7 +763,7 @@ def fetch-header [src: string, block_hash: string]: nothing -> binary {
 #   --file:        also confirm the proof commits to this content (closes the loop)
 #   --sources:     Esplora-compatible API bases to cross-check
 #   --min-sources: how many must answer and agree before a result is asserted
-@example "verify an anchor, failing on invalid (for CI)" { ots verify proof.ots --fail }
+@example "verify an anchor, failing on invalid (for CI)" { nu-multiproof ots verify proof.ots --fail }
 export def verify [
     ots_file: path
     --file: path
