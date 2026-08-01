@@ -2,7 +2,7 @@
 
 Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git`, `ssh-keygen` and `chmod` — network calls use Nushell's built-in `http`.
 
-🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: 235 tests, every verifier guard mutation-checked, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
+🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: it has some tests, every verifier guard mutation-checked, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
 
 ## What you can prove
 
