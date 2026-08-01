@@ -2,7 +2,7 @@
 
 Proof of concept: Composable cryptographic proofs for git repositories, written in Nushell. No external dependencies beyond `git`, `ssh-keygen` and `chmod` — network calls use Nushell's built-in `http`.
 
-🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: it has some tests, every verifier guard mutation-checked, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
+🚧 The code in this repo was generated via `claude code` and has never been reviewed by an outside cryptographer — do not rely on it for anything that matters. It is not untested: it has some tests, and the hostile artifacts are hand-built rather than produced by this repo's own builder. That establishes the guards do something, not that the design is sound.
 
 ## What you can prove
 
@@ -164,6 +164,8 @@ Network tests are held out of the default run because of that permanent write, n
 
 `nu-multiproof tree-hashes` writes `multiproofs/tree-hashes.csv`: one row per git-tracked file, one per parent directory, and one for the repo root `.`. A file row names the same bytes three ways — `content_sha256` (raw bytes), `content_git` (git's blob object, from a temp index over the working tree, not from HEAD) and `content_cid` (IPFS CID v0). A directory row has no `content_sha256`, since a directory has no bytes of its own; its `content_git` is git's tree object and its `content_cid` the UnixFS directory. The `.` row carries the root CID alone. Rows under `multiproofs/` are excluded, so the manifest never describes its own proofs.
 
+Two ways to look at it without reading the CSV. `tree-hashes --echo` returns the table and writes nothing, so it is the safe one — use it to see what a seal would record. `tree-hashes root-cid` returns the `.` row's CID alone, but it is **not** read-only: it regenerates the manifest first, so running it after a seal can leave a CSV no signature covers, exactly the drift `merkle verify` reports as `manifest_root`.
+
 CIDs are computed in-process, in Nushell — no `ipfs` daemon or CLI is involved, and there is only one manifest shape to sign. Content over 256 KiB is chunked and folded into a UnixFS DAG the same way the reference client does it, so `content_cid` is the CID `ipfs add` reports for that file, and the `.` row is the CID of the whole tracked tree. Reference: `nu-multiproof/_cid-helpers.nu`; conformance vectors in `tests/test_cid-v0.nu`, recorded from the reference client — single files from empty up to one full 262144-byte chunk, a multi-chunk file, a two-level DAG (175 chunks), a directory tree, and the directory at the HAMT threshold. The chunked and directory vectors were recorded with ipfs 0.42.0; the empty-directory CID is publicly known rather than recorded. What no vector covers is a file DAG deeper than two levels — 175 full branches, about 7.9 GB. The fold there is the same code, but nothing outside this repo pins it.
 
 One limit, and it fails loudly rather than lying: IPFS switches a directory to a HAMT shard once its entries exceed 256 KiB by kubo's estimate (name length + 34 bytes per entry — about 6200 files with 8-character names in a single directory, and fewer as the names get longer). This builds basic directories only, so `tree-hashes` refuses such a directory instead of emitting a CID no IPFS client would reproduce.
@@ -258,7 +260,7 @@ One more form is written **outside** any bundle, directly under `multiproofs/ots
 
 `seal` produces this layout automatically. The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed — previous bundles remain intact because the frozen copy and its sig were already copied in. Each new seal produces one `tree-root.*` bundle holding the root statement, its signatures and an anchor for each: the manifest is neither signed nor stamped anymore, since the root statement is derived from every manifest row, so its signature and Bitcoin anchor cover the full CSV. Archival `tree-hashes.*` bundles (including `origin-proofs/`) stay valid as-is; the transition-era ones may also carry a CSV sig.
 
-The bundles committed to this repo are history, not examples, and they show the layout arriving in stages. Every `.sig` in them now carries a fingerprint, but the older ones were named after a key *file* until they were renamed in place — one key was filed under two names (`maxim-uvarov2` and `id_ecdsa_sk_rk`) for the same ECDSA-SK key, which is the double identity the fingerprint principal exists to remove. Renaming changed nothing a verifier reads: a label is not part of the signed bytes, and the principal comes from key material via `find-principals`. Two things about them do not match the grammar above and cannot be fixed by a rename. The `origin-proofs/` bundles carry a signature over the **`.ots`** rather than over the frozen snapshot, added by hand after stamping — a shape `ots stamp` never writes, since it copies the signatures sitting beside the file it stamps. And only `tree-root.EE947CD6/` holds an endorsement anchor: the ten older bundles have none and cannot get one, because a stamp made today would date those July signatures to today and make the folder read as though they were dated when sealed.
+The bundles committed to this repo are history, not examples, and they show the layout arriving in stages. Every `.sig` in them now carries a fingerprint, but the older ones were named after a key *file* until they were renamed in place — one key was filed under two names (`maxim-uvarov2` and `id_ecdsa_sk_rk`) for the same ECDSA-SK key, which is the double identity the fingerprint principal exists to remove. Renaming changed nothing a verifier reads: a label is not part of the signed bytes, and the principal comes from key material via `find-principals`. Two things about them do not match the grammar above and cannot be fixed by a rename. The `origin-proofs/` bundles carry a signature over the **`.ots`** rather than over the frozen snapshot, added by hand after stamping — a shape `ots stamp` never writes, since it copies the signatures sitting beside the file it stamps. And only `tree-root.83089A30/` holds an endorsement anchor: the ten older bundles have none and cannot get one, because a stamp made today would date those July signatures to today and make the folder read as though they were dated when sealed.
 
 ### Reading the folder
 
@@ -274,7 +276,7 @@ This repo's own output, with the `bundle` column shortened to its last path segm
 │ …  │ …                    │ …               │ …       │ …               │       … │ …        │
 │  8 │ tree-root.050186F7   │ tree-root.txt   │ false   │ anchored 958319 │       1 │ absent   │
 │  9 │ tree-root.25A4101E   │ tree-root.txt   │ false   │ anchored 958319 │       1 │ absent   │
-│ 10 │ tree-root.EE947CD6   │ tree-root.txt   │ true    │ pending         │       1 │ pending  │
+│ 10 │ tree-root.83089A30   │ tree-root.txt   │ true    │ pending         │       1 │ pending  │
 ╰────┴──────────────────────┴─────────────────┴─────────┴─────────────────┴─────────┴──────────╯
 ```
 
@@ -326,7 +328,7 @@ Pass `--sources` to cross-check against different explorers. It replaces the def
 
 ## Verifying commit signatures
 
-Only the early commits in this repo are SSH-signed — up to and including `ab03ade` ("revoke claude-code signing key"). Everything after it, agent-made commits included, carries no signature, so `git log --show-signature` prints nothing for most of the log. The recipe stays here because `multiproofs/pubkeys/` is exactly what an `allowed_signers` file is rendered from, and the signed stretch is what it can be tried on.
+Signing here is occasional rather than policy: agent-made commits carry no signature, and the hand-signed ones are scattered through the log, so `git log --show-signature` prints nothing for most of it. `ab03ade` ("revoke claude-code signing key") is one signed commit to try the recipe on. The recipe stays here because `multiproofs/pubkeys/` is exactly what an `allowed_signers` file is rendered from.
 
 Verifying an SSH-signed commit involves two distinct checks:
 
@@ -348,7 +350,7 @@ git -c $"gpg.ssh.allowedSignersFile=($signers)" log --format='%h %G? %an %s'   #
 git -c $"gpg.ssh.allowedSignersFile=($signers)" log --show-signature -1 ab03ade
 ```
 
-The first command is where to start: `%G?` marks every commit `G` or `N`, so it shows both that the trust list resolves and which commits it has anything to say about. `--show-signature -1` on plain `HEAD` prints no signature line at all.
+The first command is where to start: `%G?` marks every commit `G` or `N`, so it shows both that the trust list resolves and which commits it has anything to say about. `--show-signature -1` on an unsigned commit prints no signature line at all.
 
 `first 2` keeps the key type and the base64 blob and drops the trailing comment (`alice@laptop`) — it is not part of the trust statement and differs per machine.
 
