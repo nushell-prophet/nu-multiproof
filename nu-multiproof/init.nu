@@ -1,7 +1,7 @@
 # Bootstrap multiproofs/ directory in a git repository.
 
 use _repo.nu repo-root
-use _layout.nu [multiproofs-dir pubkeys-dir]
+use _layout.nu [ multiproofs-dir pubkeys-dir ]
 use _pubkey-helpers.nu canonical-file
 use pubkey.nu
 
@@ -14,7 +14,7 @@ use pubkey.nu
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --pubkey: path # SSH public key file to register (default: signing key from git config)
-] {
+]: nothing -> nothing {
     let root = repo-root $repo
     let multiproofs = multiproofs-dir $root
     let pubkeys_dir = pubkeys-dir $root
@@ -46,7 +46,7 @@ export def main [
 # (tests/test_pubkey.nu "canonical never accepts a key ssh-keygen cannot load").
 # Loadable is not the same as usable: nothing here says anyone holds the matching
 # private key, only that a verifier can read the entry.
-def resolve-key [root: path, pubkey: any]: nothing -> any {
+def resolve-key [root: path pubkey: any]: nothing -> any {
     if $pubkey != null {
         return (canonical-file (resolve-pubkey-file $pubkey))
     }
@@ -66,9 +66,11 @@ def resolve-key [root: path, pubkey: any]: nothing -> any {
         # naming both encodings, and a missing ssh-keygen (310c29b) read as a
         # verdict about the key. Either way the operator went looking for the
         # wrong problem — see resolve-pubkey-file below.
-        return (try { $key_data | pubkey canonical } catch {|e|
-            error make {msg: $"user.signingKey inline `key::` value: ($e.msg)"}
-        })
+        return (
+            try { $key_data | pubkey canonical } catch {|e|
+                error make {msg: $"user.signingKey inline `key::` value: ($e.msg)"}
+            }
+        )
     }
     let expanded = $raw | path expand
     # Why: keep soft-warning behavior for the git-config branch — a key
@@ -104,7 +106,7 @@ def resolve-key [root: path, pubkey: any]: nothing -> any {
 # control byte makes a name `ls` cannot round-trip, which throws on every later
 # render — see todo/20260727-023419). Same call as `merkle prove --out`, deleted
 # in ad1f7ab: `mv` is the escape hatch.
-def register [canon: string, pubkeys_dir: path, root: path] {
+def register [canon: string pubkeys_dir: path root: path]: nothing -> nothing {
     let principal = $canon | pubkey fingerprint
     let dest = $pubkeys_dir | path join $"($principal).pub"
 
@@ -120,12 +122,16 @@ def register [canon: string, pubkeys_dir: path, root: path] {
         # name contradicts its contents is a question for the operator. The
         # rendered principal comes from the body either way, so the lie costs no
         # verifier anything — it just makes this the wrong place to write.
-        error make {msg: ([
-            $"($dest | path relative-to $root) is named for this key's fingerprint but holds a different key — refusing to overwrite the trust list"
-            $"  stored there: (ssh-fingerprint (canonical-file $dest))"
-            $"  offered:      (ssh-fingerprint $canon)"
-            "the file was not written by `init`; remove or rename it, then register again"
-        ] | str join "\n")}
+        error make {
+            msg: (
+                [
+                    $"($dest | path relative-to $root) is named for this key's fingerprint but holds a different key — refusing to overwrite the trust list"
+                    $"  stored there: (ssh-fingerprint (canonical-file $dest))"
+                    $"  offered:      (ssh-fingerprint $canon)"
+                    "the file was not written by `init`; remove or rename it, then register again"
+                ] | str join "\n"
+            )
+        }
     }
 
     $canon | save --force $dest

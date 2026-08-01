@@ -2,7 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/cid-v0.nu
-use ../nu-multiproof/_cid-helpers.nu [file-node dir-node node-cid encode-base58]
+use ../nu-multiproof/_cid-helpers.nu [ file-node dir-node node-cid encode-base58 ]
 use ../nu-multiproof/_temp-helpers.nu with-temp-dir
 
 # Every expected value below was recorded from the reference client, not from

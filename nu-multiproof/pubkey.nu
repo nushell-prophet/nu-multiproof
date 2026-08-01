@@ -68,11 +68,15 @@ export def canonical []: string -> string {
     let candidate = $"($key_type) ($parts.1)"
     let reserialized = openssh-reserialize $candidate
     if $reserialized != $candidate {
-        error make {msg: ([
-            "SSH pubkey is not the encoding OpenSSH writes for this key"
-            $"  given:    ($candidate)"
-            $"  OpenSSH:  ($reserialized)"
-        ] | str join "\n")}
+        error make {
+            msg: (
+                [
+                    "SSH pubkey is not the encoding OpenSSH writes for this key"
+                    $"  given:    ($candidate)"
+                    $"  OpenSSH:  ($reserialized)"
+                ] | str join "\n"
+            )
+        }
     }
     $"($candidate)\n"
 }

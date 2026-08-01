@@ -82,7 +82,7 @@ export def node-cid []: record -> string {
 
 # Serialize one PBLink {Hash, Name, Tsize}. Chunk links inside a file carry an
 # empty name — the position in the link list is the order of the bytes.
-export def link-bytes [name: string, node: record]: nothing -> binary {
+export def link-bytes [name: string node: record]: nothing -> binary {
     let cid_bytes = 0x[1220] | bytes add --end $node.digest
     let body = (
         ($cid_bytes | pb-field 0x[0a])
@@ -92,7 +92,7 @@ export def link-bytes [name: string, node: record]: nothing -> binary {
     $body | pb-field 0x[12]
 }
 
-export def block-node [block: binary, file_size: int, children: list]: nothing -> record {
+export def block-node [block: binary file_size: int children: list]: nothing -> record {
     {
         digest: ($block | hash sha256 | decode hex)
         # append 0: a leaf and an empty directory both link nothing, and

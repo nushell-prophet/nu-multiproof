@@ -11,7 +11,7 @@
 # stamp" for a bundle verify accepts, or the reverse.
 
 use ots.nu
-use _fs.nu [list-files list-dirs]
+use _fs.nu [ list-files list-dirs ]
 
 # Every parsable proof in the bundles under $ots_dir, as {file, type, hash}.
 #
@@ -36,7 +36,7 @@ export def scan-stamps [ots_dir: path --recursive]: nothing -> list<record> {
     # note about an expected file, and a --recursive caller sees it on every run.
     # Matched on the name because this code writes that name; nothing here reads a
     # name supplied by anyone else.
-    $files | where {|f| not ($f | path basename | str contains ".rejected-") } | each {|f|
+    $files | where not ($it | path basename | str contains ".rejected-") | each {|f|
         let info = try { ots info $f } catch {|e|
             print $"note: skipping unparsable OTS file ($f): ($e.msg)"
             null

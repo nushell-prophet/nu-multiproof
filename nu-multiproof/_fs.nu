@@ -26,10 +26,9 @@ export def list-files [
 ]: nothing -> list<path> {
     if not ($dir | path exists) { return [] }
     let entries = ls --all $dir
-    let here = $entries
-        | where {|e| if $regular { $e.type == "file" } else { $e.type != "dir" } }
+    let here = (if $regular { $entries | where type == file } else { $entries | where type != dir })
         | get name
-        | where {|f| $suffix == "" or ($f | path basename | str ends-with $suffix) }
+        | where $suffix == "" or ($it | path basename | str ends-with $suffix)
     if not $recursive {
         return $here
     }

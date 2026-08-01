@@ -20,7 +20,7 @@ def principal-of [pub_file: path]: nothing -> string {
 }
 
 def registered [repo: path]: nothing -> list<string> {
-    ls --all $"($repo)/multiproofs/pubkeys" | get name | each { path basename }
+    ls --all $"($repo)/multiproofs/pubkeys" | get name | path basename
 }
 
 def make-repo [tmp_dir: path]: nothing -> path {
@@ -93,7 +93,7 @@ def "init refuses to copy a private-key file as pubkey" [] {
 
     ^git -C $repo config user.signingKey $key_path
 
-    let outcome = (try { init --repo $repo; "ok" } catch { |e| $"err:($e.msg)" })
+    let outcome = (try { init --repo $repo; "ok" } catch {|e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
     assert equal (registered $repo) []
@@ -111,7 +111,7 @@ def "init --pubkey refuses a private-key file" [] {
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     rm $"($key_path).pub"
 
-    let outcome = (try { init --repo $repo --pubkey $key_path; "ok" } catch { |e| $"err:($e.msg)" })
+    let outcome = (try { init --repo $repo --pubkey $key_path; "ok" } catch {|e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
     assert equal (registered $repo) []
@@ -166,7 +166,7 @@ def "init refuses inline key:: material that is not a public key" [] {
     let private_data = (open --raw $key_path | str trim)
     ^git -C $repo config user.signingKey $"key::($private_data)"
 
-    let outcome = (try { init --repo $repo; "ok" } catch { |e| $"err:($e.msg)" })
+    let outcome = (try { init --repo $repo; "ok" } catch {|e| $"err:($e.msg)" })
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
     # The inner refusal must survive: private key material is multi-line, and
     # `pubkey canonical` names that exact reason. A bare `str contains "public
@@ -248,12 +248,12 @@ def "two different keys sharing a comment both register" [] {
     let repo = make-repo $tmp_dir
 
     let expected = ["first" "second"] | each {|which|
-        let key = $"($tmp_dir)/($which)"
-        ^ssh-keygen -t ed25519 -f $key -N "" -C "alice@host" -q
-        ^git -C $repo config user.signingKey $"key::(open --raw $"($key).pub" | str trim)"
-        init --repo $repo
-        $"(principal-of $"($key).pub").pub"
-    }
+            let key = $"($tmp_dir)/($which)"
+            ^ssh-keygen -t ed25519 -f $key -N "" -C "alice@host" -q
+            ^git -C $repo config user.signingKey $"key::(open --raw $"($key).pub" | str trim)"
+            init --repo $repo
+            $"(principal-of $"($key).pub").pub"
+        }
 
     assert equal (registered $repo | sort) ($expected | sort)
 }

@@ -1,7 +1,7 @@
 use std/assert
 use std/testing *
 
-use ../nu-multiproof/_commit-proposal.nu [seal-commit-line quote-arg]
+use ../nu-multiproof/_commit-proposal.nu [ seal-commit-line quote-arg ]
 
 # What a stamped seal returns, with the fields the proposal reads. Hand-built
 # rather than produced by `seal`: the point is to pin the wording against a
@@ -39,7 +39,7 @@ def "a stamped seal names its bundle and reports both anchors pending" [] {
 
 @test
 def "two signatures are counted, and read as plural" [] {
-    let two = stamped-result | update sig_ots {|r| $r.sig_ots | append "/repo/x.ots"}
+    let two = stamped-result | update sig_ots {|r| $r.sig_ots | append "/repo/x.ots" }
 
     let line = seal-commit-line $two "/repo" "abc123"
 
@@ -72,7 +72,7 @@ def "git is aimed at the sealed repo rather than the current directory" [] {
     # pathspec `multiproofs` resolves against the CWD — so a proposal without
     # -C fails from any subdirectory.
     let elsewhere = stamped-result
-        | update root_ots {|r| $r.root_ots | str replace "/repo/" "/elsewhere/repo/"}
+        | update root_ots {|r| $r.root_ots | str replace "/repo/" "/elsewhere/repo/" }
 
     let line = seal-commit-line $elsewhere "/elsewhere/repo" "abc123"
 

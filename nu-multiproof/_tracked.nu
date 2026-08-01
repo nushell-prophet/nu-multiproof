@@ -8,7 +8,7 @@
 #
 # Internal module: mod.nu does not re-export _*.nu files.
 
-use _cid-helpers.nu [file-node dir-node]
+use _cid-helpers.nu [ file-node dir-node ]
 use _layout.nu MULTIPROOFS_DIR
 
 # git-tracked files, minus the proof directory, sorted byte-wise.
@@ -98,7 +98,7 @@ export def tracked-dirs [tracked_files: list<string>]: nothing -> list<string> {
 # A UnixFS directory commits to its entries by name and CID, so every child must
 # exist before its parent: walking the directories deepest-first gives that in
 # one pass.
-export def cid-nodes [file_entries: table, dirs: list<string>]: nothing -> record {
+export def cid-nodes [file_entries: table dirs: list<string>]: nothing -> record {
     let child_index = (
         ($file_entries | get rel) ++ $dirs
         | each {|rel|
@@ -162,7 +162,7 @@ export def cid-nodes [file_entries: table, dirs: list<string>]: nothing -> recor
 #               reach `open --raw <dir>` and die with a bare "I/O error"
 #               naming neither the path nor the leaf: a hostile artifact
 #               crashing the verifier rather than getting a verdict.
-export def resolve-leaf-file [target: path, filepath: string]: nothing -> string {
+export def resolve-leaf-file [target: path filepath: string]: nothing -> string {
     let joined = $target | path join $filepath
     if ($joined | path type) == "symlink" { return "symlink" }
     let contained = try { $joined | path expand | path relative-to ($target | path expand); true } catch { false }

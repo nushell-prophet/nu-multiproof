@@ -3,11 +3,11 @@ use merkle.nu
 use ots.nu
 use ssh-sign.nu
 use _repo.nu repo-root
-use _layout.nu [manifest-path merkle-root-path ots-dir pubkeys-dir multiproofs-dir]
+use _layout.nu [ manifest-path merkle-root-path ots-dir pubkeys-dir multiproofs-dir ]
 use _sig.nu sig-files-for
 use _fs.nu list-files
-use _key-helpers.nu [with-signing-key signing-principal]
-use _stamps.nu [scan-stamps pick-stamp format-stamp]
+use _key-helpers.nu [ with-signing-key signing-principal ]
+use _stamps.nu [ scan-stamps pick-stamp format-stamp ]
 use _commit-proposal.nu seal-commit-line
 
 # Full seal pipeline: hash+root-cid → sign → stamp.
@@ -61,7 +61,7 @@ export def main [
     --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
     --response-file: path # Calendar answer for step 4, instead of posting the digest
     --propose-commit # Leave a `git commit` for this seal in the prompt, unrun
-] {
+]: nothing -> record {
     let root = repo-root $repo
     let manifest_path = manifest-path $root
     let root_statement_path = merkle-root-path $root
@@ -88,8 +88,8 @@ export def main [
     # sig over unchanged bytes and clears it once they change".
     let regen_targets = [$root_statement_path $manifest_path]
     let pre_hashes = $regen_targets | each {|f|
-        if ($f | path exists) { open --raw $f | hash sha256 } else { "" }
-    }
+            if ($f | path exists) { open --raw $f | hash sha256 } else { "" }
+        }
 
     # 1. Upgrade pending OTS — every seal progresses previous seals automatically,
     #    so there's no need for a separate upgrade command
@@ -224,8 +224,8 @@ export def main [
         # and costs nothing elsewhere — `merkle verify` matches proofs by content
         # commitment over one directory level, never by bundle name.
         let sig_stamps = sig-files-for $root_statement_path | each {|sig|
-            ots stamp $sig --into $root_stamp.dir --response-file $response_file | get ots
-        }
+                ots stamp $sig --into $root_stamp.dir --response-file $response_file | get ots
+            }
         $result = ($result | insert sig_ots $sig_stamps)
     }
 
@@ -317,8 +317,8 @@ export def status [
         # and threw "Eval block failed with pipeline input", naming no file — a
         # report that describes the archive must not die on it.
         let files = list-files $dir --regular
-        let sigs = $files | where {|f| $f | path basename | str ends-with ".sig" } | sort
-        let here = $stamps | where {|s| ($s.file | path dirname) == $dir }
+        let sigs = $files | where ($it | path basename | str ends-with ".sig") | sort
+        let here = $stamps | where ($it.file | path dirname) == $dir
         # The snapshot is the non-signature file a proof in this bundle commits
         # to — the same content-commitment rule the rest of this layer discovers
         # by, not "the first file that is neither a proof nor a signature". That
@@ -328,10 +328,10 @@ export def status [
         # proof commits to is not what the bundle attests, so it is not named
         # here; a bundle with none reports `null` (the oldest ones, see README).
         let candidates = $files
-            | where {|f| not ($f | path basename | str ends-with ".ots") }
-            | where {|f| not ($f | path basename | str ends-with ".sig") }
+            | where not ($it | path basename | str ends-with ".ots")
+            | where not ($it | path basename | str ends-with ".sig")
             | each {|f| {file: $f hash: (open --raw $f | hash sha256)} }
-            | where {|c| $c.hash in ($here | get hash) }
+            | where $it.hash in ($here | get hash)
         # More than one stamped non-signature file in a bundle is what --into
         # permits, and `get 0?` then picked by `ls` order — so a bundle could
         # report a file it is not named after and drop the other anchor silently.
@@ -345,7 +345,7 @@ export def status [
         # one — behaves exactly as before instead of taking a second code path.
         let prefix = $dir | path basename | parse --regex '\.(?<p>[0-9A-Fa-f]{8})$' | get p?.0? | default ""
         let keyed = $candidates
-            | where {|c| $prefix != "" and ($c.hash | str starts-with ($prefix | str lowercase)) }
+            | where $prefix != "" and ($it.hash | str starts-with ($prefix | str lowercase))
         let snapshot = ($keyed | get 0?) | default ($candidates | get 0?)
         {
             bundle: ($dir | path relative-to $root)
@@ -354,19 +354,25 @@ export def status [
             # reads as "a later seal superseded this", and a bundle over a file
             # that is not a multiproofs/ top-level artifact has no live
             # counterpart at all.
-            current: (if $snapshot == null { null } else {
-                let live = $mp | path join ($snapshot.file | path basename)
-                if not ($live | path exists) { null } else {
-                    (open --raw $live | hash sha256) == $snapshot.hash
+            current: (
+                if $snapshot == null { null } else {
+                    let live = $mp | path join ($snapshot.file | path basename)
+                    if not ($live | path exists) { null } else {
+                        (open --raw $live | hash sha256) == $snapshot.hash
+                    }
                 }
-            })
-            content: (if $snapshot == null { "absent" } else {
-                format-stamp (pick-stamp ($here | where hash == $snapshot.hash))
-            })
+            )
+            content: (
+                if $snapshot == null { "absent" } else {
+                    format-stamp (pick-stamp ($here | where hash == $snapshot.hash))
+                }
+            )
             signers: ($sigs | length)
-            endorsed: ($sigs | each {|s|
-                format-stamp (pick-stamp ($here | where hash == (open --raw $s | hash sha256)))
-            } | str join ", ")
+            endorsed: (
+                $sigs | each {|s|
+                    format-stamp (pick-stamp ($here | where hash == (open --raw $s | hash sha256)))
+                } | str join ", "
+            )
         }
     }
 }

@@ -1,7 +1,7 @@
 use std/assert
 use std/testing *
 
-use ../nu-multiproof/_temp-helpers.nu [with-temp-dir with-temp-file]
+use ../nu-multiproof/_temp-helpers.nu [ with-temp-dir with-temp-file ]
 
 @before-each
 def setup []: nothing -> record {
@@ -35,7 +35,7 @@ def "with-temp-dir removes the dir when the closure throws" [] {
             error make {msg: "work failed"}
         }
         assert false "the closure error must propagate"
-    } catch {}
+    } catch { }
     let path = open --raw $receipt | str trim
     assert not ($path | path exists) $"directory leaked on the error path: ($path)"
 }
@@ -56,7 +56,7 @@ def "with-temp-file removes the file on both paths" [] {
             error make {msg: "work failed"}
         }
         assert false "the closure error must propagate"
-    } catch {}
+    } catch { }
     let thrown_path = open --raw $receipt | str trim
     assert not ($thrown_path | path exists) $"file leaked on the error path: ($thrown_path)"
 }

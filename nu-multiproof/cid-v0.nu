@@ -1,7 +1,7 @@
 # Pure Nushell CID v0 for file content of any size.
 # Reproduces: ipfs add --only-hash --quieter --cid-version=0 --raw-leaves=false --hash=sha2-256
 
-use _cid-helpers.nu [file-node node-cid]
+use _cid-helpers.nu [ file-node node-cid ]
 
 # Compute the CID v0 of raw content in pure Nushell — no ipfs daemon or CLI.
 #
@@ -15,6 +15,6 @@ use _cid-helpers.nu [file-node node-cid]
 # widens the accepted type without changing what gets hashed.
 @example "CID v0 of in-memory bytes" { "hello" | into binary | nu-multiproof cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
 @example "same bytes arriving as a string, as `open --raw` returns them" { "hello" | nu-multiproof cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
-export def main []: [binary -> string, string -> string] {
+export def main []: [binary -> string string -> string] {
     $in | into binary | file-node | node-cid
 }

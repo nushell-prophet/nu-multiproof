@@ -1,7 +1,7 @@
 use std/assert
 use std/testing *
 
-use ../nu-multiproof/_fs.nu [list-files list-dirs]
+use ../nu-multiproof/_fs.nu [ list-files list-dirs ]
 
 @before-each
 def setup []: nothing -> record {
@@ -26,7 +26,7 @@ def make-tree [tmp_dir: path]: nothing -> path {
 }
 
 def basenames []: list<path> -> list<string> {
-    each { path basename } | sort
+    path basename | sort
 }
 
 # The reason this module exists: `glob ($dir | path join "*.pub")` interpolates

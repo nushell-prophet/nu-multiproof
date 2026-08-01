@@ -2,8 +2,8 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/ots.nu
-use ../nu-multiproof/_ots-helpers.nu [copy-path-for check-block-header check-fetched-header]
-use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots build-calendar-response OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG]
+use ../nu-multiproof/_ots-helpers.nu [ copy-path-for check-block-header check-fetched-header ]
+use _ots-fixtures.nu [ build-pending-ots build-bitcoin-ots build-calendar-response OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG ]
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -35,7 +35,7 @@ def "info pending with ops" [] {
     $ots_bytes | save --raw --force /tmp/test_ots_ops.ots
     let result = ots info "/tmp/test_ots_ops.ots"
     assert equal ($result.ops | where type == "append" | get data.0 | str upcase) "DEADBEEF"
-    assert ($result.ops | any {|o| $o.type == "sha256"})
+    assert ($result.ops | any {|o| $o.type == "sha256" })
     assert equal $result.attestation.type "pending"
 }
 
@@ -45,7 +45,7 @@ def "info bitcoin attestation" [] {
     $ots_bytes | save --raw --force /tmp/test_ots_btc.ots
     let result = ots info "/tmp/test_ots_btc.ots"
     assert equal ($result.ops | where type == "prepend" | get data.0 | str upcase) "AABB"
-    assert ($result.ops | any {|o| $o.type == "sha256"})
+    assert ($result.ops | any {|o| $o.type == "sha256" })
     assert equal $result.attestation.type "bitcoin"
     assert equal $result.attestation.height 123456
 }
@@ -126,10 +126,12 @@ def "upgrade rejects malformed response and leaves original intact" [] {
     let response = $"($tmp_dir)/garbage.bin"
     0x[deadbeefcafebabe] | save --raw --force $response
 
-    let outcome = (try {
-        ots upgrade $ots_path --response-file $response
-        "ok"
-    } catch {|e| $"err:($e.msg)" })
+    let outcome = (
+        try {
+            ots upgrade $ots_path --response-file $response
+            "ok"
+        } catch {|e| $"err:($e.msg)" }
+    )
 
     # Why both checks: error surfaces the failure, and the file content
     # check proves the atomic-rename design held — no partial write.
@@ -424,19 +426,19 @@ def "upgrade refuses a calendar URL the proof chose" [] {
 def "every clause of the calendar gate refuses on its own" [] {
     let tmp_dir = $in.tmp_dir
     let hostile = [
-        [url                                                 clause     refused_by];
-        ["https://evil.com"                                  "host"     "refusing to contact"]
-        ["https://calendar.opentimestamps.org.attacker.net"  "suffix"   "refusing to contact"]
-        ["https://calendar.opentimestamps.org"               "label"    "refusing to contact"]
-        ["http://a.calendar.opentimestamps.org"              "scheme"   "refusing to contact"]
-        ["https://a.calendar.opentimestamps.org:8443"        "port"     "refusing to contact"]
-        ["https://a.calendar.opentimestamps.org/timestamp"   "path"     "refusing to contact"]
+        [url clause refused_by];
+        ["https://evil.com" "host" "refusing to contact"]
+        ["https://calendar.opentimestamps.org.attacker.net" "suffix" "refusing to contact"]
+        ["https://calendar.opentimestamps.org" "label" "refusing to contact"]
+        ["http://a.calendar.opentimestamps.org" "scheme" "refusing to contact"]
+        ["https://a.calendar.opentimestamps.org:8443" "port" "refusing to contact"]
+        ["https://a.calendar.opentimestamps.org/timestamp" "path" "refusing to contact"]
         # Userinfo cannot survive the URI charset, so it is refused a step
         # earlier and never reaches the trust gate. The gate keeps its own
         # userinfo clause anyway: it states the whole UrlWhitelist rule, and a
         # trust boundary that only holds because a *format* validator ran first
         # is one refactor away from not holding.
-        ["https://u:p@a.calendar.opentimestamps.org"         "userinfo" "characters the format does not allow"]
+        ["https://u:p@a.calendar.opentimestamps.org" "userinfo" "characters the format does not allow"]
     ]
     for row in $hostile {
         let path = $"($tmp_dir)/(random uuid).ots"
@@ -460,7 +462,7 @@ def "the calendar flag overrides the allowlist" [] {
     let refused = try { ots upgrade $path; "fetched" } catch {|e| $e.msg }
     assert ($refused | str contains "refusing to contact")
 
-    let overridden = try { ots upgrade $path --calendar "http://127.0.0.1:1" ; "fetched" } catch {|e| $e.msg }
+    let overridden = try { ots upgrade $path --calendar "http://127.0.0.1:1"; "fetched" } catch {|e| $e.msg }
     assert (not ($overridden | str contains "refusing to contact")) $"--calendar did not bypass the gate: ($overridden)"
 }
 
@@ -545,7 +547,9 @@ def "stamp snapshots every signature beside the file it stamps" [] {
     let result = (ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
 
     assert equal ($result.sigs | each {|s| $s | path basename } | sort) [
-        "doc.txt.alice.sig" "doc.txt.bob.sig" "doc.txt.sig"
+        "doc.txt.alice.sig"
+        "doc.txt.bob.sig"
+        "doc.txt.sig"
     ]
     assert equal (open --raw $"($result.dir)/doc.txt.alice.sig" | str trim) "alice-sig"
 }
@@ -607,7 +611,10 @@ def "stamp --into joins the named bundle instead of deriving one" [] {
     # endorsement's proof is `doc.txt.alice.ots` beside the content's `doc.ots`,
     # and the same "strip .ots, take the sibling it proves" reading covers both.
     assert equal (ls --all $content.dir | get name | each {|f| $f | path basename } | sort) [
-        "doc.ots" "doc.txt" "doc.txt.alice.ots" "doc.txt.alice.sig"
+        "doc.ots"
+        "doc.txt"
+        "doc.txt.alice.ots"
+        "doc.txt.alice.sig"
     ]
     assert equal (ots info $content.ots | get hash) (open --raw $file | hash sha256)
     assert equal (ots info $endorsement.ots | get hash) (open --raw $sig | hash sha256)
@@ -675,7 +682,7 @@ def "a rejected response under --into lands outside the bundle" [] {
     assert $failed "a garbage calendar body was accepted"
 
     assert equal (ls --all $bundle | get name) [] "rejected bytes were written inside the bundle"
-    let rejected = (ls --all $tmp_dir | get name | where {|f| $f | str contains ".rejected-" })
+    let rejected = (ls --all $tmp_dir | get name | where ($it | str contains ".rejected-"))
     assert equal ($rejected | length) 1 "the assembled bytes were dropped instead of parked beside the bundle"
 }
 
@@ -690,15 +697,17 @@ def "stamp writes no bundle when the calendar body is not a timestamp" [] {
     "hello world" | save --force $file
     "x" | save --raw --force $"($tmp_dir)/garbage.bin"
 
-    let outcome = (try {
-        ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/garbage.bin"
-        "ok"
-    } catch {|e| $e.msg })
+    let outcome = (
+        try {
+            ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/garbage.bin"
+            "ok"
+        } catch {|e| $e.msg }
+    )
     assert ($outcome | str contains "no bundle was written") $"expected a refusal, got: ($outcome)"
     # no bundle directory, no frozen copy, no proof — the rejected bytes are
     # a loose file, never something a verifier would read as a bundle
-    let left = (ls --all $tmp_dir | get name | each { path basename } | sort)
-    assert equal ($left | where {|f| not ($f | str contains ".rejected-") }) ["doc.txt" "garbage.bin"]
+    let left = (ls --all $tmp_dir | get name | path basename | sort)
+    assert equal ($left | where not ($it | str contains ".rejected-")) ["doc.txt" "garbage.bin"]
 }
 
 # The digest was already submitted and the nonce that binds it to this file
@@ -717,7 +726,7 @@ def "a rejected calendar response is kept, nonce and all" [] {
 
     try { ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/forked.bin" }
 
-    let rejected = (ls --all $tmp_dir | get name | where {|f| $f | str contains ".rejected-" })
+    let rejected = (ls --all $tmp_dir | get name | where ($it | str contains ".rejected-"))
     assert equal ($rejected | length) 1
     let bytes = (open --raw ($rejected | first) | into binary)
     # header(31) version(1) sha256-op(1) hash(32) append-op(1) len(1) nonce(16)
@@ -744,7 +753,7 @@ def "rejected stamps in the same second each keep their nonce" [] {
         try { ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/forked.bin" }
     }
 
-    let rejected = (ls --all $tmp_dir | get name | where {|f| $f | str contains ".rejected-" })
+    let rejected = (ls --all $tmp_dir | get name | where ($it | str contains ".rejected-"))
     assert equal ($rejected | length) 3 "a rejected proof was overwritten"
     # Each run draws a fresh nonce, so these are three distinct payloads.
     assert equal ($rejected | each { open --raw $in | hash sha256 } | uniq | length) 3
@@ -774,7 +783,7 @@ def "a rejected stamp leaves the previous proof in place" [] {
     try { ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/garbage.bin" }
 
     assert equal (open --raw $first.ots | into binary) $before
-    assert equal (ls --all $first.dir | get name | each { path basename } | sort) ["doc.ots" "doc.txt"]
+    assert equal (ls --all $first.dir | get name | path basename | sort) ["doc.ots" "doc.txt"]
 }
 
 # Re-stamping the same content reuses the bundle dir and archives the incumbent
@@ -789,14 +798,14 @@ def "rapid re-stamps each keep their own proof" [] {
     build-calendar-response | save --raw --force $"($tmp_dir)/response.bin"
 
     let made = 1..3 | each {
-        let result = (ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
-        {dir: $result.dir hash: (open --raw $result.ots | hash sha256)}
-    }
+            let result = (ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/response.bin")
+            {dir: $result.dir hash: (open --raw $result.ots | hash sha256)}
+        }
     # Each run draws a fresh nonce, so these are three independent proofs
     assert equal ($made | get hash | uniq | length) 3
 
     let bundle = $made.0.dir
-    let on_disk = (ls --all $bundle | get name | where {|f| $f | str ends-with ".ots"})
+    let on_disk = (ls --all $bundle | get name | where ($it | str ends-with ".ots"))
     assert equal ($on_disk | length) 3 "an archived proof was overwritten"
     assert equal ($on_disk | each { open --raw $in | hash sha256 } | sort) ($made | get hash | sort)
 
@@ -805,7 +814,7 @@ def "rapid re-stamps each keep their own proof" [] {
     # test on their own. The archive name binds to the archived proof's own
     # bytes, which is what makes a same-second collision impossible rather than
     # unlikely.
-    for archived in ($on_disk | where {|f| ($f | path basename) != "doc.ots"}) {
+    for archived in ($on_disk | where ($it | path basename) != "doc.ots") {
         let tag = (open --raw $archived | hash sha256 | str substring 0..<8)
         assert ($archived | path basename | str ends-with $"-($tag).ots") $"archive name is not bound to its bytes: ($archived)"
     }
@@ -836,7 +845,7 @@ def "a rejected response under a relative --into is still parked, not lost" [] {
     assert ($err | str contains "no bundle was written") $"the failure did not reach the recovery message: ($err)"
 
     assert equal (ls --all "mybundle" | get name) [] "rejected bytes were written inside the bundle"
-    let rejected = ls --all $tmp_dir | get name | where {|f| $f | str contains ".rejected-" }
+    let rejected = ls --all $tmp_dir | get name | where ($it | str contains ".rejected-")
     assert equal ($rejected | length) 1 "the assembled proof and its nonce were lost"
 }
 

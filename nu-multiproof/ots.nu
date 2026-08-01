@@ -1,7 +1,7 @@
 # Pure Nushell OpenTimestamps implementation — no `ots` CLI dependency.
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
-use _ots-helpers.nu [copy-path-for check-block-header check-fetched-header]
+use _ots-helpers.nu [ copy-path-for check-block-header check-fetched-header ]
 use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
@@ -125,7 +125,11 @@ def parse-op [tag: int offset: int]: binary -> record<op: record, offset: int> {
 }
 
 # Parse timestamp chain: sequence of ops ending with an attestation
-def parse-timestamp [offset: int] {
+#
+# Not `binary -> record` though a record is all it ever yields: the body is a
+# `loop` whose only exit is the `return` below, and the parser types a `loop` as
+# nothing, so the declared record is rejected before anything runs.
+def parse-timestamp [offset: int]: binary -> any {
     let buf = $in
     mut pos = $offset
     mut ops = []
@@ -244,7 +248,7 @@ def replay-ops [ops: list]: binary -> binary {
 # hex-encoded data); the default table rendering is already human-readable, so
 # no string-building is needed.
 @example "read the attestation from a proof" { nu-multiproof ots info proof.ots | get attestation }
-export def info [ots_file: path] {
+export def info [ots_file: path]: nothing -> record {
     let parsed = open --raw $ots_file | into binary | parse-ots
     {
         # Why str lowercase: `encode hex` emits uppercase, but every persisted
@@ -289,7 +293,7 @@ export def info [ots_file: path] {
 # command — a valid calendar answer only ever comes from a calendar — so the
 # example shows the offline seam and fails locally when the file is absent.
 @example "assemble a proof from a saved calendar answer, offline" { nu-multiproof ots stamp multiproofs/tree-hashes.csv --response-file calendar-answer.bin }
-export def stamp [file: path --out-dir: path --into: path --response-file: path] {
+export def stamp [file: path --out-dir: path --into: path --response-file: path]: nothing -> record {
     # Why refused rather than given a precedence: the two say different things
     # about where this proof goes, and picking one silently would file a stamp
     # somewhere the caller did not ask for. Checked before the calendar post
@@ -429,10 +433,14 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
         mkdir $out_dir
         let rejected = $"($out_dir)/($stem).($hash_prefix).rejected-(date now | format date '%Y%m%d-%H%M%S')-($ots | hash sha256 | str substring 0..<8).ots"
         $ots | save --raw $rejected
-        error make {msg: ([
-            $"calendar response does not make a readable proof: ($validation.reason)"
-            $"no bundle was written; the assembled bytes \(nonce included\) are at ($rejected)"
-        ] | str join "\n")}
+        error make {
+            msg: (
+                [
+                    $"calendar response does not make a readable proof: ($validation.reason)"
+                    $"no bundle was written; the assembled bytes \(nonce included\) are at ($rejected)"
+                ] | str join "\n"
+            )
+        }
     }
 
     let bundle_dir = if $into != null { $into } else { $"($out_dir)/($stem).($hash_prefix)" }
@@ -518,9 +526,9 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
         }
         let orphans = if $incumbent == null { [] } else {
             list-files $bundle_dir --regular
-                | where {|f| $f != $copy_path }
-                | where {|f| not ($f | path basename | str ends-with ".ots") }
-                | where {|f| (open --raw $f | hash sha256 | decode hex) == $incumbent }
+            | where $it != $copy_path
+            | where not ($it | path basename | str ends-with ".ots")
+            | where (open --raw $it | hash sha256 | decode hex) == $incumbent
         }
         if ($orphans | is-not-empty) {
             error make {
@@ -550,10 +558,14 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     } catch {|e|
         let parked = $"($bundle_dir)/($stem).($now)-($ots | hash sha256 | str substring 0..<8).ots"
         $ots | save --raw --force $parked
-        error make {msg: ([
-            $"could not write ($ots_path): ($e.msg)"
-            $"this run's assembled proof \(nonce included\) is at ($parked)"
-        ] | str join "\n")}
+        error make {
+            msg: (
+                [
+                    $"could not write ($ots_path): ($e.msg)"
+                    $"this run's assembled proof \(nonce included\) is at ($parked)"
+                ] | str join "\n"
+            )
+        }
     }
     print $"Frozen copy: ($copy_path)"
     print $"Timestamped: ($ots_path)"
@@ -570,12 +582,12 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     # discovery, so the bare `<file>.sig` form is bundled too.
     let sigs = sig-files-for $file
     let bundled_sigs = $sigs | each {|sig|
-        let sig_name = $sig | path basename
-        let dest = $"($bundle_dir)/($sig_name)"
-        cp $sig $dest
-        print $"Bundled sig: ($dest)"
-        $dest
-    }
+            let sig_name = $sig | path basename
+            let dest = $"($bundle_dir)/($sig_name)"
+            cp $sig $dest
+            print $"Bundled sig: ($dest)"
+            $dest
+        }
 
     {dir: $bundle_dir copy: $copy_path ots: $ots_path sigs: $bundled_sigs}
 }
@@ -590,7 +602,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
 #
 # Not a glob here: `str ends-with` on a value that came from a file. This repo
 # has already been bitten by feeding data-derived text to glob.
-def check-calendar-url [url: string] {
+def check-calendar-url [url: string]: nothing -> nothing {
     let u = try { $url | url parse } catch {
         error make {msg: $"refusing to contact the calendar named in the proof: ($url) is not a URL"}
     }
@@ -617,7 +629,7 @@ def check-calendar-url [url: string] {
 # Why an override and not a wider allowlist: the URL in the file is attacker
 # input, the URL on the command line is the operator's decision.
 @example "upgrade a pending proof once Bitcoin confirms it" { nu-multiproof ots upgrade proof.ots }
-export def upgrade [ots_file: path --response-file: path --calendar: string] {
+export def upgrade [ots_file: path --response-file: path --calendar: string]: nothing -> record {
     let buf = open --raw $ots_file | into binary
     let parsed = $buf | parse-ots
 
@@ -685,7 +697,7 @@ export def upgrade [ots_file: path --response-file: path --calendar: string] {
 
 # Print a human summary of a verify result and, under --fail, turn an invalid
 # proof into a non-zero exit (matching merkle/ssh-sign verify).
-def emit-verify [result: record, fail: bool]: nothing -> record {
+def emit-verify [result: record fail: bool]: nothing -> record {
     if $result.valid {
         print $"✓ Bitcoin block ($result.height) verified independently"
         print $"  block hash:    ($result.block_hash)"
@@ -732,7 +744,7 @@ def esplora-get [url: string]: nothing -> any {
 # "outage, not a verdict" class. check-block-header keeps its own 80-byte and
 # claimed-hash guards as preconditions for its other callers; from this path
 # they can no longer fire.
-def fetch-header [src: string, block_hash: string]: nothing -> binary {
+def fetch-header [src: string block_hash: string]: nothing -> binary {
     let header_hex = esplora-get $"($src)/block/($block_hash)/header"
     if $header_hex == null {
         error make {msg: $"could not fetch the header for block ($block_hash) from ($src)"}
@@ -770,7 +782,7 @@ export def verify [
     --sources: list<string> = $DEFAULT_EXPLORERS
     --min-sources: int = 2 # Explorers that must agree before a result is asserted
     --fail # Exit non-zero on an invalid proof (for CI)
-] {
+]: nothing -> record {
     if $min_sources < 1 {
         error make {msg: "--min-sources must be at least 1"}
     }
@@ -778,7 +790,7 @@ export def verify [
 
     match $parsed.attestation.type {
         "pending" => { error make {msg: $"proof is still pending on calendar ($parsed.attestation.url) — run `ots upgrade` after Bitcoin confirms it, then verify"} }
-        "bitcoin" => {}
+        "bitcoin" => { }
         $other => { error make {msg: $"unsupported attestation type: ($other)"} }
     }
 
@@ -787,9 +799,15 @@ export def verify [
     # merkle root (internal byte order).
     let expected_root = $parsed.hash | replay-ops $parsed.ops
     let base = {
-        valid: false height: $height file_hash: ($parsed.hash | encode hex | str lowercase)
-        block_hash: null block_time: null merkle_root: null
-        content_verified: null sources_confirmed: [] error: null
+        valid: false
+        height: $height
+        file_hash: ($parsed.hash | encode hex | str lowercase)
+        block_hash: null
+        block_time: null
+        merkle_root: null
+        content_verified: null
+        sources_confirmed: []
+        error: null
     }
 
     # Content binding (if requested): a mismatch means the proof does not cover
@@ -803,8 +821,8 @@ export def verify [
 
     # Cross-check height -> block hash across independent explorers.
     let lookups = $sources | each {|src|
-        {source: $src hash: (esplora-get $"($src)/block-height/($height)")}
-    }
+            {source: $src hash: (esplora-get $"($src)/block-height/($height)")}
+        }
     let ok_lookups = $lookups | where hash != null
     if ($ok_lookups | is-empty) {
         error make {msg: $"no explorer returned block ($height) — cannot verify"}
@@ -826,7 +844,7 @@ export def verify [
             help: "a single responder is not a cross-check: it would choose both the block hash and the time this reports. Retry, add --sources, or pass --min-sources 1 to accept one source deliberately."
         }
     }
-    let distinct = $ok_lookups | get hash | each { str lowercase } | uniq
+    let distinct = $ok_lookups | get hash | str lowercase | uniq
     if ($distinct | length) > 1 {
         error make {msg: $"explorers disagree on block ($height): ($distinct | str join ', ')"}
     }
@@ -847,12 +865,14 @@ export def verify [
         return (emit-verify ($base | merge {block_hash: $block_hash sources_confirmed: $confirmed error: $checked.error}) $fail)
     }
 
-    emit-verify ($base | merge {
-        valid: true
-        block_hash: $checked.block_hash
-        block_time: $checked.time
-        merkle_root: $checked.merkle_root
-        content_verified: $content_verified
-        sources_confirmed: $confirmed
-    }) $fail
+    emit-verify (
+        $base | merge {
+            valid: true
+            block_hash: $checked.block_hash
+            block_time: $checked.time
+            merkle_root: $checked.merkle_root
+            content_verified: $content_verified
+            sources_confirmed: $confirmed
+        }
+    ) $fail
 }

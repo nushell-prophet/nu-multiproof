@@ -10,7 +10,7 @@
 use _cid-helpers.nu node-cid
 use _tracked.nu content-tree
 use _repo.nu repo-root
-use _layout.nu [multiproofs-dir manifest-path]
+use _layout.nu [ multiproofs-dir manifest-path ]
 use _temp-helpers.nu with-temp-file
 
 def build-tree [
@@ -103,7 +103,7 @@ export def root-cid [
 export def main [
     --echo # Output as nushell table instead of saving to file
     --repo: path # Target git repo root (default: git root of current directory)
-] {
+]: nothing -> any {
     let table = (build-tree --repo $repo)
     let target_root = repo-root $repo
     if $echo {

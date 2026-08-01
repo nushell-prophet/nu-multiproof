@@ -319,8 +319,10 @@ def "canonical never accepts a key ssh-keygen cannot load" [] {
         # ssh-rsa carrying only its exponent, no modulus.
         "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB"
         # The type says nistp256, the blob says nistp384.
-        ($generated | where {|k| $k | str starts-with "ecdsa-sha2-nistp384" } | first
-            | str replace "ecdsa-sha2-nistp384" "ecdsa-sha2-nistp256")
+        (
+            $generated | where ($it | str starts-with "ecdsa-sha2-nistp384") | first
+            | str replace "ecdsa-sha2-nistp384" "ecdsa-sha2-nistp256"
+        )
         # A structurally sound ssh-dss line — 5 length-prefixed fields, the
         # shape OpenSSH wrote before it dropped DSA. Refused for the type
         # alone, on both sides: a key ssh-keygen will not read is a trust-list
@@ -349,24 +351,24 @@ def "canonical never accepts a key ssh-keygen cannot load" [] {
     # real key and share its first 48 characters, so a truncated key would put
     # them in the same bucket as the key they attack.
     let verdicts = $candidates | each {|line|
-        {
-            line: $line
-            canonical: (canonical-accepts $line)
-            ssh_keygen: (ssh-keygen-accepts $tmp_dir $line)
+            {
+                line: $line
+                canonical: (canonical-accepts $line)
+                ssh_keygen: (ssh-keygen-accepts $tmp_dir $line)
+            }
         }
-    }
 
-    # A closure, not `where canonical and not ssh_keygen`: the bare word on the
-    # right of a `where` shorthand is a string literal, so that form compares
-    # every row against "ssh_keygen" instead of reading the column.
-    let unloadable = $verdicts | where {|r| $r.canonical and not $r.ssh_keygen }
+    # `$it.`-qualified, not `where canonical and not ssh_keygen`: the bare word
+    # on the right of a `where` shorthand is a string literal, so that form
+    # compares every row against "ssh_keygen" instead of reading the column.
+    let unloadable = $verdicts | where $it.canonical and not $it.ssh_keygen
         | each {|r| $r | update line ($r.line | str substring 0..48) }
     assert equal $unloadable [] "canonical accepted a key ssh-keygen cannot load"
 
     # Not vacuous: a `canonical` that refused everything would satisfy the
     # assertion above.
     let real_keys = $generated ++ [$ED25519 $RSA $SK $SK_ECDSA]
-    let real = $verdicts | where {|r| $r.line in $real_keys }
+    let real = $verdicts | where $it.line in $real_keys
     assert equal ($real | length) ($real_keys | length) "a real key is missing from the candidate list"
-    assert ($real | all {|r| $r.canonical and $r.ssh_keygen }) $"a real key was refused: ($real | where {|r| not $r.canonical } | get line | each {|l| $l | str substring 0..48 })"
+    assert ($real | all {|r| $r.canonical and $r.ssh_keygen }) $"a real key was refused: ($real | where not $it.canonical | get line | each {|l| $l | str substring 0..48 })"
 }

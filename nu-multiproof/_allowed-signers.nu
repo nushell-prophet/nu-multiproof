@@ -3,7 +3,7 @@
 # signer) and by merkle verify to resolve --signer.
 
 use _fs.nu list-files
-use _pubkey-helpers.nu [canonical-file fingerprint-file]
+use _pubkey-helpers.nu [ canonical-file fingerprint-file ]
 use pubkey.nu
 
 # The one namespace this repo signs and verifies under. A const and not a flag:

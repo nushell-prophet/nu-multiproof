@@ -32,22 +32,22 @@ export def sig-files-for [path: path]: nothing -> list<path> {
     let entries = ls --all $dir | where type == file | get name
     let bare_base = $"($base).sig"
     let named = $entries | where {|f|
-        let f_base = $f | path basename
-        let named_form = ($f_base | str starts-with $"($base).") and ($f_base | str ends-with ".sig") and $f_base != $bare_base
-        # ...unless the name also reads as some *other* file's bare signature,
-        # and that file is on disk. `tree-hashes.csv.gz.sig` beside an existing
-        # `tree-hashes.csv.gz` is the archive's signature, not a "gz"-named
-        # signature of `tree-hashes.csv` — and `seal` deleted it as stale while
-        # the file it signs sat untouched. `original-for-sig` below already
-        # settles this ambiguity by asking the filesystem, bare reading first;
-        # discovery asks the same question so the two cannot drift.
-        #
-        # The other way round is fail-closed: plant an empty `<file>.<signer>`
-        # and that signer's sig drops out of discovery, so verify says "no
-        # signature files found" instead of destroying one.
-        $named_form and not (($f | str replace --regex '\.sig$' '') | path exists)
-    }
-    $named ++ ($entries | where {|f| ($f | path basename) == $bare_base })
+            let f_base = $f | path basename
+            let named_form = ($f_base | str starts-with $"($base).") and ($f_base | str ends-with ".sig") and $f_base != $bare_base
+            # ...unless the name also reads as some *other* file's bare signature,
+            # and that file is on disk. `tree-hashes.csv.gz.sig` beside an existing
+            # `tree-hashes.csv.gz` is the archive's signature, not a "gz"-named
+            # signature of `tree-hashes.csv` — and `seal` deleted it as stale while
+            # the file it signs sat untouched. `original-for-sig` below already
+            # settles this ambiguity by asking the filesystem, bare reading first;
+            # discovery asks the same question so the two cannot drift.
+            #
+            # The other way round is fail-closed: plant an empty `<file>.<signer>`
+            # and that signer's sig drops out of discovery, so verify says "no
+            # signature files found" instead of destroying one.
+            $named_form and not (($f | str replace --regex '\.sig$' '') | path exists)
+        }
+    $named ++ ($entries | where ($it | path basename) == $bare_base)
 }
 
 # Name of the signature file for <path>: bare when no signer is named.

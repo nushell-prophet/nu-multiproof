@@ -16,7 +16,7 @@ export def sign [
     path: path # File to sign
     --key: path # SSH private key (default: from git config user.signingKey)
     --pubkeys-dir: path # Directory of registered *.pub files (default: multiproofs/pubkeys from git root)
-] {
+]: nothing -> path {
     # Why default from git config: makes `ssh-sign sign <file>` usable with no
     # flags; without it, a missing --key blew up with a null-conversion error.
     # The closure form bounds the key's lifetime: an inline `key::` config is
@@ -99,7 +99,7 @@ export def verify [
     path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
     --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
     --fail # Exit non-zero if any signature is invalid (for CI)
-] {
+]: nothing -> table {
     # A positional .sig names both the signature to check and, by inference, the
     # original it covers. The grammar lives in _sig.nu — reading it here is what
     # made `doc.txt.sig` resolve to `doc`.

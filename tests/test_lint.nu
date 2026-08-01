@@ -165,14 +165,14 @@ def violations [text: string]: nothing -> list<record> {
     | lines
     | enumerate
     | each {|it| {no: ($it.index + 1) text: $it.item} }
-    | where {|l| not ($l.text | str trim | str starts-with "#") }
+    | where not ($it.text | str trim | str starts-with "#")
     | each {|line|
         # Blanking only swaps string-body characters for spaces between
         # delimiters that stay put, so a line whose raw text holds the
         # construct nowhere cannot grow one. Skipping those keeps the scan off
         # ~99% of lines; the verdict is still decided on the blanked text —
         # `let x = "--all"` must not excuse the bare `ls` beside it.
-        let candidates = $RULES | where {|rule| $line.text =~ $rule.pattern }
+        let candidates = $RULES | where $line.text =~ $it.pattern
         if ($candidates | is-empty) { [] } else {
             let code = $line.text | blank-strings
             # Excuses and the trailing-comment split are decided on the copy
@@ -225,8 +225,8 @@ def "known defect classes are absent from the sources and tests" [] {
     assert (($files | length) >= 35) $"only ($files | length) .nu files found under ($REPO_ROOT)"
 
     let found = $files | each {|f|
-        violations (open --raw $f) | each {|v| $v | insert file ($f | path basename) }
-    } | flatten
+            violations (open --raw $f) | each {|v| $v | insert file ($f | path basename) }
+        } | flatten
 
     let report = $found
         | each {|v| $"  ($v.file):($v.line) [($v.rule)] ($v.text)" }

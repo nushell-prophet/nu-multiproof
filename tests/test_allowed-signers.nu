@@ -152,9 +152,11 @@ def "ssh-keygen skips a malformed entry rather than failing" [] {
         # the only notice of the broken entry, and `complete` is where it dies
         assert ($fp.stderr | str contains ":1: ") $"no warning for: ($bad | str substring 0..40)"
 
-        let verified = (do {
-            open --raw $doc | ^ssh-keygen -Y verify -f $signers_file -I alice -n file -s $"($doc).sig"
-        } | complete)
+        let verified = (
+            do {
+                open --raw $doc | ^ssh-keygen -Y verify -f $signers_file -I alice -n file -s $"($doc).sig"
+            } | complete
+        )
         assert equal $verified.exit_code 0
     }
 }

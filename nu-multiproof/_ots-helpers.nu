@@ -6,7 +6,7 @@
 # Bundle copy-path for an input file. Pure; extracted from `stamp`.
 # Why no trailing dot: extensionless input ("README") was producing "README."
 # because `($stem).($ext)` collapsed to "README." when `$ext` was empty.
-export def copy-path-for [file: path, bundle_dir: path]: nothing -> string {
+export def copy-path-for [file: path bundle_dir: path]: nothing -> string {
     let parsed = $file | path parse
     if ($parsed.extension | is-empty) {
         $"($bundle_dir)/($parsed.stem)"
@@ -23,9 +23,9 @@ export def copy-path-for [file: path, bundle_dir: path]: nothing -> string {
 # explorer — none is a verdict about the proof. Pinned by tests/test_ots.nu
 # "a corrupted header blames the explorer, not the proof".
 export def check-fetched-header [
-    src: string          # explorer base URL, named in every refusal
-    block_hash: string   # cross-checked block hash (display hex)
-    header_hex: string   # the explorer's response body
+    src: string # explorer base URL, named in every refusal
+    block_hash: string # cross-checked block hash (display hex)
+    header_hex: string # the explorer's response body
 ]: nothing -> binary {
     let bytes = try { $header_hex | decode hex } catch {
         error make {msg: $"explorer ($src) answered with a block header that is not hex — cannot verify"}
@@ -54,9 +54,9 @@ export def check-fetched-header [
 # Why fail-fast (error on any mismatch): a header that fails any check is not
 # evidence of anything — the caller must not proceed on a partial match.
 export def check-block-header [
-    header: binary          # raw 80-byte header
-    expected_root: binary   # merkle root the OTS commitment replays to (internal order)
-    claimed_hash: string    # block hash the height lookup returned (display hex)
+    header: binary # raw 80-byte header
+    expected_root: binary # merkle root the OTS commitment replays to (internal order)
+    claimed_hash: string # block hash the height lookup returned (display hex)
 ]: nothing -> record {
     if ($header | bytes length) != 80 {
         error make {msg: $"expected an 80-byte header, got ($header | bytes length) bytes"}

@@ -71,7 +71,7 @@ def "sign refuses a key the trust list does not hold" [] {
 
     let outcome = try { ssh-sign sign $test_file --key $key_path --pubkeys-dir $pubkeys_dir; "signed" } catch {|e| $e.msg }
     assert ($outcome | str contains "not registered") $"got: ($outcome)"
-    assert equal (ls --all $tmp_dir | get name | each { path basename } | where {|f| $f | str ends-with ".sig" }) []
+    assert equal (ls --all $tmp_dir | get name | path basename | where ($it | str ends-with ".sig")) []
 }
 
 # The namespace is written into every allowed_signers line, right beside the
@@ -328,10 +328,12 @@ def "verify --fail errors on invalid signature" [] {
 
     # Why --fail: a silent {valid: false} pass lets a CI step succeed on a bad
     # sig. --fail must turn that into a non-zero exit (a thrown error here).
-    let outcome = (try {
-        ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir --fail | ignore
-        "ok"
-    } catch {|e| $"err:($e.msg)" })
+    let outcome = (
+        try {
+            ssh-sign verify $test_file --pubkeys-dir $pubkeys_dir --fail | ignore
+            "ok"
+        } catch {|e| $"err:($e.msg)" }
+    )
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
     # Without --fail the same bad sig returns a record (no throw)
@@ -450,7 +452,7 @@ def "registration compares key material, not the spacing around it" [] {
     "hello world" | save --force $test_file
     ^ssh-keygen -t ed25519 -f $alice_key -N "" -q
     ^ssh-keygen -t ed25519 -f $bob_key -N "" -q
-    for pair in [[src, stem]; [$alice_key, "alice"], [$bob_key, "bob"]] {
+    for pair in [[src stem]; [$alice_key "alice"] [$bob_key "bob"]] {
         open --raw $"($pair.src).pub"
         | str replace " " "  "
         | save --force ($pubkeys_dir | path join $"($pair.stem).pub")

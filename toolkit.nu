@@ -19,4 +19,3 @@ export def 'main test' [--network --no-fail] {
         nutest run-tests --path $path --fail
     }
 }
-
