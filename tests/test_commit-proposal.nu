@@ -13,6 +13,7 @@ def stamped-result []: nothing -> record {
         root_cid: "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
         merkle_root: "ee947cd6a1f3b2c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081920a3b4c"
         root_sig: "/repo/multiproofs/tree-root.txt.abc.sig"
+        bundle: "/repo/multiproofs/ots-timestamps/tree-root.EE947CD6"
         root_ots: "/repo/multiproofs/ots-timestamps/tree-root.EE947CD6/tree-root.ots"
         sig_ots: ["/repo/multiproofs/ots-timestamps/tree-root.EE947CD6/tree-root.txt.abc.ots"]
     }
@@ -48,11 +49,23 @@ def "two signatures are counted, and read as plural" [] {
 
 @test
 def "a seal with no stamp reports no anchor and names no bundle" [] {
-    let line = seal-commit-line (stamped-result | reject root_ots sig_ots) "/repo" "abc123"
+    let line = seal-commit-line (stamped-result | reject bundle root_ots sig_ots) "/repo" "abc123"
 
     assert str contains $line "Anchors: none, sealed with --no-stamp"
     # A bundle line here would name a directory the seal never wrote.
     assert not ($line | str contains "Bundle:")
+}
+
+# --no-content-anchor: a bundle was written and digests did reach the calendar,
+# so "none, sealed with --no-stamp" would be the opposite of what happened. The
+# line has to name what was anchored and leave out what was not.
+@test
+def "a seal that anchored only its signatures says so and still names its bundle" [] {
+    let line = seal-commit-line (stamped-result | reject root_ots) "/repo" "abc123"
+
+    assert str contains $line "Anchors: 1 endorsement, pending until Bitcoin confirms"
+    assert not ($line | str contains "content +")
+    assert str contains $line "Bundle: multiproofs/ots-timestamps/tree-root.EE947CD6"
 }
 
 @test
@@ -72,7 +85,7 @@ def "git is aimed at the sealed repo rather than the current directory" [] {
     # pathspec `multiproofs` resolves against the CWD — so a proposal without
     # -C fails from any subdirectory.
     let elsewhere = stamped-result
-        | update root_ots {|r| $r.root_ots | str replace "/repo/" "/elsewhere/repo/" }
+        | update bundle {|r| $r.bundle | str replace "/repo/" "/elsewhere/repo/" }
 
     let line = seal-commit-line $elsewhere "/elsewhere/repo" "abc123"
 

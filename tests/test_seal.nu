@@ -297,6 +297,148 @@ def "seal puts the root statement, its signature and both anchors in one bundle"
     ) "the endorsement anchor does not commit to the signature beside it"
 }
 
+# --no-content-anchor: the seal moment anchors the endorsements and nothing else.
+# Asserted over the whole bundle rather than over `root_ots` alone, because the
+# directory is normally minted BY the root's stamp: skipping that stamp could not
+# be a guard around one line — the bundle name, its frozen copy and the `--into`
+# target all had to come from somewhere else, and only the files on disk show
+# whether they did.
+@test
+def "seal --no-content-anchor dates every signature and leaves the content undated" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    let response = $"($tmp_dir)/calendar-response.bin"
+    build-calendar-response | save --raw --force $response
+
+    let result = seal --repo $fx.repo --no-content-anchor --response-file $response
+
+    assert equal ($result | get --optional root_ots) null "the root statement was stamped anyway"
+    assert equal (list-dirs $fx.ots_dir) [$result.bundle] "the seal spread itself over more than one bundle"
+
+    # Same name a stamped seal would have written: the bundle is keyed by the
+    # root statement's own hash whether or not that hash was posted anywhere, so
+    # a retry after a rejected calendar answer lands in this same directory.
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    let root_prefix = open --raw $root_file | hash sha256 | str uppercase | str substring 0..<8
+    assert equal (
+        $result.bundle | path basename
+    ) $"tree-root.($root_prefix)" "the bundle is not keyed by the root statement's own hash"
+
+    # The frozen copy is what the endorsement is over and the only thing
+    # nu-cybergraph matches a bundle by, so it has to survive the missing stamp.
+    assert equal (open --raw $"($result.bundle)/tree-root.txt") (open --raw $root_file)
+
+    let sig_name = $"tree-root.txt.(principal-of $fx.key).sig"
+    let sig_ots_name = $"tree-root.txt.(principal-of $fx.key).ots"
+    assert equal (
+        list-files $result.bundle --suffix ".ots" | each {|f| $f | path basename }
+    ) [$sig_ots_name] "the bundle holds a proof that is not an endorsement anchor"
+    assert equal ($result.sig_ots | each {|f| $f | path basename }) [$sig_ots_name]
+    assert equal (ots info ($result.sig_ots | first) | get hash) (
+        open --raw $"($result.bundle)/($sig_name)" | hash sha256
+    ) "the endorsement anchor does not commit to the signature beside it"
+}
+
+# The row for the bundle above. It is the shape README already describes for a
+# signature-only bundle — `file: null`, `content: absent`, a dated `endorsed` —
+# and this is the first thing that produces one, where the test below it builds
+# the same reading by hand from the pre-merge layout.
+@test
+def "seal status reports a --no-content-anchor seal as an undated-content endorsement" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    let response = $"($tmp_dir)/calendar-response.bin"
+    build-calendar-response | save --raw --force $response
+    seal --repo $fx.repo --no-content-anchor --response-file $response | ignore
+
+    let rows = seal status --repo $fx.repo
+    assert equal ($rows | length) 1
+    let row = $rows | first
+    assert equal $row.file null "content was named for a bundle that anchors none"
+    assert equal $row.current null
+    assert equal $row.content "absent" "an anchor was reported over content nothing stamped"
+    assert equal $row.signers 1
+    assert equal $row.endorsed "pending" "the endorsement this seal exists for went unreported"
+}
+
+# The frozen copy is written before any digest is posted, and nothing later in
+# the seal looks at it again — so this guard is the only thing between a bundle
+# named for one content and a frozen copy of another, which would leave the
+# endorsement proofs sitting beside bytes they do not describe. The bundle is
+# planted by hand: a seal can only ever produce a copy that matches, so a
+# round-trip would pin nothing here.
+@test
+def "seal --no-content-anchor refuses to overwrite a frozen copy of other content" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    let response = $"($tmp_dir)/calendar-response.bin"
+    build-calendar-response | save --raw --force $response
+    # A first offline seal only to learn the root statement's hash — the planted
+    # bundle has to carry the name the next seal will derive.
+    seal --repo $fx.repo --no-stamp | ignore
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    let root_prefix = open --raw $root_file | hash sha256 | str uppercase | str substring 0..<8
+    let planted = $"($fx.ots_dir)/tree-root.($root_prefix)"
+    mkdir $planted
+    let other = "content this bundle's proofs do not describe\n"
+    $other | save --force $"($planted)/tree-root.txt"
+
+    let err = try {
+        seal --repo $fx.repo --no-content-anchor --response-file $response
+        null
+    } catch {|e| $e.msg }
+
+    assert ($err | default "" | str contains "collision") $"expected a refusal, got: ($err)"
+    assert equal (open --raw $"($planted)/tree-root.txt") $other "the seal overwrote a frozen copy of different content"
+}
+
+# The bundle has to be minted before the first digest is posted — `ots stamp
+# --into` refuses a directory that is not already there — so a rejected calendar
+# answer leaves a directory holding the frozen copy and no proof. The argument
+# for minting that early is that nothing reading this tree calls such a directory
+# a bundle, and that the retry fills it rather than adding a second one.
+@test
+def "a rejected calendar answer leaves no bundle behind for --no-content-anchor" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    let garbage = $"($tmp_dir)/garbage.bin"
+    "not a calendar answer" | save --raw --force $garbage
+
+    # Read from `debug` and not `msg`: the stamp runs inside the `each` over the
+    # signatures, and nushell's own wrapper is what `msg` carries there ("Eval
+    # block failed with pipeline input"). The inner error is what a user sees
+    # rendered, and `debug` is where a catch can still find it.
+    let err = try {
+        seal --repo $fx.repo --no-content-anchor --response-file $garbage
+        null
+    } catch {|e| $e.debug }
+
+    assert ($err | default "" | str contains "readable proof") $"expected the stamp to refuse: ($err)"
+    assert equal (seal status --repo $fx.repo) [] "a directory holding no proof was reported as a bundle"
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    let root_prefix = open --raw $root_file | hash sha256 | str uppercase | str substring 0..<8
+    assert equal (
+        open --raw $"($fx.ots_dir)/tree-root.($root_prefix)/tree-root.txt"
+    ) (open --raw $root_file) "the frozen copy is not where a retry would expect it"
+}
+
+# The two flags ask for different things — "no stamps at all" and "stamp the
+# signatures only" — so one winning silently would either post a digest the
+# caller meant to keep offline or skip the post they asked for. Refused before
+# step 2, since everything from there on rewrites artifacts: an argument error
+# must not leave a regenerated manifest and a cleared signature behind.
+@test
+def "seal refuses --no-stamp together with --no-content-anchor, before touching anything" [] {
+    let fx = make-sealable-repo $in.tmp_dir
+
+    let err = try { seal --repo $fx.repo --no-stamp --no-content-anchor; null } catch {|e| $e.msg }
+
+    assert ($err | default "" | str contains "alternatives") $"unexpected error: ($err)"
+    assert not (
+        $"($fx.repo)/multiproofs/tree-hashes.csv" | path exists
+    ) "the seal rewrote artifacts before refusing"
+}
+
 # Step 1, the opportunistic upgrade loop, also skipped by every other test.
 # Two properties, and the first is visible only on stdout — which is why seal
 # runs in a subprocess here. Asserted on the return value alone, a seal that

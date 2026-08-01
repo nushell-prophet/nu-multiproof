@@ -58,12 +58,17 @@ export def seal-commit-line [
     root: path # repo root the seal targeted
     signer: string # principal, resolved from key material
 ]: nothing -> string {
-    let stamped = ($result | get --optional root_ots) != null
+    # The bundle is read from its own field, not off `root_ots | path dirname`:
+    # under `--no-content-anchor` there is no content proof to derive it from,
+    # and a proposal that fell back to "Anchors: none" would state the opposite
+    # of what the seal did — it posted an endorsement digest to a public calendar.
+    let bundle = $result | get --optional bundle
+    let content_anchored = ($result | get --optional root_ots) != null
 
     let subject = $"seal: multiproofs/ describes the tree at merkle root ($result.merkle_root | str substring 0..<8)"
 
-    let bundle_line = if $stamped {
-        [$"Bundle: ($result.root_ots | path dirname | path relative-to $root)"]
+    let bundle_line = if $bundle != null {
+        [$"Bundle: ($bundle | path relative-to $root)"]
     } else {
         []
     }
@@ -71,10 +76,11 @@ export def seal-commit-line [
     # Why "pending" is stated rather than read: a proof is pending by
     # construction the moment the calendar accepts it — a Bitcoin anchor is
     # hours to days away — so this claims nothing the seal did not just do.
-    let anchor_line = if $stamped {
+    let anchor_line = if $bundle != null {
         let endorsements = $result | get --optional sig_ots | default [] | length
         let plural = if $endorsements == 1 { "endorsement" } else { "endorsements" }
-        $"Anchors: content + ($endorsements) ($plural), pending until Bitcoin confirms"
+        let anchors = (if $content_anchored { ["content"] } else { [] }) ++ [$"($endorsements) ($plural)"]
+        $"Anchors: ($anchors | str join ' + '), pending until Bitcoin confirms"
     } else {
         "Anchors: none, sealed with --no-stamp"
     }

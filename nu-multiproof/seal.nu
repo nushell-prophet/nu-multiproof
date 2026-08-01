@@ -6,6 +6,7 @@ use _repo.nu repo-root
 use _layout.nu [ manifest-path merkle-root-path ots-dir pubkeys-dir multiproofs-dir ]
 use _sig.nu sig-files-for
 use _fs.nu list-files
+use _ots-helpers.nu freeze-bundle
 use _key-helpers.nu [ with-signing-key signing-principal ]
 use _stamps.nu [ scan-stamps pick-stamp format-stamp ]
 use _commit-proposal.nu seal-commit-line
@@ -22,10 +23,11 @@ use _commit-proposal.nu seal-commit-line
 #      statement (multiproofs/tree-root.txt) from the fresh manifest
 #   3. ssh-sign — sign the root statement
 #   4. ots stamp — timestamp the root statement AND every signature over it
-#      (--no-stamp to skip), so the content and each endorsement are dated
-#      separately. A proof commits to one file's hash, so two claims need two —
-#      but both land in ONE bundle, the root statement's, so a single directory
-#      answers "this content existed by T, and signer X endorsed it by T2"
+#      (--no-stamp to skip, --no-content-anchor to stamp the signatures only),
+#      so the content and each endorsement are dated separately. A proof commits
+#      to one file's hash, so two claims need two — but both land in ONE bundle,
+#      the root statement's, so a single directory answers "this content existed
+#      by T, and signer X endorsed it by T2"
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
 # context (message, scope, timing). `--propose-commit` does not weaken that: it
@@ -59,9 +61,18 @@ use _commit-proposal.nu seal-commit-line
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
     --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
+    --no-content-anchor # Stamp only the signatures, leaving the root statement undated
     --response-file: path # Calendar answer for step 4, instead of posting the digest
     --propose-commit # Leave a `git commit` for this seal in the prompt, unrun
 ]: nothing -> record {
+    # Why refused rather than given a precedence: they ask for different things —
+    # "no stamps at all" and "stamp the signatures only" — and letting one win
+    # silently would post digests the caller may have meant to keep offline, or
+    # skip the post they asked for. Checked first, while failing is still free:
+    # everything below either rewrites artifacts or writes to a public calendar.
+    if $no_stamp and $no_content_anchor {
+        error make {msg: "--no-stamp and --no-content-anchor are alternatives: --no-stamp skips step 4 entirely, --no-content-anchor runs it over the signatures only"}
+    }
     let root = repo-root $repo
     let manifest_path = manifest-path $root
     let root_statement_path = merkle-root-path $root
@@ -183,12 +194,22 @@ export def main [
     # is dated by the same loop, where a single object names one signature and
     # would need machinery per extra signer.
     #
-    # Why not stamp the signature ALONE, which dates the content transitively:
-    # it makes the most durable claim depend on the most fragile one. Content
-    # time would stop being a bare hash compare and start needing the pubkey,
-    # ssh-keygen and a key type OpenSSH still reads — three things that can rot
-    # where a hash cannot, so a bundle that keeps a good key-free content anchor
-    # today would then have none.
+    # Why not stamp the signature ALONE by default, which dates the content
+    # transitively: it makes the most durable claim depend on the most fragile
+    # one. Content time would stop being a bare hash compare and start needing
+    # the pubkey, ssh-keygen and a key type OpenSSH still reads — three things
+    # that can rot where a hash cannot, so a bundle that keeps a good key-free
+    # content anchor today would then have none.
+    #
+    # Why --no-content-anchor exists anyway: two anchors leave a reader deciding
+    # which one dates the statement, what it means when they differ, and whether
+    # verification needs both — three questions nothing in the bundle answers,
+    # because on disk neither anchor derives from the other. A caller whose
+    # load-bearing claim is "S endorsed this by block N" (nu-cybergraph, where a
+    # link IS an assertion by a signer) buys one unambiguous claim by taking the
+    # durability trade knowingly. A flag and not a change of default: the
+    # ambiguity is a property of the standard built on top, and a repo sealed for
+    # the archive wants the key-free content anchor the paragraph above defends.
     #
     # The manifest is not stamped: the root is derived from every row, so its
     # anchor time-bounds the full CSV — the same argument that dropped the
@@ -205,8 +226,35 @@ export def main [
     # writing its bundle into the CWD's repo was found by reading, not by the
     # suite. Same test seam, and same argument, as `ots stamp --response-file`.
     if not $no_stamp {
-        let root_stamp = ots stamp $root_statement_path --out-dir $ots_dir --response-file $response_file
-        $result = ($result | insert root_ots $root_stamp.ots)
+        let root_stamp = if $no_content_anchor { null } else {
+            ots stamp $root_statement_path --out-dir $ots_dir --response-file $response_file
+        }
+
+        # One seal moment is one bundle, whether or not the root is stamped. The
+        # root's own stamp normally mints the directory; without it there is
+        # nothing to mint from, and this cannot be a guard around the line above:
+        # `ots stamp --into` refuses a directory that is not already on disk, so
+        # the bundle has to exist before the first signature is stamped into it.
+        # freeze-bundle writes the same name and the same frozen copy that stamp
+        # would have — the copy nu-cybergraph matches a bundle by.
+        #
+        # If the calendar then rejects the digest, what is left is a directory
+        # holding the frozen copy and no proof. That is not a bundle to anything
+        # reading this tree: both readers go through `_stamps.nu scan-stamps`,
+        # which discovers bundles from the proofs in them, so a directory with
+        # none is invisible (pinned by "a rejected calendar answer leaves no
+        # bundle behind for --no-content-anchor"). And the name is keyed by the
+        # root's own hash, so the retry fills that same directory rather than
+        # adding a second one.
+        let bundle_dir = if $root_stamp == null {
+            freeze-bundle $root_statement_path $ots_dir
+        } else {
+            $root_stamp.dir
+        }
+        $result = ($result | insert bundle $bundle_dir)
+        if $root_stamp != null {
+            $result = ($result | insert root_ots $root_stamp.ots)
+        }
 
         # Every signature over the root, not only the one step 3 just made: a
         # co-signer's endorsement is as undated as seal's own was, and this
@@ -224,7 +272,7 @@ export def main [
         # and costs nothing elsewhere — `merkle verify` matches proofs by content
         # commitment over one directory level, never by bundle name.
         let sig_stamps = sig-files-for $root_statement_path | each {|sig|
-                ots stamp $sig --into $root_stamp.dir --response-file $response_file | get ots
+                ots stamp $sig --into $bundle_dir --response-file $response_file | get ots
             }
         $result = ($result | insert sig_ots $sig_stamps)
     }

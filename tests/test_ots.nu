@@ -678,7 +678,7 @@ def "a rejected response under --into lands outside the bundle" [] {
     let failed = try {
         ots stamp $file --into $bundle --response-file $"($tmp_dir)/garbage.bin"
         false
-    } catch {|e| $e.msg | str contains "no bundle was written" }
+    } catch {|e| $e.msg | str contains "no proof was written into a bundle" }
     assert $failed "a garbage calendar body was accepted"
 
     assert equal (ls --all $bundle | get name) [] "rejected bytes were written inside the bundle"
@@ -703,7 +703,7 @@ def "stamp writes no bundle when the calendar body is not a timestamp" [] {
             "ok"
         } catch {|e| $e.msg }
     )
-    assert ($outcome | str contains "no bundle was written") $"expected a refusal, got: ($outcome)"
+    assert ($outcome | str contains "no proof was written into a bundle") $"expected a refusal, got: ($outcome)"
     # no bundle directory, no frozen copy, no proof — the rejected bytes are
     # a loose file, never something a verifier would read as a bundle
     let left = (ls --all $tmp_dir | get name | path basename | sort)
@@ -842,7 +842,7 @@ def "a rejected response under a relative --into is still parked, not lost" [] {
         null
     } catch {|e| $e.msg }
     assert ($err != null) "a garbage calendar body was accepted"
-    assert ($err | str contains "no bundle was written") $"the failure did not reach the recovery message: ($err)"
+    assert ($err | str contains "no proof was written into a bundle") $"the failure did not reach the recovery message: ($err)"
 
     assert equal (ls --all "mybundle" | get name) [] "rejected bytes were written inside the bundle"
     let rejected = ls --all $tmp_dir | get name | where ($it | str contains ".rejected-")

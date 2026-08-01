@@ -1,7 +1,7 @@
 # Pure Nushell OpenTimestamps implementation — no `ots` CLI dependency.
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
-use _ots-helpers.nu [ copy-path-for check-block-header check-fetched-header ]
+use _ots-helpers.nu [ bundle-dir-for copy-path-for check-frozen-copy check-block-header check-fetched-header ]
 use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
@@ -437,13 +437,19 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             msg: (
                 [
                     $"calendar response does not make a readable proof: ($validation.reason)"
-                    $"no bundle was written; the assembled bytes \(nonce included\) are at ($rejected)"
+                    # Not "no bundle was written": a bundle may already be on
+                    # disk when this prints, minted by `freeze-bundle` before
+                    # any digest was posted (seal --no-content-anchor). What
+                    # this stamp did is the claim worth making, and it holds
+                    # for every caller — the named --into bundle is untouched,
+                    # and derived naming created nothing.
+                    $"no proof was written into a bundle; the assembled bytes \(nonce included\) are at ($rejected)"
                 ] | str join "\n"
             )
         }
     }
 
-    let bundle_dir = if $into != null { $into } else { $"($out_dir)/($stem).($hash_prefix)" }
+    let bundle_dir = if $into != null { $into } else { bundle-dir-for $file $hash_prefix $out_dir }
     mkdir $bundle_dir
     let copy_path = (copy-path-for $file $bundle_dir)
     let ots_path = $"($bundle_dir)/($stem).ots"
@@ -463,17 +469,13 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     # fires. Keyed by the copy's name, so it says nothing about two files with
     # different names sharing a stem — that clash is on the `.ots` name, and the
     # guard for it sits below.
-    if ($copy_path | path exists) {
-        let existing_hash = open --raw $copy_path | hash sha256 | decode hex
-        if $existing_hash != $file_hash {
-            let why = if $into != null {
-                $"($copy_path) already holds different content under this name"
-            } else {
-                $"the frozen copy there is different content that shares the 8-hex prefix ($hash_prefix)"
-            }
-            error make {msg: $"collision in ($bundle_dir): ($why)"}
+    check-frozen-copy $copy_path $file_hash (
+        if $into != null {
+            $"($copy_path) already holds different content under this name"
+        } else {
+            $"the frozen copy there is different content that shares the 8-hex prefix ($hash_prefix)"
         }
-    }
+    )
 
     # Why: bundle dir is keyed by file hash, so re-stamping unchanged content
     # reuses the directory. The new .ots has a different nonce + calendar
