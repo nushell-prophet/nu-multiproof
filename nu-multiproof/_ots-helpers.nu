@@ -33,8 +33,49 @@ export def freeze-bundle [file: path out_dir: path]: nothing -> path {
     let copy = copy-path-for $file $dir
     check-frozen-copy $copy $file_hash "the frozen copy there is different content that shares the 8-hex prefix"
     mkdir $dir
-    cp $file $copy
+    write-frozen-copy $file $file_hash $copy
     $dir
+}
+
+# The one place a frozen copy is written. `stamp` and `freeze-bundle` both fill
+# the same bundles, so the rule about how that file appears is enforced once —
+# the same reason check-frozen-copy is one guard rather than one per writer.
+#
+# Not `cp`: a failed `cp` cannot be noticed (see `_fs.nu copy-file`), and both
+# callers were reporting a frozen copy that was never written.
+#
+# Nothing to write when the copy exists: check-frozen-copy has proved it
+# byte-identical by the time this runs, which is the ordinary `seal` path (it
+# stamps a signature into the bundle that already snapshotted it). Skipping is
+# what keeps this `save` free of --force, the one flag able to destroy a bundle.
+export def write-frozen-copy [
+    file: path # the content the proof commits to
+    file_hash: binary # what the caller hashed it as, before anything was written
+    copy_path: path # where the bundle keeps it
+]: nothing -> nothing {
+    if ($copy_path | path exists) { return }
+    # Re-read and re-hash rather than copy from bytes the caller kept in hand.
+    # Keeping them closes the window completely but costs memory proportional to
+    # the file — measured on a 100 MB input: 23 MB streamed against 213 MB held,
+    # and `stamp` would hold it across the whole calendar round-trip. Two
+    # streaming passes keep memory flat, and the compare still refuses a file
+    # that changed underneath, which is the part that matters: a silent copy of
+    # new content is a bundle whose proof commits to bytes it does not hold.
+    # Measured limit, stated because it is not closed: the verify read and the
+    # copy read are two passes, so this narrows the window, it does not remove
+    # it.
+    if (open --raw $file | hash sha256 | decode hex) != $file_hash {
+        error make {
+            msg: $"($file) changed while it was being timestamped"
+            help: "the proof commits to the bytes read at the start of the run; a bundle must not hold anything else under that name"
+        }
+    }
+    # No `into binary` before `save --raw`, though this repo's rule asks for one
+    # ahead of a binary pipeline: `into binary` collects, which is the cost this
+    # whole shape exists to avoid, and `save --raw` writes a byte stream through
+    # unchanged. Verified byte-exact both ways — a body that is valid UTF-8 and
+    # one that is not both round-trip to the same hash.
+    open --raw $file | save --raw $copy_path
 }
 
 # A frozen copy already sitting in a bundle must be the same content: full-hash

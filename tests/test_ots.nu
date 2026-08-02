@@ -2,7 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/ots.nu
-use ../nu-multiproof/_ots-helpers.nu [ copy-path-for check-block-header check-fetched-header ]
+use ../nu-multiproof/_ots-helpers.nu [ copy-path-for bundle-dir-for freeze-bundle write-frozen-copy check-block-header check-fetched-header ]
 use _ots-fixtures.nu [ build-pending-ots build-bitcoin-ots build-calendar-response OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG ]
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
@@ -26,7 +26,7 @@ def "info pending without ops" [] {
     let result = ots info "/tmp/test_ots_pending.ots"
     assert equal $result.attestation.type "pending"
     assert equal $result.attestation.url "https://a.pool.opentimestamps.org"
-    assert equal ($result.hash | str downcase) "0000000000000000000000000000000000000000000000000000000000000000"
+    assert equal ($result.hash | str lowercase) "0000000000000000000000000000000000000000000000000000000000000000"
 }
 
 @test
@@ -167,7 +167,7 @@ const BLOCK_939896_HASH = "00000000000000000000f6eaadba82c65955a8f09dfc09aaa9b41
 def "check-block-header accepts a valid header" [] {
     let r = check-block-header $BLOCK_939896_HEADER $BLOCK_939896_ROOT $BLOCK_939896_HASH
     assert equal $r.block_hash $BLOCK_939896_HASH
-    assert equal $r.merkle_root ($BLOCK_939896_ROOT | encode hex | str downcase)
+    assert equal $r.merkle_root ($BLOCK_939896_ROOT | encode hex | str lowercase)
     # Header timestamp is 1773003906 -> 2026-03-08 21:05:06 UTC.
     assert equal ($r.time | format date "%Y-%m-%d %H:%M:%S") "2026-03-08 21:05:06"
 }
@@ -214,11 +214,11 @@ def "check-block-header does not bound the work behind a header" [] {
         | bytes add --end 0x[04000000]
     assert equal ($header | bytes length) 80
     let block_hash = $header | hash sha256 | decode hex | hash sha256 | decode hex
-        | bytes reverse | encode hex | str downcase
+        | bytes reverse | encode hex | str lowercase
 
     let r = check-block-header $header $root $block_hash
     assert equal $r.block_hash $block_hash
-    assert equal $r.merkle_root ($root | encode hex | str downcase)
+    assert equal $r.merkle_root ($root | encode hex | str lowercase)
 }
 
 # The explorer serving the header used to hold a one-request veto: a header
@@ -660,6 +660,76 @@ def "stamp --into refuses a bundle holding different content under the same name
     } catch {|e| $e.msg | str contains "collision" }
     assert $failed "the stamp overwrote a frozen copy of different content"
     assert equal (open --raw $"($bundle)/doc.txt" | str trim) "some other content entirely"
+}
+
+# `cp` prints a failed copy on stderr and exits 0, so every writer that used it
+# reported success for a file that was never written. This one pins the frozen
+# copy: a write-frozen-copy that swallows its failure has to fail here. The
+# other writer, `_fs.nu copy-file`, is pinned in tests/test_fs.nu.
+#
+# Why the bundle directory is pre-created and then made read-only: `mkdir` on an
+# existing directory is a no-op, so the first write that can fail is the frozen
+# copy itself, and the throw is about the copy rather than about the directory.
+# Needs a non-root uid — root ignores the mode, and then this test fails loudly
+# instead of passing for the wrong reason.
+@test
+def "a frozen copy that cannot be written throws instead of returning the bundle" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    let out_dir = $"($tmp_dir)/bundles"
+    let prefix = open --raw $file | hash sha256 | decode hex | encode hex | str substring 0..<8
+    let dir = bundle-dir-for $file $prefix $out_dir
+    mkdir $dir
+    ^chmod 500 $dir
+
+    let failed = try { freeze-bundle $file $out_dir; false } catch { true }
+    ^chmod 700 $dir
+
+    assert $failed "freeze-bundle returned a bundle whose frozen copy was never written"
+    assert equal (ls --all $dir | get name) [] "the copy landed after all, so this test proves nothing"
+}
+
+# The copy is read from disk a second time, after the hash the proof commits to
+# was taken — under `stamp` with a calendar round-trip in between. A file edited
+# in that window would put content in the bundle that the proof does not
+# describe, and nothing downstream would say so: `check-frozen-copy` only looks
+# at a copy that is already there.
+@test
+def "a frozen copy is refused when the file no longer matches the proof" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.txt"
+    "hello world" | save --force $file
+    let copy = $"($tmp_dir)/bundle-doc.txt"
+    let stale_hash = "something else entirely" | hash sha256 | decode hex
+
+    let failed = try { write-frozen-copy $file $stale_hash $copy; false } catch { true }
+    assert $failed "a file that does not hash to the proof was frozen into the bundle anyway"
+    assert equal ($copy | path exists) false "the mismatched content was written before the check"
+}
+
+# A bundle names the proof `<stem>.ots` and the frozen copy `<stem>.<ext>`, so a
+# file already ending in `.ots` wants one path for two different bytes. It was
+# the `.ots` write that won: the frozen copy saw the path taken and skipped,
+# leaving a bundle holding a proof of content it did not contain, exit 0.
+@test
+def "a file already named .ots is refused rather than taking its own proof name" [] {
+    let tmp_dir = $in.tmp_dir
+    let file = $"($tmp_dir)/doc.ots"
+    "hello world" | save --force $file
+    "x" | save --raw --force $"($tmp_dir)/garbage.bin"
+
+    let outcome = (
+        try {
+            ots stamp $file --out-dir $tmp_dir --response-file $"($tmp_dir)/garbage.bin"
+            "ok"
+        } catch {|e| $e.msg }
+    )
+    assert ($outcome | str contains "would take the name its own proof gets") $"expected a refusal, got: ($outcome)"
+    # Refused before anything was assembled or parked: no rejected bytes either,
+    # which is what marks this as a check that ran ahead of the calendar post.
+    let left = (ls --all $tmp_dir | get name | path basename | sort)
+    assert equal $left ["doc.ots" "garbage.bin"] "the refusal left something behind"
 }
 
 # Rejected bytes are deliberately not a proof (README, "rejected"), and a bundle

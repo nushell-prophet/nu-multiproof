@@ -40,6 +40,32 @@ export def list-files [
     $here ++ $deeper
 }
 
+# Copy a file so that a failure cannot pass for success.
+#
+# Why not `cp`: it prints the reason on stderr and exits 0. Measured on nushell
+# 0.114.1, and the source says why — `ucp.rs:294` matches
+# `CpError::NotAllFilesCopied` and drops it, under its own TODO saying the exit
+# code should be an error as GNU cp's is. Every per-file failure folds into that
+# one variant: no space left, a read-only mount, an I/O error, an unreadable
+# source. In this repo that meant `ots stamp` printing `Frozen copy: <path>` and
+# exiting 0 for a file that was not on disk — a bundle whose proofs commit to
+# bytes it does not hold. `open` and `save` both raise.
+#
+# Why the bytes are collected rather than streamed into `save`: src and dest can
+# be the same bytes under two names — a hard link, or one path reached twice on
+# a case-insensitive filesystem. Streaming truncates the destination while the
+# source is still being read from it, and nushell's own same-file check is by
+# path, so it does not catch an alias (measured: both names left at 0 bytes, no
+# error). Collected, the read has finished before the write starts.
+export def copy-file [
+    src: path
+    dest: path
+    --force # overwrite an existing destination, as `cp` did unconditionally
+]: nothing -> nothing {
+    let bytes = open --raw $src | into binary
+    $bytes | save --raw --force=$force $dest
+}
+
 # Subdirectories directly in $dir. Absent directory -> [].
 export def list-dirs [dir: path]: nothing -> list<path> {
     if not ($dir | path exists) { return [] }

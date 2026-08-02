@@ -69,7 +69,7 @@ def "stamp reaches the public calendar, and upgrade will talk to it" [] {
         let result = ots stamp $file --out-dir $dir
 
         let stamped = ots info $result.ots
-        assert equal ($stamped.hash | str downcase) (open --raw $file | hash sha256)
+        assert equal ($stamped.hash | str lowercase) (open --raw $file | hash sha256)
         assert equal $stamped.attestation.type "pending"
 
         # A fresh stamp is not yet in a block, so upgrade is expected to fail —

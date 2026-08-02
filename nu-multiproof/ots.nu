@@ -1,12 +1,12 @@
 # Pure Nushell OpenTimestamps implementation — no `ots` CLI dependency.
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
-use _ots-helpers.nu [ bundle-dir-for copy-path-for check-frozen-copy check-block-header check-fetched-header ]
+use _ots-helpers.nu [ bundle-dir-for copy-path-for check-frozen-copy write-frozen-copy check-block-header check-fetched-header ]
 use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
 use _sig.nu sig-files-for
-use _fs.nu list-files
+use _fs.nu [ list-files copy-file ]
 
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 # Op tags stay byte literals throughout (0x08 sha256, 0x03 RIPEMD-160, 0xf0
@@ -302,6 +302,20 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     if $out_dir != null and $into != null {
         error make {msg: "--out-dir and --into are alternatives: --out-dir is the directory bundles are created in, --into is one existing bundle this stamp joins"}
     }
+    # A bundle names the proof `<stem>.ots` and the frozen copy `<stem>.<ext>`,
+    # so a file whose extension already IS `ots` asks for one path to hold two
+    # different bytes. Refused here, before the calendar post, while failing is
+    # still free — and refused rather than renamed, because every name-based
+    # reader places a proof by that grammar (README, "OTS bundle").
+    #
+    # Case-folded because the collision is on the filesystem, not in the string:
+    # `doc.OTS` and `doc.ots` are two names for one file on macOS.
+    if ($file | path parse | get extension | str lowercase) == "ots" {
+        error make {
+            msg: $"($file | path basename) would take the name its own proof gets in the bundle"
+            help: "a bundle holds `<stem>.ots` (the proof) beside `<stem>.<ext>` (the frozen copy); copy this file under a different extension and stamp that"
+        }
+    }
     # Why expanded before anything reads it: `"mybundle" | path dirname` is the
     # empty string, so a --into with no directory separator aimed the
     # rejected-response file below at `/<name>`, where the write failed with a
@@ -544,7 +558,6 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
         print $"Archived previous: ($archived)"
     }
 
-    cp $file $copy_path
     # Why save without --force: the `path exists` test above and this write are
     # two steps, so two stamps racing on one bundle both saw no incumbent, both
     # wrote through --force, and one proof was gone with both runs exiting 0.
@@ -569,8 +582,35 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             )
         }
     }
-    print $"Frozen copy: ($copy_path)"
     print $"Timestamped: ($ots_path)"
+
+    # The frozen copy, written through the one writer `freeze-bundle` also uses,
+    # which refuses the file if it no longer hashes to what this proof commits
+    # to. It used to be a `cp` here, which printed `Frozen copy:` for a file
+    # that was not there.
+    #
+    # Why after the `.ots` write: `save` raises where `cp` did not, and a throw
+    # ahead of that write would lose this run's assembled proof with the nonce
+    # in it, after the digest already reached the calendar — the loss every
+    # branch above is arranged to prevent. Why not before the calendar post,
+    # where a failure would cost nothing at all: `--into` names a bundle the
+    # caller owns, and a rejected response has to leave it untouched (pinned by
+    # tests/test_ots.nu "a rejected response under --into lands outside the
+    # bundle"). So the copy fails last, and says what is on disk when it does —
+    # a re-stamp is not the answer, since it would post a second digest to the
+    # public calendar to rebuild a proof this bundle already holds.
+    #
+    try { write-frozen-copy $file $file_hash $copy_path } catch {|e|
+        error make {
+            msg: (
+                [
+                    $"the proof was written, its frozen copy was not: ($e.msg)"
+                    $"($ots_path) is a complete proof of ($file), which is unchanged — copy it to ($copy_path) to finish the bundle"
+                ] | str join "\n"
+            )
+        }
+    }
+    print $"Frozen copy: ($copy_path)"
 
     # Why: a self-contained bundle must answer "content C existed at time T,
     # anchored to Bitcoin block B, and signer X endorsed C" using only files in
@@ -586,7 +626,14 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     let bundled_sigs = $sigs | each {|sig|
             let sig_name = $sig | path basename
             let dest = $"($bundle_dir)/($sig_name)"
-            cp $sig $dest
+            # --force because refreshing this snapshot is the point (above).
+            # The sig can already BE the snapshot: stamping a file that lives in
+            # the bundle — `seal` dating an endorsement it filed here earlier —
+            # discovers the sig beside it, which is this same path. `cp` failed
+            # that as "same file" and said nothing; copy-file collects the bytes
+            # before writing, so source and destination being one file, or two
+            # names for one file, is simply a rewrite.
+            copy-file $sig $dest --force
             print $"Bundled sig: ($dest)"
             $dest
         }
