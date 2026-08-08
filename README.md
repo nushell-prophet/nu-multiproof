@@ -195,7 +195,7 @@ The content leg answers with a state, not a boolean, and **only `true` passes** 
 | `"symlink"` | a symlink where the catalogue describes a regular file (checked before existence, so a broken link does not read as missing) |
 | `"outside"` | the path resolves out of the repo, through a symlinked parent |
 | `"directory"` | a file row landing on a directory |
-| `"unverifiable"` | there is nothing to re-derive from — a directory row outside a git repo, or a leaf carrying no commitment at all |
+| `"unverifiable"` | the leaf carries no commitment at all — neither a `content_sha256` nor a `content_cid`, so there is nothing to re-derive |
 
 When `multiproofs/tree-hashes.csv` is there, `merkle verify` also rebuilds the root from it and reports it as `manifest_root`; a value differing from the signed `root` blocks `valid`. The statement is a claim about that catalogue, and the two are written in separate steps — an interrupted `seal`, or a bare `tree-hashes` run afterwards, leaves a CSV no signature covers while old proofs still fold to the old statement. A portable bundle carries no CSV, so `manifest_root` is `null` there and nothing is cross-checked. (Pinned by the test "a manifest that no longer yields the signed root is caught".)
 
@@ -206,19 +206,31 @@ The artifact set is portable. Lay it out in a plain directory — no git, no clo
 ```
 bundle/
   README.md                                # the proven file, at the leaf's filepath
+                                           #   (a directory row: the whole subtree, at its filepath)
   multiproofs/tree-root.txt                # + its .<fingerprint>.sig alongside
   multiproofs/pubkeys/<fingerprint>.pub
+  multiproofs/inclusion-proofs/<row>.multiproof.json
   multiproofs/ots-timestamps/tree-root.*/  # optional — without it `ots` reports `absent`;
                                            #   its <stem>.<ext>.<fingerprint>.ots dates the endorsement
 ```
 
 ```nushell no-run
-nu-multiproof merkle verify bundle/proof.multiproof.json --repo bundle/
+nu-multiproof merkle verify bundle/multiproofs/inclusion-proofs/README.md.multiproof.json --repo bundle/ --bundle
 ```
+
+The proof file belongs under `multiproofs/`, not at the bundle root. Everything under that prefix is excluded from the manifest and from the re-derivation, so a proof of the `.` row does not fold its own proof file into the CID it is checking. At the root it would, and the bundle would report itself as tampered.
 
 This is a supported contract, pinned by a test — not an accident of path handling: an explicit `--repo` is taken as-is (no git required), and every lookup is layout-relative to it. One caveat: `seal`'s opportunistic OTS upgrade only walks the target repo's own `multiproofs/ots-timestamps/`, so a bundle's `pending` stamp stays pending until you run `ots upgrade` on it yourself.
 
-A proof of a **directory row** (or of `.`) is the exception: it needs a git repo. A directory's `content_cid` commits to every tracked entry under it, so re-deriving it means walking the tracked tree the way `tree-hashes` did — a plain bundle has no such tree. There `content_verified` is `"unverifiable"` and `valid` is `false`, because a row whose only commitment cannot be checked must not read as one that was. File rows are unaffected. (Pinned by the test "a directory row in a non-git bundle reports unverifiable, not valid".)
+A proof of a **directory row** (or of `.`) works the same way, with one extra thing in the bundle: the subtree itself, laid out under the row's `filepath`. A directory's `content_cid` commits to every entry under it, so it can only be re-derived from the files, and a compact proof cannot stand in for them. Away from the origin repo there is no git index to enumerate from, so `merkle verify` walks the bundle instead — dropping `multiproofs/` and `.git`, the two directories the manifest never covered and which sit *inside* the walked tree when the row is `.`. Dropping `.git` is what lets a bundle be a clone of the sealed repo, the most ordinary way one travels (pinned by "the root row of a bundle distributed as a git repo still verifies").
+
+That walk trusts the bundle for the file list, and does not need to: the sealed `content_cid` is what checks the list. Under the proven row, a bundle that drops a file, adds one, or alters a byte folds to a different CID and is refused — pinned by "a non-git bundle carrying the sealed subtree verifies a directory row" (the same fixture verifying), "a bundle that drops a file from a proven directory is refused", "a bundle that adds a file under a proven directory is refused", and "a non-git bundle carrying the wrong bytes under a proven directory is refused". Files *outside* the proven row's subtree are not covered and never were: the walk is scoped to that subtree, so an unrelated file — or a stray symlink — beside it does not turn a genuine proof into a report of tampering. What git answers in a live worktree is a different question again, which files are untracked build output the seal never covered.
+
+**Pass `--bundle` for an artifact someone sent you.** Without it, `merkle verify` takes the git arm whenever the target *is* a git repo root — and a sender can make that true. A `.git` costs nothing to ship, and one whose index lists exactly the sealed paths hands the sender the file set: the same bundle carrying an extra file under the proven directory answers `valid: true` with that `.git` present and `valid: false` without it. `--bundle` ignores any index the target carries and always walks, so the enumeration is the verifier's choice rather than the artifact's (pinned by "a bundle cannot hand itself the git arm by shipping its own index"). Distributing a bundle as a git repo is ordinary, so this is not an exotic shape. The flag is a no-op for file rows, which never consult git.
+
+Which arm ran is reported as `content_enumeration` — `"git-index"` or `"walk"`, and `null` for a row that consulted no file set. The two readings of `content_verified: true` are different claims ("the tracked files are the sealed ones" versus "everything the sender shipped folds to the sealed CID"), so a consumer keying on `.valid` needs to see which one it got. The flag lets a verifier choose the arm; the field lets it check what it chose.
+
+`content_verified: "unverifiable"` is therefore left for one case only: a row that commits to no content at all — no `content_sha256` and no `content_cid`. It still blocks `valid`, because a row whose only commitment cannot be checked must not read as one that was.
 
 ### Tree specification
 

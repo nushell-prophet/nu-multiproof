@@ -1,14 +1,22 @@
 # The file set this project catalogues, and the CID nodes folded from it.
 #
 # Extracted from tree-hashes.nu so `merkle verify` can re-derive a directory
-# row's CID from disk instead of trusting it. A directory CID commits to every
-# entry under it, so the verifier must enumerate the same way the builder did —
-# a second, slightly different enumeration would disagree with the manifest for
-# reasons that have nothing to do with tampering.
+# row's CID from disk instead of trusting it.
+#
+# Two enumerations live here, and the difference is deliberate. In the repo the
+# row was catalogued in, the verifier must enumerate the way the builder did
+# (tracked-entries) — a slightly different list would disagree with the manifest
+# for reasons that have nothing to do with tampering, ignored build output being
+# the obvious one. Away from that repo there is no index to ask, and walking is
+# not the same list: it sees ignored files, build output and anything else on
+# disk. That is correct there and only there, because the sealed content_cid
+# commits to every entry, so the walk needs to be complete rather than trusted.
+# walked-entries carries the full argument.
 #
 # Internal module: mod.nu does not re-export _*.nu files.
 
 use _cid-helpers.nu [ file-node dir-node ]
+use _fs.nu list-files
 use _layout.nu MULTIPROOFS_DIR
 
 # git-tracked files, minus the proof directory, sorted byte-wise.
@@ -75,6 +83,68 @@ export def tracked-entries [root: path]: nothing -> table {
     }
 
     $entries
+}
+
+# The same file set, enumerated by walking the tree instead of asking git —
+# for a portable bundle (README "Verifying without the origin repo"), which
+# carries the sealed subtree and has no index to ask.
+#
+# Why a plain walk is sound here and would be wrong in a worktree: this
+# enumeration does not have to be TRUSTED, only complete. A UnixFS directory
+# CID commits to every entry under it, so a bundle that drops a file, adds one,
+# or alters any byte folds to a different CID and is refused — the sealed CID
+# is what checks the list, not the other way round. What git answers in a
+# worktree is a different question: which files are untracked build output the
+# sealed CID never covered. A bundle does not raise it, because it carries only
+# what was exported.
+#
+# multiproofs/ is dropped for the same reason as above, and here it is
+# load-bearing rather than tidy: for the "." row the bundle's own proof
+# directory sits INSIDE the walked tree, so keeping it would fold a different
+# CID for every bundle and no "." row could ever verify away from its repo.
+#
+# .git is dropped because the builder's enumeration cannot see it: `git
+# ls-files` never puts a path with a .git component in the index, so those bytes
+# were never in the sealed CID. Keeping them made the two enumerations disagree
+# for a reason that has nothing to do with tampering — and the shape that hit it
+# is the most ordinary distribution there is, a clone of a sealed repo, which
+# reported untouched evidence as tampered on its "." row. Only "." rows: .git
+# sits outside any subtree row's scope, which is why the bundle tests missed it.
+# By component rather than by prefix, because git refuses to track a path with a
+# .git component at any depth, so nothing legitimate can be dropped here.
+#
+# No control-byte or symlink gate, deliberately. Those are builder gates that
+# keep a manifest clean; here the manifest already exists and a name it could
+# never contain simply folds to a CID that does not match. Symlinks are caught
+# one layer up by content-tree's resolve-leaf-file pass, which is the single
+# implementation of that refusal — a second copy here is the same invariant
+# enforced twice.
+# $under scopes the walk to one row's subtree ("." for the whole target). A
+# directory node depends on nothing outside itself, so the node this yields for
+# $under is identical to the one a full walk yields — but a stray symlink or an
+# unreadable file ELSEWHERE under the target no longer decides the verdict for
+# this row. On the git arm that blast radius was bounded by the tracked set; a
+# walk sees everything on disk, so without this a bundle carrying an unrelated
+# link reported a genuine proof as tampered.
+export def walked-entries [root: path under: string = "."]: nothing -> list<string> {
+    let exclude_prefix = $MULTIPROOFS_DIR + "/"
+    let base = if $under == "." { $root } else { $root | path join $under }
+    if not ($base | path exists) { return [] }
+    list-files $base --recursive
+    | each { path relative-to $root }
+    | where { not ($in | str starts-with $exclude_prefix) }
+    | where {|rel| ".git" not-in ($rel | path split) }
+    | sort
+}
+
+# The paths naming $under itself or something below it, dropping the rest.
+#
+# Not `str starts-with ($under + "/")`: that is separator arithmetic, and it
+# reads "subx/a.txt" as living under "sub". `path relative-to` compares path
+# COMPONENTS and throws when there is no such prefix — the same argument
+# resolve-leaf-file makes for containment.
+export def at-or-under [under: string]: list<string> -> list<string> {
+    $in | where {|rel| try { $rel | path relative-to $under; true } catch { false } }
 }
 
 # Every directory that appears as a parent of a tracked file. ls-files returns
@@ -187,8 +257,10 @@ export def resolve-leaf-file [target: path filepath: string]: nothing -> string 
 export def content-tree [
     root: path
     --lenient # on unresolvable paths return {problems} instead of throwing — for the verify path, where the disk state is a verdict about the artifact, not a crash of the verifier
+    --walk # enumerate by walking the tree rather than asking git — for a portable bundle, which has no index (see walked-entries)
+    --under: string = "." # with --walk, cover only this subtree
 ]: nothing -> record {
-    let tracked_files = tracked-entries $root | get path
+    let tracked_files = if $walk { walked-entries $root $under } else { tracked-entries $root | get path }
     # Why resolve every path before reading any: `open --raw` follows on-disk
     # symlinks. A proven directory swapped for a link (the git index still
     # lists the files under it, so the mode-120000 gate in tracked-entries
@@ -223,5 +295,27 @@ export def content-tree [
             }
         }
     )
-    {files: $files dirs: $dirs nodes: (cid-nodes $files $dirs) problems: []}
+    # Why a scoped walk does not hand back what it folded ABOVE $under:
+    # tracked-dirs derives a parent for every path and cid-nodes always folds
+    # ".", so covering only "sub" still produced a "." node — the CID of a tree
+    # that exists nowhere, folded from that subtree alone and equal to neither
+    # the target's real root nor a full walk's. Nothing reads it today
+    # (derive-dir-cid asks for one key by name), but this record's whole job is
+    # handing out directory CIDs, and a plausible wrong root CID sitting among
+    # them is exactly what this module must not offer. $under's own node is
+    # unaffected: a UnixFS directory commits to its entries, so it depends on
+    # nothing above itself — which is why scoping the walk was sound to begin
+    # with. Both dirs and nodes are narrowed, or the record would list a
+    # directory it holds no node for.
+    let nodes = cid-nodes $files $dirs
+    if not ($walk and $under != ".") {
+        return {files: $files dirs: $dirs nodes: $nodes problems: []}
+    }
+    let scoped = $nodes | columns | at-or-under $under
+    {
+        files: $files
+        dirs: ($dirs | at-or-under $under)
+        nodes: ($scoped | reduce --fold {} {|key acc| $acc | insert $key ($nodes | get $key) })
+        problems: []
+    }
 }

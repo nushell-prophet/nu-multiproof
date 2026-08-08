@@ -559,16 +559,17 @@ def "a leaf that commits to no content is not valid" [] {
     assert $result.structure_valid "the path still folds — the forgery is in what the row omits"
     assert not $result.valid "a row committing to nothing was reported valid"
     assert equal $result.content_verified "unverifiable"
+    assert equal $result.content_enumeration null "a row with nothing to check still claimed a file set was enumerated"
     assert ($result.error | str contains "commits to no content")
 }
 
-# A directory CID commits to every tracked entry under it, so re-deriving one
-# needs the tracked tree. A plain directory carrying only the proof artifacts
-# has none — and "nothing to check" must not read as "checked and fine", or the
-# attacker just ships a directory instead of a repo.
-@test
-def "a directory row in a non-git bundle reports unverifiable, not valid" [] {
-    let tmp_dir = $in.tmp_dir
+# --- portable directory proofs ---
+
+# A sealed repo and a genuine portable bundle of it: the sealed subtree, the
+# root statement, its signature and the signer's key, laid out the way README
+# "Verifying without the origin repo" pins. Every test below mutates exactly one
+# thing away from this, so what each one proves is the mutation and nothing else.
+def make-sealed-bundle [tmp_dir: path]: nothing -> record {
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
@@ -576,36 +577,202 @@ def "a directory row in a non-git bundle reports unverifiable, not valid" [] {
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     let root_result = merkle write-root --repo $repo
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
-    let dir_proof = merkle prove sub --repo $repo
 
     let bundle = $"($tmp_dir)/bundle"
     mkdir $"($bundle)/multiproofs/pubkeys" $"($bundle)/sub"
-    "anything at all\n" | save --force $"($bundle)/sub/inner.txt"
+    cp $"($repo)/README.md" $"($bundle)/"
+    cp $"($repo)/sub/inner.txt" $"($bundle)/sub/"
     cp $"($repo)/multiproofs/tree-root.txt" $"($bundle)/multiproofs/"
     cp $"($repo)/multiproofs/tree-root.txt.(principal-of $key_path).sig" $"($bundle)/multiproofs/"
     cp $"($repo)/multiproofs/pubkeys/sshkey.pub" $"($bundle)/multiproofs/pubkeys/"
+    {
+        repo: $repo
+        bundle: $bundle
+        dir_proof: (merkle prove sub --repo $repo)
+        root_proof: (merkle prove "." --repo $repo)
+    }
+}
 
-    let result = merkle verify $dir_proof --repo $bundle
-    assert $result.structure_valid "structure is genuine — this is alice's real proof"
-    assert not $result.valid "a directory row was called valid with nothing to check it against"
-    assert equal $result.content_verified "unverifiable"
+# The half that makes a bundle worth shipping: the sealed subtree re-derives its
+# own CID away from the origin repo, with no git anywhere.
+@test
+def "a non-git bundle carrying the sealed subtree verifies a directory row" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
 
-    # The ordinary consumer case, and the one that must not read as tampering:
-    # the same bundle unpacked INSIDE some git repo of the consumer's own.
-    # `rev-parse --is-inside-work-tree` answers yes there, so `git ls-files`
-    # ran over the bundle path and listed whatever was tracked there — usually
-    # nothing — and sealed, untouched evidence was reported as
-    # `content_verified: false`, "the directory's tracked contents differ from
-    # the sealed catalogue". Claiming tampering about evidence nobody touched
-    # is as bad as missing tampering.
+    let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+    assert equal $result.content_verified true "the sealed subtree did not re-derive its own CID"
+    assert $result.valid "a genuine portable directory proof was refused"
+}
+
+# multiproofs/ is excluded when the manifest is built, so a bundle proving the
+# "." row carries the proof directory INSIDE the tree the walk covers. Keeping
+# it folds a different CID for every bundle — no "." row could ever verify away
+# from its repo, and the failure would look like tampering.
+@test
+def "a bundle proving the root row excludes its own proof directory from the walk" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+
+    let result = merkle verify $fx.root_proof --repo $fx.bundle --bundle
+    assert equal $result.content_verified true "the bundle's own multiproofs/ was folded into the root CID"
+    assert $result.valid "a genuine portable proof of the whole repo was refused"
+}
+
+# The same argument for the other directory the builder's enumeration cannot
+# see. `git ls-files` never lists a path under .git, so those bytes were never in
+# the sealed CID — and the shape that hits it is the most ordinary distribution
+# there is, a clone of a sealed repo. The subtree tests above cannot catch it:
+# .git sits outside their row's scope, so only the "." row breaks.
+@test
+def "the root row of a bundle distributed as a git repo still verifies" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+    ^git -C $fx.bundle init -q
+    ^git -C $fx.bundle add README.md sub/inner.txt o+e>| ignore
+    ^git -C $fx.bundle -c user.email=t@t -c user.name=t commit -q -m seed
+
+    let result = merkle verify $fx.root_proof --repo $fx.bundle --bundle
+    assert equal $result.content_verified true "the bundle's own .git was folded into the root CID"
+    assert $result.valid "a genuine bundle shipped as a git repo was reported as tampered"
+}
+
+# The ordinary consumer case, and the one that must not read as tampering: a
+# genuine bundle unpacked INSIDE some git repo of the consumer's own.
+# `rev-parse --is-inside-work-tree` answers yes there, so `git ls-files` ran over
+# the bundle path and listed whatever was tracked there — usually nothing — and
+# sealed, untouched evidence was reported as `content_verified: false`, "the
+# directory's tracked contents differ from the sealed catalogue". Claiming
+# tampering about evidence nobody touched is as bad as missing tampering.
+@test
+def "a genuine bundle unpacked inside another git repo still verifies" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealed-bundle $tmp_dir
+
     let outer = $"($tmp_dir)/consumer"
     mkdir $outer
     ^git -C $outer init -q
-    cp --recursive $bundle $"($outer)/bundle"
-    let nested = merkle verify $dir_proof --repo $"($outer)/bundle"
-    assert equal $nested.content_verified "unverifiable" "a bundle inside a git repo was judged against that repo's index"
-    assert ($nested.error | str contains "not a git repository")
+    cp --recursive $fx.bundle $"($outer)/bundle"
+
+    let nested = merkle verify $fx.dir_proof --repo $"($outer)/bundle" --bundle
+    assert $nested.valid "a bundle inside a git repo was judged against that repo's index"
 }
+
+# A hostile bundle, hand-built rather than produced here: alice's real root, her
+# real signature and her real proof of `sub`, with the attacker's bytes under
+# sub/. Away from the origin repo the subtree the bundle carries IS the
+# enumeration, so this is the case that decides whether walking it is safe. It
+# is: the sealed content_cid commits to every entry, so substituted bytes fold
+# to a different CID.
+@test
+def "a non-git bundle carrying the wrong bytes under a proven directory is refused" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+    "anything at all\n" | save --force $"($fx.bundle)/sub/inner.txt"
+
+    let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+    assert $result.structure_valid "structure is genuine — this is alice's real proof"
+    assert not $result.valid "a bundle carrying the wrong bytes under a proven directory verified"
+    assert equal $result.content_verified false
+    assert ($result.error | str contains "differ from the sealed catalogue")
+}
+
+# The other two verbs the README claims. A directory CID commits to the entry
+# list, not only to each file's bytes, so both have to be pinned separately from
+# the substitution above — none of the three implies the others.
+@test
+def "a bundle that drops a file from a proven directory is refused" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+    rm $"($fx.bundle)/sub/inner.txt"
+
+    let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+    assert not $result.valid "a bundle missing a sealed file under the proven directory verified"
+    assert equal $result.content_verified "missing" "an empty subtree read as a content mismatch, not as absent"
+}
+
+@test
+def "a bundle that adds a file under a proven directory is refused" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+    "payload\n" | save --force $"($fx.bundle)/sub/extra.txt"
+
+    let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+    assert not $result.valid "a bundle with an added file under the proven directory verified"
+    assert equal $result.content_verified false
+}
+
+# The blocking hole this flag exists to close. A `.git` costs a sender nothing,
+# and one whose index lists exactly the sealed paths hands the sender the file
+# set: the extra file becomes untracked, the git arm ignores it by design, and
+# the bundle answers valid. The enumeration must be the verifier's choice, so
+# --bundle ignores any index the target carries.
+@test
+def "a bundle cannot hand itself the git arm by shipping its own index" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+    "payload\n" | save --force $"($fx.bundle)/sub/extra.txt"
+    ^git -C $fx.bundle init -q
+    ^git -C $fx.bundle add sub/inner.txt o+e>| ignore
+    ^git -C $fx.bundle -c user.email=m@m -c user.name=m commit -q -m seed
+
+    let guarded = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+    assert not $guarded.valid "the sender's own index decided the file set under --bundle"
+    assert equal $guarded.content_verified false
+    assert equal $guarded.content_enumeration "walk"
+
+    # Without the flag the target still gets to be a git repo root, which is the
+    # documented worktree behaviour — an untracked file is outside what the row
+    # commits to. Asserted so the difference the flag makes stays visible: if
+    # this ever starts failing, --bundle has become a no-op and the test above
+    # would keep passing.
+    #
+    # This arm is the sender's choice, and the result must say so: the two
+    # readings of content_verified: true are different claims, and a consumer
+    # keying on .valid has nothing else to tell them apart by.
+    let unguarded = merkle verify $fx.dir_proof --repo $fx.bundle
+    assert equal $unguarded.content_verified true "the git arm stopped honouring the target's index"
+    assert equal $unguarded.content_enumeration "git-index" "a verdict reached through the target's own index did not say so"
+}
+
+# A file row is checked against its own content_sha256 and never asks what else
+# is on disk, so there is no enumeration to report — and reporting one anyway
+# would suggest a file set was consulted when none was.
+@test
+def "a file row reports no enumeration at all" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+    let file_proof = merkle prove README.md --repo $fx.repo
+
+    let file_row = merkle verify $file_proof --repo $fx.bundle --bundle
+    assert equal $file_row.content_verified true
+    assert equal $file_row.content_enumeration null "a file row claimed a directory enumeration"
+}
+
+# The walk covers everything on disk, where the git arm covered only the tracked
+# set — so without scoping, one stray link ANYWHERE under the target reported a
+# genuine proof as tampered, with a message naming a path that is neither
+# tracked nor under the proven row. A directory node depends on nothing outside
+# itself, so the walk is scoped to the row's own subtree.
+@test
+def "a symlink outside the proven subtree does not touch the verdict" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+    ^ln -s /etc/hosts $"($fx.bundle)/notes.lnk"
+
+    let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+    assert equal $result.content_verified true "a link beside the proven directory decided its verdict"
+    assert $result.valid
+}
+
+# The same link INSIDE the subtree must still be refused, and refused before any
+# bytes are read: following it would re-derive the CID from content the bundle
+# does not carry, and a matches/MISMATCH answer over the verifier's own files is
+# an oracle about them. _tracked.nu argues walked-entries needs no symlink gate
+# of its own because resolve-leaf-file catches them one layer up — this is the
+# hostile artifact that feeds the walk arm and checks that argument.
+@test
+def "a symlink inside a proven subtree is refused by the walk, not followed" [] {
+    let fx = make-sealed-bundle $in.tmp_dir
+    rm $"($fx.bundle)/sub/inner.txt"
+    ^ln -s /etc/hosts $"($fx.bundle)/sub/inner.txt"
+
+    let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+    assert not $result.valid "a symlinked member of a proven directory was verified"
+    assert equal $result.content_verified "symlink"
+}
+
 
 # The containment check runs on the resolved path, so it has to reject a
 # sibling as well as a parent. `--repo /a/repo` with a link resolving to

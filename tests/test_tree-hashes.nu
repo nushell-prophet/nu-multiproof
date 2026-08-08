@@ -2,6 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/tree-hashes.nu
+use ../nu-multiproof/_tracked.nu content-tree
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
 # the test throws, so a failing test does not leak its /tmp/tmp.* dir.
@@ -208,6 +209,29 @@ def "broken symlink is rejected by name, not an opaque open failure" [] {
     let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
     assert ($err != null) "broken tracked symlink was accepted"
     assert ($err | str contains "dangling.txt") $"error does not name the broken symlink: ($err)"
+}
+
+# A scoped walk covers one row's subtree, but tracked-dirs derives a parent for
+# every path and cid-nodes always folds "." — so folding "a/b" alone also
+# synthesized "a" and ".". Those are CIDs of a tree that exists nowhere: neither
+# the target's real root nor a full walk's. A record whose job is handing out
+# directory CIDs must not carry a plausible wrong root among them.
+@test
+def "a walk scoped to a subtree offers no node above that subtree" [] {
+    let target = $"($in.tmp_dir)/bundle"
+    mkdir $"($target)/a/b"
+    "deep\n" | save --force $"($target)/a/b/inner.txt"
+    "beside\n" | save --force $"($target)/a/sibling.txt"
+
+    let scoped = content-tree $target --walk --under "a/b"
+    let whole = content-tree $target --walk
+
+    assert equal ($scoped.nodes | columns | sort) ["a/b" "a/b/inner.txt"]
+    assert equal $scoped.dirs ["a/b"]
+    assert ("." in ($whole.nodes | columns)) "an unscoped walk stopped folding the root"
+    # The node the scope exists FOR is untouched: a UnixFS directory commits to
+    # its own entries and to nothing above them, which is what makes scoping sound.
+    assert equal ($scoped.nodes | get "a/b") ($whole.nodes | get "a/b")
 }
 
 # Builder and verifier share one enumeration (content-tree), but not one

@@ -26,42 +26,44 @@ use ots.nu
 # must not be assumed to have run, and the verifier's file rows and its
 # directory re-derivation must refuse identically.
 
-# Content check for a row that attests no sha256 — a directory, or "." itself.
+# Which disk enumeration answers "what is under this directory". This is the
+# security question, and it has two answers because it is really two questions.
 #
-# These rows carry only a content_cid, and nothing ever recomputed it: the
-# branch returned null and `valid` stayed true. So the strongest configuration
-# this tool offers answered `valid: true` for a bundle carrying alice's genuine
-# root, her genuine signature and her genuine proof of the `src` row, with the
-# attacker's own tracked files in src/. A directory absent from disk entirely
-# gave the same answer. Four of this repo's own 42 rows are that shape,
-# including "." — the CID of the whole repo.
+# In a worktree, git answers "which files did the seal ever cover" — an
+# UNTRACKED file under the directory deliberately does not change the answer.
+# It is not in the tracked tree, so it is not in the CID that was sealed, and
+# it never was; making it a divergence would turn every build artifact into a
+# failed verification. Note the consequence honestly: a directory verifying
+# this way means "the tracked contents are the sealed ones", not "nothing else
+# sits in this directory", and `ipfs add` over the working tree would produce a
+# different CID than the "." row whenever untracked files are present. Pinned
+# by "an untracked file under a proven directory is outside what the row
+# commits to".
 #
-# The enumeration comes from disk, not from the manifest: a UnixFS directory
-# commits to its entries, so a file added under it has to be noticed, and an
-# added file is by definition not in the catalogue. `content-tree` walks
-# `git ls-files` — the same walk tree-hashes used to build the row, because a
-# directory CID is defined over the tracked tree and nothing else.
+# In a portable bundle (README "Verifying without the origin repo") there is no
+# index, and the walk answers the stronger question: the sealed content_cid
+# commits to every entry under the row, so a bundle that drops a file, adds one
+# or alters a byte folds to a different CID. The enumeration does not need to
+# be trusted, only complete — which is why walking an artifact the sender built
+# is sound where it would be wrong in a worktree.
 #
-# What that scopes out, deliberately: an UNTRACKED file under the directory
-# does not change the answer. It is not in the tracked tree, so it is not in
-# the CID that was sealed, and it never was — the manifest has no opinion about
-# untracked files anywhere in the repo. Making it a divergence would turn every
-# build artifact into a failed verification. Note the consequence honestly: a
-# directory verifying here means "the tracked contents are the sealed ones",
-# not "nothing else sits in this directory", and `ipfs add` over the working
-# tree would produce a different CID than the "." row whenever untracked files
-# are present. Pinned by "an untracked file under a proven directory is outside
-# what the row commits to".
+# $bundle is how the VERIFIER says which question it is asking, and it exists
+# because the target cannot be allowed to answer. A `.git` costs a sender
+# nothing to ship, and one whose index lists exactly the sealed paths put the
+# attacker in charge of the file set: the same bundle carrying an extra file
+# under the proven directory answered `valid: true` with that `.git` present
+# and `valid: false` without it. Distributing a bundle as a git repo is the
+# ordinary case, so this was not an exotic shape. Pinned by "a bundle cannot
+# hand itself the git arm by shipping its own index".
 #
-# "unverifiable" when there is nothing to re-derive from — no git repo, or a
-# leaf that commits to no content at all. A portable bundle (README "Verifying
-# without the origin repo") carries no working tree, and validate-leaf permits
-# a row whose content_cid is empty, which commits to nothing this can check. A
-# row whose only commitment cannot be checked must not read as verified;
-# returning null restores the exact hole this closes, and an attacker can ship
-# a plain directory, or a hand-built manifest, as easily as a repo.
-def derive-dir-cid [target: path, leaf: record]: nothing -> any {
-    if $leaf.content_cid == "" { return "unverifiable" }
+# Which arm ran is reported (verify's content_enumeration), because the two
+# readings of `content_verified: true` are not the same claim and nothing in the
+# result said which one was made. A consumer keying on `.valid` — nu-cybergraph
+# — could not tell "the tracked files are the sealed ones" from "everything the
+# sender shipped folds to the sealed CID". The flag lets a verifier choose; the
+# field lets it check what it got.
+def dir-enumeration [target: path, bundle: bool]: nothing -> string {
+    if $bundle { return "walk" }
     # Why --show-toplevel compared against the target, and not
     # --is-inside-work-tree: that answers yes for any directory *under* a work
     # tree. A consumer who unpacks a genuine bundle inside any git repo — the
@@ -71,12 +73,44 @@ def derive-dir-cid [target: path, leaf: record]: nothing -> any {
     # "the directory's tracked contents differ from the sealed catalogue".
     # Claiming tampering about untouched evidence is the same defect class as
     # an explorer outage reading as an invalid proof. The manifest's paths are
-    # relative to the repo root, so anything but the root is "unverifiable".
+    # relative to the repo root, so only the root itself is the repo this row
+    # was catalogued in; anything else is walked whether or not --bundle said so.
     let toplevel = do { ^git -C $target rev-parse --show-toplevel } | complete
-    if $toplevel.exit_code != 0 { return "unverifiable" }
-    if ($toplevel.stdout | str trim | path expand) != ($target | path expand) { return "unverifiable" }
+    let at_repo_root = (
+        $toplevel.exit_code == 0
+        and ($toplevel.stdout | str trim | path expand) == ($target | path expand)
+    )
+    if $at_repo_root { "git-index" } else { "walk" }
+}
+
+# Content check for a row that attests no sha256 — a directory, or "." itself.
+# Returns {verdict, enumeration}: the verdict content_verified reports, and
+# which enumeration reached it (null when none was needed).
+#
+# These rows carry only a content_cid, and nothing ever recomputed it: the
+# branch returned null and `valid` stayed true. So the strongest configuration
+# this tool offers answered `valid: true` for a bundle carrying alice's genuine
+# root, her genuine signature and her genuine proof of the `src` row, with the
+# attacker's own tracked files in src/. A directory absent from disk entirely
+# gave the same answer. Four of this repo's own 42 rows are that shape,
+# including "." — the CID of the whole repo.
+#
+# The enumeration comes from disk, not from the manifest (see dir-enumeration
+# for which one): a UnixFS directory commits to its entries, so a file added
+# under it has to be noticed, and an added file is by definition not in the
+# catalogue.
+#
+# "unverifiable" is left for one case only: a leaf that commits to no content
+# at all. validate-leaf permits a row whose content_cid is empty, and a row
+# whose only commitment cannot be checked must not read as verified — returning
+# null there restores the exact hole this closes, and an attacker can ship a
+# hand-built manifest as easily as a repo. Nothing is enumerated for it, so it
+# reports no enumeration either.
+def derive-dir-cid [target: path, leaf: record, bundle: bool]: nothing -> record {
+    if $leaf.content_cid == "" { return {verdict: "unverifiable" enumeration: null} }
+    let enumeration = dir-enumeration $target $bundle
     # A directory CID is a function of the whole subtree, so this reads every
-    # tracked file. Only rows that attest no sha256 reach it — file rows keep
+    # file in the set. Only rows that attest no sha256 reach it — file rows keep
     # the single-file hash.
     # Why --lenient: the builder throws on a tracked path that no longer
     # resolves to a regular file inside the repo; here that disk state IS the
@@ -84,14 +118,18 @@ def derive-dir-cid [target: path, leaf: record]: nothing -> any {
     # the containment hole resolve-leaf-file closes for file rows, and it must
     # be refused BEFORE any bytes are read — a MISMATCH/matches answer over
     # followed links doubles as an oracle about content the bundle does not
-    # contain. Coarse by design: the problems cover the whole tracked tree,
-    # not just this row's subtree — a partial re-derivation would need a
-    # second, differing enumeration (see 785420b).
-    let tree = content-tree $target --lenient
-    if ($tree.problems | is-not-empty) { return $tree.problems.0.status }
+    # contain. On the git arm the problems still cover the whole tracked tree
+    # rather than this row's subtree — narrowing there would need a second,
+    # differing enumeration of the index (see 785420b). The walk has no such
+    # cost, so it is scoped with --under: a directory node depends on nothing
+    # outside itself, and a walk that is not scoped lets a stray symlink or an
+    # unreadable file anywhere under the target report an untouched proof as
+    # tampered — the very thing the paragraph above calls a defect.
+    let tree = content-tree $target --lenient --walk=($enumeration == "walk") --under $leaf.filepath
+    if ($tree.problems | is-not-empty) { return {verdict: $tree.problems.0.status enumeration: $enumeration} }
     let node = $tree.nodes | get --optional $leaf.filepath
-    if $node == null { return "missing" }
-    ($node | node-cid) == $leaf.content_cid
+    if $node == null { return {verdict: "missing" enumeration: $enumeration} }
+    {verdict: (($node | node-cid) == $leaf.content_cid) enumeration: $enumeration}
 }
 
 # Build the tree from the manifest and write the root statement file
@@ -197,16 +235,29 @@ export def prove [
 #                      different seals — blocks valid
 #   content_verified — the on-disk content matches what the leaf attests: a
 #                      file row against content_sha256, a directory row (and
-#                      ".") against content_cid re-derived from the tracked
-#                      files under it. Anything but true is a divergence from
+#                      ".") against content_cid re-derived from the files under
+#                      it — the TRACKED files when the target is a git repo
+#                      root, every file under the row otherwise and whenever
+#                      --bundle is passed. Anything but true is a divergence from
 #                      the catalogue, or a check that could not be made, and
 #                      blocks valid either way: "missing" (absent on disk),
 #                      "symlink" (a link where the catalogue describes a
 #                      regular file), "outside" (resolves out of the repo
 #                      through a symlinked parent), "directory" (a file row
-#                      landing on a directory), "unverifiable" (nothing to
-#                      re-derive the commitment from — the target is not a git
-#                      repo root, or the row commits to no content at all)
+#                      landing on a directory), "unverifiable" (the row commits
+#                      to no content at all, so there is nothing to re-derive).
+#                      A directory row away from its origin repo is re-derived
+#                      from the subtree the target carries, so a portable bundle
+#                      gets a real verdict rather than "unverifiable"
+#   content_enumeration — which file set answered a directory row: "git-index"
+#                      (the tracked files of the repo the target IS the root of)
+#                      or "walk" (every file under the row, which --bundle
+#                      forces). null for a file row, and for a row committing to
+#                      no content — nothing was enumerated either way. The two
+#                      readings of `content_verified: true` are different claims,
+#                      and without this a consumer keying on .valid cannot tell
+#                      "the tracked files are the sealed ones" from "everything
+#                      the sender shipped folds to the sealed CID"
 #   signatures       — ssh-sign results over the root statement file
 #   ots              — {status: absent|pending|anchored, ots, height} — a
 #                      status, NOT pass/fail: a fresh seal stays pending for
@@ -239,6 +290,7 @@ export def verify [
     --repo: path # Target git repo root (default: git root of current directory)
     --pubkeys-dir: path # Trusted *.pub directory (default: multiproofs/pubkeys of the target — i.e. the bundle's own keys)
     --signer: string # Require a valid signature from the key with this fingerprint (see `pubkey fingerprint`)
+    --bundle # Treat the target as a received artifact: re-derive a directory row by walking it, never through a .git it carries
     --fail # Exit non-zero when the result is not valid (for CI)
 ]: nothing -> record {
     # Why --signer no longer needs --pubkeys-dir, where it used to be refused
@@ -326,8 +378,11 @@ export def verify [
     # Content binding: without this the proof only shows the ROW was
     # catalogued, not that the on-disk FILE matches it.
     let target_file = $target | path join $proof.leaf.filepath
-    let content_verified = if $proof.leaf.content_sha256 == "" {
-        derive-dir-cid $target $proof.leaf
+    let derived = if $proof.leaf.content_sha256 == "" {
+        derive-dir-cid $target $proof.leaf $bundle
+    } else { null }
+    let content_verified = if $derived != null {
+        $derived.verdict
     } else {
         # Why a status and not null: null means "nothing to check". Every
         # status resolve-leaf-file returns is a real divergence from the sealed
@@ -340,6 +395,8 @@ export def verify [
             (open --raw $target_file | hash sha256) == $proof.leaf.content_sha256
         }
     }
+    # Null for a file row, which never consults an enumeration at all.
+    let content_enumeration = if $derived != null { $derived.enumeration } else { null }
 
     # Stamps are discovered by content commitment (info.hash), never by bundle
     # name — stale bundles from previous seals are archival, so "no stamp
@@ -385,16 +442,14 @@ export def verify [
         $"($proof.leaf.filepath) on disk does not reproduce the proven content_cid — the directory's tracked contents differ from the sealed catalogue"
     } else if $content_verified == false {
         $"on-disk ($proof.leaf.filepath) does not match the proven content_sha256"
-    } else if $content_verified == "unverifiable" and $proof.leaf.content_cid == "" {
-        $"($proof.leaf.filepath) commits to no content at all — the row carries neither a content_sha256 nor a content_cid, so there is nothing about it to check"
     } else if $content_verified == "unverifiable" {
-        $"($proof.leaf.filepath) attests only a content_cid, and ($target) is not a git repository — a directory CID commits to every tracked entry under it, so there is nothing here to re-derive it from"
+        $"($proof.leaf.filepath) commits to no content at all — the row carries neither a content_sha256 nor a content_cid, so there is nothing about it to check"
     } else if $content_verified == "missing" and $proof.leaf.content_sha256 == "" {
         # Two disk states share this verdict: a tracked file deleted from the
         # worktree (the ordinary mid-edit state, which used to crash the
         # re-derivation with a bare "Eval block failed"), and a row naming a
         # directory no tracked file sits under.
-        $"($proof.leaf.filepath) is proven as a directory, but its sealed tracked content is not all on disk — a tracked file was deleted, or no tracked files sit under it at all"
+        $"($proof.leaf.filepath) is proven as a directory, but its sealed content is not all on disk — a tracked file was deleted, no tracked files sit under it at all, or a bundle does not carry that subtree"
     } else if $content_verified == "missing" {
         $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"
     } else if ($content_verified in ["symlink" "outside" "directory"]) and $proof.leaf.content_sha256 == "" {
@@ -417,7 +472,8 @@ export def verify [
 
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (directory CID needs the tracked tree)' })"
+    let enumerated_by = if $content_enumeration == null { "" } else { $" \(via ($content_enumeration)\)" }
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (the row commits to no content)' })($enumerated_by)"
     print $"ots:       ($ots_status.status)"
     for e in $endorsements {
         print $"endorsed:  ($e.status) — ($e.signer)"
@@ -433,6 +489,7 @@ export def verify [
         manifest_root: $manifest_root
         leaf: $proof.leaf
         content_verified: $content_verified
+        content_enumeration: $content_enumeration
         signatures: $sig_check.sigs
         ots: $ots_status
         endorsements: $endorsements
