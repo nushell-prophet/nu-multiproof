@@ -155,7 +155,12 @@ def "an unreadable key reports the parser reason, not a umask artifact" [] {
     ] | str join "\n" | save --force $script
 
     let out = ^bash -c $"umask 0022; exec nu ($script)" | complete
-    assert ($out.stdout | str contains "invalid format") $"expected ssh-keygen's parse error, got: ($out.stdout)"
+    # ssh-keygen's wording varies with the OpenSSL underneath: older says
+    # "invalid format", newer says "error in libcrypto" for the same
+    # unparseable key. Either is the parse-stage reason; the pins that matter
+    # are the two asserts below.
+    let parse_reasons = ["invalid format" "error in libcrypto"]
+    assert ($parse_reasons | any {|reason| $out.stdout | str contains $reason }) $"expected ssh-keygen's parse error, got: ($out.stdout)"
     assert (not ($out.stdout | str contains "UNPROTECTED")) $"the reason is a umask artifact: ($out.stdout)"
     assert (not ($out.stdout | str contains $nu.temp-dir)) $"the reason names a temp path the operator cannot look at: ($out.stdout)"
 }
