@@ -316,6 +316,54 @@ def "a proof file holding a JSON scalar is refused, not a crash" [] {
     }
 }
 
+# Nushell completion appends the slash when the argument is a directory, so
+# `merkle prove sub/` is what a user actually types. The manifest never carries
+# one — `/` is the one byte a filename cannot contain — so the row lookup missed
+# and the command reported a catalogued directory as absent from the catalogue.
+@test
+def "a directory row is provable with the trailing slash completion appends" [] {
+    let repo = make-test-repo $in.tmp_dir
+
+    let plain = merkle prove "sub" --repo $repo
+    let slashed = merkle prove "sub/" --repo $repo
+
+    # Same output path, and not the hidden inclusion-proofs/sub/.multiproof.json
+    # that joining the untrimmed argument would have written.
+    assert equal $slashed $plain
+    assert equal ($slashed | path basename) "sub.multiproof.json"
+    # The leaf comes from the matched row, so the trimmed key never reaches it
+    assert equal (open $slashed | get leaf.filepath) "sub"
+}
+
+# The slash is one-way evidence: present, the caller means a directory; absent,
+# it says nothing, since `merkle prove sub` asks for the same row. So it can
+# only reject — and a file row under a directory argument is the caller and the
+# catalogue disagreeing about what that path is.
+@test
+def "a trailing slash on a file row is refused rather than quietly dropped" [] {
+    let repo = make-test-repo $in.tmp_dir
+
+    let err = try { merkle prove "README.md/" --repo $repo; null } catch {|e| $e.msg }
+    assert ($err != null) "a file row answered a proof request for a directory"
+    assert ($err | str contains "lists README.md as a file")
+    assert not ($repo | path join multiproofs inclusion-proofs README.md.multiproof.json | path exists)
+}
+
+# Trimming the slash leaves nothing at all for "/" and "//", so the
+# not-in-the-manifest throw named nothing either — a message reading as if the
+# argument were missing rather than absolute. The repo root is the "." row.
+@test
+def "an argument that is only slashes is refused by name, not as an empty key" [] {
+    let repo = make-test-repo $in.tmp_dir
+
+    for arg in ["/" "//"] {
+        let err = try { merkle prove $arg --repo $repo; null } catch {|e| $e.msg }
+        assert ($err != null) $"($arg) was accepted as a manifest row"
+        assert ($err | str starts-with $"($arg) names no manifest row") $"the error does not name the argument: ($err)"
+        assert ($err | str contains '"." row') "the error does not point at the row that is the repo root"
+    }
+}
+
 # --- prove/verify end-to-end ---
 
 @test

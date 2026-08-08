@@ -127,14 +127,38 @@ export def write-root [
 # signer's pubkey (+ the tree-root OTS bundle for the time anchor).
 @example "extract a compact inclusion proof" { nu-multiproof merkle prove README.md }
 export def prove [
-    filepath: string # Manifest row to prove (as listed in tree-hashes.csv)
+    filepath: string # Manifest row to prove (as listed in tree-hashes.csv; a trailing / is accepted for a directory row)
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> path {
     let target = repo-root $repo
+    # A trailing slash reaches this argument from shell completion and never
+    # from the manifest: `/` is the one byte a filename cannot contain, so no
+    # row ends with one — `git ls-files` emits none and the "." row is appended
+    # bare. So it is an artifact of the lookup KEY, trimmed here once for both
+    # the row match and the output name. Normalizing it does not soften the
+    # reject-never-normalize rule: the leaf written into the proof below still
+    # comes from the matched row, never from this argument.
+    let key = $filepath | str trim --right --char "/"
+    # `/` and `//` trim to nothing, and the not-in-the-manifest throw below would
+    # then name nothing either — a message that reads as if the argument were
+    # missing rather than absolute. The repo root is the "." row, never "/".
+    if ($key | is-empty) {
+        error make {msg: $"($filepath) names no manifest row — paths are relative to the repo root, which is the \".\" row"}
+    }
     let leaves = load-leaves (manifest-path $target)
-    let hit = $leaves | enumerate | where item.filepath == $filepath
+    let hit = $leaves | enumerate | where item.filepath == $key
     if ($hit | is-empty) {
-        error make {msg: $"($filepath) is not in the manifest — see `tree-hashes --echo` for listed paths"}
+        error make {msg: $"($key) is not in the manifest — see `tree-hashes --echo` for listed paths"}
+    }
+    # The slash is one-way evidence, so it can only reject. Present, the caller
+    # means a directory; absent, it says nothing at all, since `merkle prove
+    # sub` is the equally ordinary way to ask for the same row — which is why
+    # the trim above cannot instead be a rule that directory rows require it.
+    # A file row under a directory argument is the caller and the catalogue
+    # disagreeing about what that path IS, and handing back the file's proof
+    # would answer a question nobody asked.
+    if $key != $filepath and $hit.0.item.content_sha256 != "" {
+        error make {msg: $"($filepath) names a directory, but the manifest lists ($key) as a file — drop the trailing slash to prove the file"}
     }
     let leaf_hashes = $leaves | each { leaf-hash $in }
     let proof = {
@@ -150,7 +174,9 @@ export def prove [
     # Under multiproofs/ (excluded from the manifest), never next to the source
     # file — that would pollute the worktree and the next manifest. Not a
     # --out flag: nothing ever passed one, and `mv` is the escape hatch.
-    let out = inclusion-proofs-dir $target | path join $"($filepath).multiproof.json"
+    # $key, not $filepath: a trailing slash here would write the hidden
+    # inclusion-proofs/sub/.multiproof.json instead of sub.multiproof.json.
+    let out = inclusion-proofs-dir $target | path join $"($key).multiproof.json"
     mkdir ($out | path dirname)
     $proof | to json --indent 2 | save --raw --force $out
     $out
