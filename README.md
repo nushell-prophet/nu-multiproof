@@ -199,6 +199,8 @@ The content leg answers with a state, not a boolean, and **only `true` passes** 
 
 When `multiproofs/tree-hashes.csv` is there, `merkle verify` also rebuilds the root from it and reports it as `manifest_root`; a value differing from the signed `root` blocks `valid`. The statement is a claim about that catalogue, and the two are written in separate steps — an interrupted `seal`, or a bare `tree-hashes` run afterwards, leaves a CSV no signature covers while old proofs still fold to the old statement. A portable bundle carries no CSV, so `manifest_root` is `null` there and nothing is cross-checked. (Pinned by the test "a manifest that no longer yields the signed root is caught".)
 
+A proof of an **older seal** is still checkable in place with `--multiproofs-dir`: point it at a directory holding that seal's `tree-root.txt` and its `.sig` files (a CSV is optional, cross-checked when present), while `--repo` keeps naming the live content. The signed statement, its signatures and the manifest leg are read from the named directory; the trust list default and the OTS stamp discovery stay with `--repo` — a snapshot freezes statement and signatures, never keys, and the stamp archive is cross-seal with discovery by content hash. (Pinned by "a proof of an older seal verifies against that snapshot of the seal", "the manifest cross-check follows the multiproofs dir, not the repo", "a planted signature over another statement does not endorse the snapshot" and "an anchor in the live archive dates an older seal verified via its snapshot".)
+
 ### Verifying without the origin repo
 
 The artifact set is portable. Lay it out in a plain directory — no git, no clone of the origin repo — mirroring the `multiproofs/` layout, and point `merkle verify` at it with `--repo`:

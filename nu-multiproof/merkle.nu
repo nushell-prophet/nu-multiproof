@@ -10,7 +10,10 @@ use _repo.nu repo-root
 use _fs.nu [list-files list-dirs]
 use _tracked.nu [content-tree resolve-leaf-file]
 use _cid-helpers.nu node-cid
-use _layout.nu [manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir]
+use _layout.nu [
+    manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir
+    multiproofs-dir MERKLE_ROOT_FILE MANIFEST_FILE
+]
 use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
     root-statement parse-root-statement validate-leaf
@@ -277,6 +280,13 @@ export def prove [
 # A proof whose embedded root differs from the signed root is a proof for a
 # DIFFERENT seal — that throws loudly instead of reporting invalid.
 #
+# The signed statement, the signatures beside it and the manifest cross-check
+# are read from --multiproofs-dir (default: multiproofs/ of the target), so a
+# proof born under an OLDER seal is checkable in place: point the flag at a
+# snapshot of that seal's tree-root.txt + .sig files and keep --repo on the
+# live content. Only those legs move — the trust list and the stamp archive
+# stay with the target (the comments at their resolution sites say why).
+#
 # The default trust list ships inside the artifact under examination, so a
 # default `valid: true` states "this bundle is internally consistent", not
 # "the signer I expect endorsed this" — any key the bundle carries satisfies it,
@@ -289,6 +299,7 @@ export def verify [
     proof_file: path
     --repo: path # Target git repo root (default: git root of current directory)
     --pubkeys-dir: path # Trusted *.pub directory (default: multiproofs/pubkeys of the target — i.e. the bundle's own keys)
+    --multiproofs-dir: path # Directory holding the seal's tree-root.txt, its .sig files and optionally tree-hashes.csv (default: multiproofs/ of the target) — names an older seal's snapshot so its proofs verify without rebuilding a bundle
     --signer: string # Require a valid signature from the key with this fingerprint (see `pubkey fingerprint`)
     --bundle # Treat the target as a received artifact: re-derive a directory row by walking it, never through a .git it carries
     --fail # Exit non-zero when the result is not valid (for CI)
@@ -309,6 +320,10 @@ export def verify [
     # The trust list, settled before the artifact is even opened: it is the
     # verifier's own input, so a --signer this list holds no key for is an
     # operator error and must not be reported as something the proof failed.
+    # --multiproofs-dir does not move this default: a seal snapshot freezes the
+    # statement and its signatures, never keys — the keys stay registered in
+    # the repo the content lives in, and the trust list is the verifier's
+    # anchor, not the seal's property.
     let trusted_dir = $pubkeys_dir | default (pubkeys-dir $target)
     if $signer != null { check-signer-known $signer $trusted_dir }
 
@@ -324,9 +339,23 @@ export def verify [
     # folds to the root (see _merkle-helpers.nu validate-leaf).
     validate-leaf $proof.leaf
 
-    let root_file = merkle-root-path $target
+    # Which seal to check against, carved out of --repo the same way
+    # --pubkeys-dir is: --repo keeps its real job (the content the proof is
+    # about), while the seal's own artifacts may sit elsewhere. For any proof
+    # older than the newest seal they DO sit elsewhere — the live multiproofs/
+    # was overwritten by the next seal, and without this flag the only way to
+    # verify such a proof was to rebuild a directory where the old snapshot
+    # sits where the current seal is expected (nu-cybergraph measured that at
+    # ~90ms of copying per link, on every read). Pinned by tests/test_merkle.nu
+    # "a proof of an older seal verifies against that snapshot of the seal".
+    let seal_dir = $multiproofs_dir | default (multiproofs-dir $target)
+    let root_file = $seal_dir | path join $MERKLE_ROOT_FILE
     if not ($root_file | path exists) {
-        error make {msg: $"root statement not found: ($root_file) — run `merkle write-root` or `seal`"}
+        error make {msg: (if $multiproofs_dir == null {
+            $"root statement not found: ($root_file) — run `merkle write-root` or `seal`"
+        } else {
+            $"root statement not found: ($root_file) — --multiproofs-dir must name a directory holding the seal's ($MERKLE_ROOT_FILE)"
+        })}
     }
     let signed_root = parse-root-statement $root_file
     if $proof.root != $signed_root {
@@ -350,7 +379,7 @@ export def verify [
     # instead: an unreadable catalogue compares to nothing.
     # Pinned by tests/test_merkle.nu "a manifest that no longer yields the
     # signed root is caught".
-    let manifest = manifest-path $target
+    let manifest = $seal_dir | path join $MANIFEST_FILE
     let manifest_root = if ($manifest | path exists) {
         mth (load-leaves $manifest | each { leaf-hash $in }) | encode hex | str lowercase
     } else { null }
@@ -409,6 +438,13 @@ export def verify [
     # optimization that would have excluded the endorsement anchors back when
     # they had bundles of their own — the comparison below is what decides, so
     # the filter only ever risked hiding evidence.
+    # The archive stays keyed to --repo under --multiproofs-dir, for the same
+    # reason: it is cross-seal by design — stale bundles are archival — and a
+    # seal snapshot carries no stamp copies, while the live archive holds at
+    # least whatever a frozen copy would, including anchors that confirmed
+    # after the snapshot was taken. The hash comparison is what keeps a richer
+    # directory safe to scan. Pinned by tests/test_merkle.nu "an anchor in the
+    # live archive dates an older seal verified via its snapshot".
     let stamps = scan-stamps (ots-dir $target)
 
     let root_hash = open --raw $root_file | hash sha256

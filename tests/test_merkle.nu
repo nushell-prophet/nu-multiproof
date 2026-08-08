@@ -1434,3 +1434,126 @@ def "proof against a different seal root throws loudly" [] {
     root-statement ("other" | hash sha256) | save --raw --force $"($repo)/multiproofs/tree-root.txt"
     assert error {|| merkle verify $proof --repo $repo }
 }
+
+# Two seals over one repo, seal #1 snapshotted before seal #2 overwrites the
+# live artifacts: statement + signature copied flat into a bare directory —
+# the shape nu-cybergraph freezes under seals/<root12>/: no CSV, no pubkeys,
+# no OTS copies. Seal #2 only ADDS a tracked file, so seal #1's README row and
+# the bytes on disk it attests stay exactly as sealed — the old proof is
+# perfect, and only the seal artifacts around it have moved on.
+def make-older-seal [tmp_dir: path]: nothing -> record {
+    let repo = make-test-repo $tmp_dir
+    let key_path = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    merkle write-root --repo $repo
+    let old_sig = ssh-sign sign $"($repo)/multiproofs/tree-root.txt" --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let proof = merkle prove README.md --repo $repo
+    let old_root = parse-root-statement $"($repo)/multiproofs/tree-root.txt"
+
+    let snap = $"($tmp_dir)/snap"
+    mkdir $snap
+    cp $"($repo)/multiproofs/tree-root.txt" $snap
+    cp $old_sig $snap
+    let old_csv = $"($tmp_dir)/old-tree-hashes.csv"
+    cp $"($repo)/multiproofs/tree-hashes.csv" $old_csv
+
+    "later\n" | save --force $"($repo)/new.txt"
+    ^git -C $repo add new.txt
+    tree-hashes --repo $repo
+    merkle write-root --repo $repo
+    let new_sig = ssh-sign sign $"($repo)/multiproofs/tree-root.txt" --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    {repo: $repo snap: $snap proof: $proof old_root: $old_root old_csv: $old_csv new_sig: $new_sig}
+}
+
+# The scenario --multiproofs-dir exists for: a consumer freezes each seal's
+# statement + signatures at birth and always verifies a proof against its
+# BIRTH seal, while the live multiproofs/ belongs to the newest one. Without
+# the flag the only way to check such a proof was to rebuild a directory
+# around the snapshot.
+@test
+def "a proof of an older seal verifies against that snapshot of the seal" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-older-seal $tmp_dir
+
+    # Against the live artifacts it is a proof of a DIFFERENT seal — the loud
+    # throw, unchanged.
+    let live = try { merkle verify $fx.proof --repo $fx.repo; "no throw" } catch {|e| $e.msg }
+    assert ($live | str contains "different seal")
+
+    let result = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $fx.snap
+    assert $result.valid
+    assert equal $result.root $fx.old_root
+    # No CSV in the snapshot: "not here to check" — the portable-bundle shape
+    assert equal $result.manifest_root null
+    # The snapshot holds no pubkeys, so a valid signature proves the trust
+    # default stayed with --repo rather than following the flag
+    assert equal ($result.signatures | where valid | length) 1
+    assert equal $result.content_verified true
+
+    # A directory with no statement is named by the refusal, not read as an
+    # unsealed repo that should run write-root
+    let empty = $"($tmp_dir)/empty"
+    mkdir $empty
+    let missing = try { merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $empty; "no throw" } catch {|e| $e.msg }
+    assert ($missing | str contains "--multiproofs-dir")
+}
+
+# The manifest cross-check follows the flag: the seal's own CSV beside the
+# snapshot statement cross-checks clean, and the LIVE repo's CSV planted there
+# is caught as a catalogue from a different seal. Without the first half a
+# verify that read no CSV at all would pass; without the second, one still
+# reading the repo's CSV would fail every older-seal check.
+@test
+def "the manifest cross-check follows the multiproofs dir, not the repo" [] {
+    let fx = make-older-seal $in.tmp_dir
+
+    cp $fx.old_csv $"($fx.snap)/tree-hashes.csv"
+    let matched = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $fx.snap
+    assert $matched.valid
+    assert equal $matched.manifest_root $fx.old_root
+
+    cp $"($fx.repo)/multiproofs/tree-hashes.csv" $"($fx.snap)/tree-hashes.csv"
+    let desync = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $fx.snap
+    assert not $desync.valid
+    assert ($desync.error | str contains "different seals")
+}
+
+# Hostile snapshot: the OLD statement with the NEW seal's signature planted
+# beside it under its own name. The signature is genuine key material from a
+# trusted key, just over other bytes — so if signatures were checked over
+# anything but the flagged statement (the live root, say), it would validate.
+@test
+def "a planted signature over another statement does not endorse the snapshot" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-older-seal $tmp_dir
+    let forged = $"($tmp_dir)/forged-snap"
+    mkdir $forged
+    cp $"($fx.snap)/tree-root.txt" $forged
+    cp $fx.new_sig $forged
+
+    let result = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $forged
+    assert not $result.valid
+    assert equal ($result.signatures | where valid | length) 0
+    assert ($result.error | str contains "no valid signature")
+}
+
+# Pins the claim that OTS stamp discovery stays keyed to --repo under
+# --multiproofs-dir: the snapshot carries no stamp copies, so the anchor this
+# finds can only have come from the live archive. Discovery is by content
+# hash, so the stamp dates the OLD statement even though the live
+# tree-root.txt has moved on to the next seal.
+@test
+def "an anchor in the live archive dates an older seal verified via its snapshot" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-older-seal $tmp_dir
+    let bundle = $"($fx.repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
+    mkdir $bundle
+    build-bitcoin-ots --hash (open --raw $"($fx.snap)/tree-root.txt" | hash sha256 | decode hex)
+    | save --raw --force $"($bundle)/tree-root.ots"
+
+    let result = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $fx.snap
+    assert $result.valid
+    assert equal $result.ots.status "anchored"
+}
