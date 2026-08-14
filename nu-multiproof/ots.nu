@@ -6,7 +6,7 @@ use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
 use _sig.nu sig-files-for
-use _fs.nu [ list-files copy-file ]
+use _fs.nu [ list-files copy-file cwd-relative ]
 
 const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e2e884e89294]
 # Op tags stay byte literals throughout (0x08 sha256, 0x03 RIPEMD-160, 0xf0
@@ -683,7 +683,7 @@ export def upgrade [ots_file: path --response-file: path --calendar: string]: no
     let parsed = $buf | parse-ots
 
     if $parsed.attestation.type != "pending" {
-        return {status: "already-verified" path: $ots_file}
+        return {status: "already-verified" path: ($ots_file | cwd-relative)}
     }
 
     let new_bytes = if $response_file != null {
@@ -741,7 +741,7 @@ export def upgrade [ots_file: path --response-file: path --calendar: string]: no
     let tmp_out = $"($ots_file).new"
     $upgraded | save --raw --force $tmp_out
     mv $tmp_out $ots_file
-    {status: "upgraded" path: $ots_file}
+    {status: "upgraded" path: ($ots_file | cwd-relative)}
 }
 
 # Print a human summary of a verify result and, under --fail, turn an invalid

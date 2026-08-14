@@ -7,7 +7,7 @@
 # Tree spec: README.md "Merkle inclusion proofs"; primitives: _merkle-helpers.nu.
 
 use _repo.nu repo-root
-use _fs.nu [list-files list-dirs]
+use _fs.nu [list-files list-dirs cwd-relative]
 use _tracked.nu [content-tree resolve-leaf-file]
 use _cid-helpers.nu node-cid
 use _layout.nu [
@@ -160,7 +160,7 @@ export def write-root [
     let root_hex = mth ($leaves | each { leaf-hash $in }) | encode hex | str lowercase
     let out = merkle-root-path $target
     root-statement $root_hex | save --raw --force $out
-    {root: $root_hex path: $out leaves: ($leaves | length)}
+    {root: $root_hex path: ($out | cwd-relative) leaves: ($leaves | length)}
 }
 
 # Extract a compact inclusion proof for one manifest row. The consumer's full
@@ -220,7 +220,7 @@ export def prove [
     let out = inclusion-proofs-dir $target | path join $"($key).multiproof.json"
     mkdir ($out | path dirname)
     $proof | to json --indent 2 | save --raw --force $out
-    $out
+    $out | cwd-relative
 }
 
 # Verify an inclusion proof against the SIGNED root statement. Returns a
@@ -462,7 +462,10 @@ export def verify [
     # OF THIS ROOT is what the signature check establishes, which is why both
     # halves have to hold before a row appears.
     let endorsements = $sig_check.sigs | where valid | each {|s|
-        let sig_hash = open --raw $s.sig | hash sha256
+        # `path expand` because a verify row's `sig` is a label — relative to the
+        # cwd it was made in — and this reads the bytes behind it. The expand
+        # resolves against that same cwd, so it is the inverse, not a guess.
+        let sig_hash = open --raw ($s.sig | path expand) | hash sha256
         pick-stamp ($stamps | where hash == $sig_hash) | insert signer $s.signer
     }
 

@@ -7,6 +7,7 @@ use _key-helpers.nu [with-signing-key signing-principal]
 use _temp-helpers.nu with-temp-file
 use _allowed-signers.nu [allowed-signers-body registered-principals NAMESPACE]
 use _pubkey-helpers.nu fingerprint-file
+use _fs.nu cwd-relative
 
 # Sign a file with an SSH key.
 # Creates {path}.{fingerprint}.sig alongside the input file, where the
@@ -67,8 +68,8 @@ export def sign [
             mv --force $tmp_sig $sig_path
         }
 
-        print $"Signed: ($sig_path)"
-        $sig_path
+        print $"Signed: ($sig_path | cwd-relative)"
+        $sig_path | cwd-relative
     }
 }
 
@@ -157,11 +158,11 @@ export def verify [
                 } | complete)
                 if $v.exit_code == 0 {
                     print $"($signer): valid"
-                    {signer: $signer valid: true sig: ($sig_path | into string)}
+                    {signer: $signer valid: true sig: ($sig_path | cwd-relative | into string)}
                 } else {
                     # Registered key, but the content no longer matches the sig.
                     print $"($signer): invalid signature"
-                    {signer: $signer valid: false error: "invalid_signature" sig: ($sig_path | into string)}
+                    {signer: $signer valid: false error: "invalid_signature" sig: ($sig_path | cwd-relative | into string)}
                 }
             } else {
                 # Signer's key isn't registered. Why check-novalidate: distinguish
@@ -172,7 +173,7 @@ export def verify [
                 if $cn.exit_code == 0 {
                     let label = (signer-from-sig $path $sig_path | default "unknown")
                     print $"($label): unrecognized signer \(sig cryptographically valid but key not in pubkeys_dir\)"
-                    {signer: $label valid: false error: "unrecognized_signer" sig: ($sig_path | into string)}
+                    {signer: $label valid: false error: "unrecognized_signer" sig: ($sig_path | cwd-relative | into string)}
                 } else {
                     # Even keyless checking failed: junk bytes planted at a sig
                     # name, or a foreign key's sig over content it never signed.
@@ -184,7 +185,7 @@ export def verify [
                     # sig path says which file to inspect; it is a path, not an
                     # identity.
                     print $"($sig_path): unreadable signature \(does not check as an SSH signature over ($path)\)"
-                    {signer: null valid: false error: "unreadable_signature" sig: ($sig_path | into string)}
+                    {signer: null valid: false error: "unreadable_signature" sig: ($sig_path | cwd-relative | into string)}
                 }
             }
         }

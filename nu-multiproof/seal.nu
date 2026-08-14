@@ -5,7 +5,7 @@ use ssh-sign.nu
 use _repo.nu repo-root
 use _layout.nu [ manifest-path merkle-root-path ots-dir pubkeys-dir multiproofs-dir ]
 use _sig.nu sig-files-for
-use _fs.nu list-files
+use _fs.nu [ list-files cwd-relative ]
 use _ots-helpers.nu freeze-bundle
 use _key-helpers.nu [ with-signing-key signing-principal ]
 use _stamps.nu [ scan-stamps pick-stamp format-stamp ]
@@ -123,8 +123,8 @@ export def main [
     #    complete, before any signature exists.
     let root_cid = tree-hashes root-cid --repo $root
     print $"Root CID: ($root_cid)"
-    print $"Manifest: ($manifest_path)"
-    mut result = {manifest: $manifest_path root_cid: $root_cid}
+    print $"Manifest: ($manifest_path | cwd-relative)"
+    mut result = {manifest: ($manifest_path | cwd-relative) root_cid: $root_cid}
 
     # Derive the merkle root statement from the fresh manifest — the compact
     # signing target: consumers verify per-file inclusion proofs against this
