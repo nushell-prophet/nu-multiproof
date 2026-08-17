@@ -3,6 +3,31 @@ use std/testing *
 
 use ../nu-multiproof/_commit-proposal.nu [ seal-commit-line quote-arg ]
 
+# Only the snapshot tests below need a repo on disk; the rest pin wording against
+# a hand-built record and pass a path that never exists — which is also what
+# keeps the line count in "the message body is real lines" at 11, since a path
+# that is not a git repo names no commit.
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
+# A repo with one commit. Returns its root and that commit.
+def committed-repo [tmp_dir: path]: nothing -> record {
+    let repo = $tmp_dir | path join repo
+    mkdir $repo
+    ^git -C $repo init -q
+    "alpha\n" | save --force ($repo | path join a.txt)
+    ^git -C $repo add -- . o+e>| ignore
+    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    {root: $repo commit: (^git -C $repo rev-parse HEAD | str trim)}
+}
+
 # What a stamped seal returns, with the fields the proposal reads. Hand-built
 # rather than produced by `seal`: the point is to pin the wording against a
 # known input, and a round-trip through the builder would only prove the
@@ -108,6 +133,34 @@ def "the message body is real lines, not escapes" [] {
     assert str contains $line "\nMerkle root: "
     # Subject, blank line, four body lines, blank line, two git lines.
     assert equal ($line | lines | length) 11
+}
+
+@test
+def "a clean tree names the commit the seal was taken from" [] {
+    let repo = committed-repo $in.tmp_dir
+
+    # No bundle: its path in the fixture sits under /repo, and the proposal
+    # renders it relative to the root — which is a temp repo here.
+    let line = seal-commit-line (stamped-result | reject bundle root_ots sig_ots) $repo.root "abc123"
+
+    # The trailing newline is part of the match: without it this would also pass
+    # for the uncommitted-changes wording, which is the one thing it must tell
+    # apart.
+    assert str contains $line $"Snapshot of: ($repo.commit)\n"
+}
+
+@test
+def "an uncommitted change is stated here, the one channel that may carry it" [] {
+    let repo = committed-repo $in.tmp_dir
+    "edited\n" | save --force ($repo.root | path join a.txt)
+
+    let line = seal-commit-line (stamped-result | reject bundle root_ots sig_ots) $repo.root "abc123"
+
+    # multiproofs/snapshot.txt is not written at all for a dirty tree, because
+    # nobody could check it. A commit body is read by people, so it can say the
+    # sealed tree was this commit plus work in progress — and it must, or the
+    # bare hash would read as a claim the file deliberately refuses to make.
+    assert str contains $line $"Snapshot of: ($repo.commit) plus uncommitted changes"
 }
 
 @test

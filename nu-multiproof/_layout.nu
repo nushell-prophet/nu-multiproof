@@ -19,6 +19,11 @@ export const MANIFEST_FILE = "tree-hashes.csv"
 # has no canonical byte form, and a custom extension is opaque for no gain.
 export const MERKLE_ROOT_FILE = "tree-root.txt"
 export const INCLUSION_PROOFS_DIR = "inclusion-proofs"
+# Why .txt and one line: same argument as MERKLE_ROOT_FILE above — a statement
+# for human eyes with an exact byte form. This one is not signed (see
+# _snapshot.nu), so it carries no schema-versioned signing target, only its own
+# name.
+export const SNAPSHOT_FILE = "snapshot.txt"
 
 # <root>/multiproofs
 export def multiproofs-dir [root: path]: nothing -> path {
@@ -48,4 +53,9 @@ export def merkle-root-path [root: path]: nothing -> path {
 # <root>/multiproofs/inclusion-proofs
 export def inclusion-proofs-dir [root: path]: nothing -> path {
     $root | path join $MULTIPROOFS_DIR $INCLUSION_PROOFS_DIR
+}
+
+# <root>/multiproofs/snapshot.txt
+export def snapshot-path [root: path]: nothing -> path {
+    $root | path join $MULTIPROOFS_DIR $SNAPSHOT_FILE
 }

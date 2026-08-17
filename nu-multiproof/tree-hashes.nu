@@ -12,6 +12,7 @@ use _tracked.nu content-tree
 use _repo.nu repo-root
 use _layout.nu [ multiproofs-dir manifest-path ]
 use _temp-helpers.nu with-temp-file
+use _snapshot.nu write-snapshot
 
 def build-tree [
     --repo: path # Target git repo root (default: git root of current directory)
@@ -99,6 +100,13 @@ export def root-cid [
 
 # Generate tree hashes. Saves to multiproofs/tree-hashes.csv and returns its
 # path; --echo instead returns the table (and does not save).
+#
+# Alongside the manifest it records which commit that manifest describes, in
+# multiproofs/snapshot.txt — but only when the tree it read equals HEAD, so the
+# record is one a third party can check by rebuilding. See _snapshot.nu for why a
+# dirty tree gets no record instead of a hedged one. This step owns the record
+# because it is the only one that reads the working tree: the commit is answered
+# in the same pass that produces the manifest, leaving no window between them.
 @example "preview the manifest without saving" { nu-multiproof tree-hashes --echo }
 export def main [
     --echo # Output as nushell table instead of saving to file
@@ -107,10 +115,13 @@ export def main [
     let table = (build-tree --repo $repo)
     let target_root = repo-root $repo
     if $echo {
+        # Nothing is written under --echo, the snapshot record included: it
+        # describes a manifest on disk, and --echo puts none there.
         $table
     } else {
         mkdir (multiproofs-dir $target_root)
         $table | to csv | save --raw --force (manifest-path $target_root)
+        write-snapshot $target_root
         manifest-path $target_root
     }
 }

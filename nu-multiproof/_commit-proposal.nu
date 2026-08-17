@@ -1,4 +1,5 @@
 use _layout.nu MULTIPROOFS_DIR
+use _snapshot.nu snapshot-state
 
 # The `git commit` command a freshly sealed repo should be committed with,
 # written for a human to read and edit before running it.
@@ -85,9 +86,25 @@ export def seal-commit-line [
         "Anchors: none, sealed with --no-stamp"
     }
 
+    # The commit the sealed tree was taken from. Stated here even when the tree
+    # was dirty — and this is the one place it may be. A commit body is a human
+    # channel, so it can carry "the tree was this commit plus work in progress",
+    # which multiproofs/snapshot.txt deliberately cannot: that file exists only
+    # when a rebuild can confirm it (_snapshot.nu). Absent entirely when there is
+    # no HEAD to name.
+    let snapshot = snapshot-state $root
+    let snapshot_line = if $snapshot == null {
+        []
+    } else if $snapshot.clean {
+        [$"Snapshot of: ($snapshot.commit)"]
+    } else {
+        [$"Snapshot of: ($snapshot.commit) plus uncommitted changes"]
+    }
+
     let message = [
         $subject
         ""
+        ...$snapshot_line
         $"Root CID: ($result.root_cid)"
         $"Merkle root: ($result.merkle_root)"
         $"Signed by: ($signer)"
