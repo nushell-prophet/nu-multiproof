@@ -4,6 +4,10 @@ The crypto layer under `nu-cybergraph`: CIDs, merkle trees, ssh signatures, seal
 
 The design decisions here were made by agents, so they may drift from the user's intent. The user regrets building this so fast without proper checks, and needs your help to stabilize the functionality. So do not trust the comments and the README on their own. Check the git history and the Claude Code project sessions to recover the user's intent. Or plainly ask him.
 
+## `git-proof` was cut — act as if it never existed
+
+A `git-proof` module once proved "this blob was in a signed commit". It was a trial run, and it is gone (`3ccd1b2`, 2026-07-25). This line exists because agents kept picking it back up as if it were core functionality. Nothing about it counts: not as precedent, not as an argument for or against a design, not as a reference implementation, not as a thing to restore. If you meet it in the history, in a README, or in a parked note, leave it there.
+
 ## Module layout
 
 - `nu-multiproof/mod.nu` defines the public API. It re-exports the non-`_`
