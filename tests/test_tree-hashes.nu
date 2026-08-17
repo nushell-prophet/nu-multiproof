@@ -23,55 +23,83 @@ const EXPECTED_COLUMNS = [
     content_cid
 ]
 
+# Why every shape test builds its own repo: `tree-hashes` without --repo hashes
+# whatever git root the CWD happens to sit in, so these tests used to state a
+# property of a neighbouring checkout, not of this code. They only held while
+# that neighbour stayed convenient — a monorepo that tracks one symlink (which
+# _tracked.nu rejects, by design) failed all of them at once.
+# The tree carries what those assertions need: files, two levels of directory,
+# and hidden tracked files at both levels.
+def make-repo [tmp_dir: path]: nothing -> string {
+    let repo = $"($tmp_dir)/repo"
+    mkdir $"($repo)/sub/deeper"
+    ^git -C $repo init -q
+    "hello\n" | save --force $"($repo)/file.txt"
+    "apple\n" | save --force $"($repo)/apple.txt"
+    "world\n" | save --force $"($repo)/sub/inner.txt"
+    "deep\n" | save --force $"($repo)/sub/deeper/x.txt"
+    "hidden\n" | save --force $"($repo)/.hidden"
+    "nested hidden\n" | save --force $"($repo)/sub/.dotfile"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    $repo
+}
+
 @test
 def "echo returns table with expected columns" [] {
-    let result = tree-hashes --echo
+    let repo = make-repo $in.tmp_dir
+    let result = tree-hashes --echo --repo $repo
     assert equal ($result | columns) $EXPECTED_COLUMNS
 }
 
 @test
 def "echo returns non-empty table" [] {
-    let result = tree-hashes --echo
+    let repo = make-repo $in.tmp_dir
+    let result = tree-hashes --echo --repo $repo
     assert (($result | length) > 0)
 }
 
 @test
 def "small files have non-empty content_cid" [] {
-    let result = tree-hashes --echo
+    let repo = make-repo $in.tmp_dir
+    let result = tree-hashes --echo --repo $repo
     let files_with_cid = $result | where content_sha256 != "" and content_cid != ""
     assert (($files_with_cid | length) > 0)
 }
 
 @test
 def "every row carries a CID, directories included" [] {
-    let result = tree-hashes --echo
+    let repo = make-repo $in.tmp_dir
+    let result = tree-hashes --echo --repo $repo
     let missing = $result | where content_cid == ""
     assert equal ($missing | length) 0 $"rows without a CID: ($missing.filepath?)"
 }
 
 @test
 def "directories have non-empty content_git" [] {
-    let result = tree-hashes --echo
+    let repo = make-repo $in.tmp_dir
+    let result = tree-hashes --echo --repo $repo
     let dirs = $result | where content_sha256 == ""
-    if ($dirs | length) > 0 {
-        let with_git = $dirs | where content_git != ""
-        assert (($with_git | length) > 0)
-    }
+    assert (($dirs | length) > 0) "the fixture tree lost its directory rows"
+    let with_git = $dirs | where content_git != ""
+    assert (($with_git | length) > 0)
 }
 
 @test
 def "no root row with empty filepath" [] {
-    let result = tree-hashes --echo
+    let repo = make-repo $in.tmp_dir
+    let result = tree-hashes --echo --repo $repo
     let empty = $result | where { $in.filepath | into string | is-empty }
     assert equal ($empty | length) 0
 }
 
 @test
 def "hidden tracked files are included" [] {
-    let result = tree-hashes --echo
-    let tracked = ^git ls-files | lines
+    let repo = make-repo $in.tmp_dir
+    let result = tree-hashes --echo --repo $repo
+    let tracked = ^git -C $repo ls-files | lines
     let hidden = $tracked | where { $in | path basename | str starts-with "." }
-    # Test only runs assertion if the repo has any hidden tracked files
+    assert (($hidden | length) > 0) "the fixture tree lost its hidden tracked files"
     for f in $hidden {
         let row = $result | where filepath == $f
         assert equal ($row | length) 1 $"hidden tracked file ($f) missing from manifest"
@@ -257,7 +285,8 @@ def "a tracked file deleted from the worktree fails the build by name" [] {
 
 @test
 def "directory content_git matches working-tree blob hashes of its files" [] {
-    let result = tree-hashes --echo
+    let repo = make-repo $in.tmp_dir
+    let result = tree-hashes --echo --repo $repo
     let dirs = $result | where content_sha256 == "" and filepath != "."
     # For each directory row, the content_git must be non-empty AND must derive
     # from the same snapshot as its file rows (i.e., the temp-index tree).
@@ -267,10 +296,13 @@ def "directory content_git matches working-tree blob hashes of its files" [] {
     let files = $result | where content_sha256 != "" and filepath != "."
     let tmp_index = $nu.temp-dir | path join $"nutest-tree-(random uuid)"
     rm --force $tmp_index
+    # -C $repo on all three: the manifest side of the comparison came from that
+    # repo, so the index side must be built there too, or the two describe
+    # different trees.
     let ls_tree = with-env {GIT_INDEX_FILE: $tmp_index} {
-        $files.filepath | str join (char -i 0) | ^git update-index --add -z --stdin
-        let tree = ^git write-tree | str trim
-        ^git ls-tree -r -t -z $tree
+        $files.filepath | str join (char -i 0) | ^git -C $repo update-index --add -z --stdin
+        let tree = ^git -C $repo write-tree | str trim
+        ^git -C $repo ls-tree -r -t -z $tree
     }
     rm --force $tmp_index
     let expected = (
