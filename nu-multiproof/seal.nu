@@ -122,8 +122,6 @@ export def main [
     #    row together, so the manifest is written once,
     #    complete, before any signature exists.
     let root_cid = tree-hashes root-cid --repo $root
-    print $"Root CID: ($root_cid)"
-    print $"Manifest: ($manifest_path | cwd-relative)"
     mut result = {manifest: ($manifest_path | cwd-relative) root_cid: $root_cid}
 
     # Derive the merkle root statement from the fresh manifest — the compact
@@ -132,7 +130,6 @@ export def main [
     # Immediately after regen, so no window where the statement describes a
     # previous manifest.
     let merkle_result = merkle write-root --repo $root
-    print $"Merkle root: ($merkle_result.root)"
     $result = ($result | insert merkle_root $merkle_result.root)
 
     # Why: a sig from a previous seal signs the previous bytes — stale exactly

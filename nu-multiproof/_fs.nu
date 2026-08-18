@@ -47,7 +47,7 @@ export def list-files [
 # `CpError::NotAllFilesCopied` and drops it, under its own TODO saying the exit
 # code should be an error as GNU cp's is. Every per-file failure folds into that
 # one variant: no space left, a read-only mount, an I/O error, an unreadable
-# source. In this repo that meant `ots stamp` printing `Frozen copy: <path>` and
+# source. In this repo that meant `ots stamp` reporting a frozen copy and
 # exiting 0 for a file that was not on disk — a bundle whose proofs commit to
 # bytes it does not hold. `open` and `save` both raise.
 #

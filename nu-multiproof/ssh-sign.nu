@@ -68,7 +68,6 @@ export def sign [
             mv --force $tmp_sig $sig_path
         }
 
-        print $"Signed: ($sig_path | cwd-relative)"
         $sig_path | cwd-relative
     }
 }

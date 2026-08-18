@@ -582,11 +582,10 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             )
         }
     }
-    print $"Timestamped: ($ots_path)"
 
     # The frozen copy, written through the one writer `freeze-bundle` also uses,
     # which refuses the file if it no longer hashes to what this proof commits
-    # to. It used to be a `cp` here, which printed `Frozen copy:` for a file
+    # to. It used to be a `cp` here, which reported a frozen copy for a file
     # that was not there.
     #
     # Why after the `.ots` write: `save` raises where `cp` did not, and a throw
@@ -610,7 +609,6 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             )
         }
     }
-    print $"Frozen copy: ($copy_path)"
 
     # Why: a self-contained bundle must answer "content C existed at time T,
     # anchored to Bitcoin block B, and signer X endorsed C" using only files in
@@ -634,7 +632,6 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             # before writing, so source and destination being one file, or two
             # names for one file, is simply a rewrite.
             copy-file $sig $dest --force
-            print $"Bundled sig: ($dest)"
             $dest
         }
 
