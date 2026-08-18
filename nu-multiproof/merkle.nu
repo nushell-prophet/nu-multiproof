@@ -7,7 +7,7 @@
 # Tree spec: README.md "Merkle inclusion proofs"; primitives: _merkle-helpers.nu.
 
 use _repo.nu repo-root
-use _fs.nu [list-files list-dirs cwd-relative]
+use _fs.nu [cwd-relative]
 use _tracked.nu [content-tree resolve-leaf-file]
 use _cid-helpers.nu node-cid
 use _layout.nu [
