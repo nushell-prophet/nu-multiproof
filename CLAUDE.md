@@ -12,6 +12,25 @@ So do not trust the comments and the README on their own.
 Check the git history and the Claude Code project sessions to recover the user's intent.
 Or plainly ask him.
 
+## An academic prototype, not a product
+
+This is a canonical implementation:
+it exists to show the format is right and the reasoning holds,
+on inputs small enough to read by hand.
+So prefer the plain reading over the clever one
+— a walk over a cache, a recomputation over a stored copy —
+and never add a mechanism whose only argument is speed.
+When the load outgrows this,
+the answer is optimization or a rewrite in a real language,
+decided then with the numbers in hand.
+
+Two things this does not license.
+It is not permission to undo a cost already measured here
+— a number written into a comment bought the shape that code has.
+And "correct under correct circumstances" is about scale and load, never about input:
+refusing malformed, tampered or unprovable bytes loudly is the product,
+so a check is never what gets dropped for simplicity.
+
 ## `git-proof` was cut — act as if it never existed
 
 A `git-proof` module once proved "this blob was in a signed commit".
