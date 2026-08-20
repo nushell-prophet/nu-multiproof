@@ -6,7 +6,7 @@
 # Internal module: mod.nu does not re-export _*.nu files. merkle.nu and tests
 # import the names they need explicitly.
 
-export const MERKLE_SCHEMA = "multiproof-merkle-v1"
+export const MERKLE_SCHEMA = "multiproof-merkle-v2"
 
 const LEAF_COLUMNS = [filepath content_sha256 content_git content_cid]
 
@@ -138,25 +138,57 @@ export def load-leaves [manifest: path]: nothing -> table {
     $rows
 }
 
-# One-line root statement: "multiproof-merkle-v1 <64 lowercase hex>" + exactly
-# one trailing "\n". Statement form, not a bare hash — a signature over a bare
-# hash under the generic "file" namespace could be replayed into any other
+# One-line root statement: "multiproof-merkle-v2 <64 lowercase hex> <seq> <prev>"
+# + exactly one trailing "\n". Statement form, not a bare hash — a signature over
+# a bare hash under the generic "file" namespace could be replayed into any other
 # context where the key signs hashes.
-export def root-statement [root_hex: string]: nothing -> string {
-    $"($MERKLE_SCHEMA) ($root_hex)\n"
+#
+# `seq` counts seals from 0 and rises by exactly 1 per seal; `prev` is the root
+# this seal supersedes, or the literal `genesis` for the first one. Why both sit
+# in the signed bytes: a root says what a tree held, never which seal it was, and
+# multiproofs/ keeps only the LIVE statement — so "does this seal follow that
+# one" had no answer outside git history. Why a word and not 64 zeros for the
+# first seal: a sentinel shaped like a hash gets read as a hash by any verifier
+# that forgets the special case.
+#
+# What the number is worth: multiproofs/ is excluded from the manifest, so `seq`
+# is not under the merkle root. It rests on the signature over these bytes and on
+# their OTS anchor — a key holder can restate any number, what they cannot do is
+# make two different statements share one signature and one anchor.
+export def root-statement [
+    root_hex: string
+    seq: int # 0 for the first seal, then +1 per seal
+    prev: string # root this seal supersedes, or "genesis"
+]: nothing -> string {
+    $"($MERKLE_SCHEMA) ($root_hex) ($seq) ($prev)\n"
 }
 
 # Parse a root statement file, byte-exact. Editors love adding trailing
 # newlines; the signature covers exact bytes, so drift must be loud.
-export def parse-root-statement [file: path]: nothing -> string {
+#
+# Returns the whole record, not the root alone: a caller handed a bare hash
+# cannot check the chain that hash is a link in.
+export def parse-root-statement [file: path]: nothing -> record<root: string, seq: int, prev: string> {
     let content = open --raw $file | into string
     # The schema token is captured and compared against MERKLE_SCHEMA rather
     # than spelled into the regex: hardcoding it made the parser keep accepting
     # the old schema after a bump, while root-statement already wrote the new
     # one — a silent version split in the one file that must be byte-exact.
-    let matched = $content | parse --regex '\A(?<schema>\S+) (?<root>[0-9a-f]{64})\n\z'
+    #
+    # `0|[1-9][0-9]*`, not `\d+`: under `into int` both "7" and "007" become 7,
+    # so two byte strings would state one seq — and the signature covers bytes,
+    # not the parsed value.
+    let matched = $content | parse --regex '\A(?<schema>\S+) (?<root>[0-9a-f]{64}) (?<seq>0|[1-9][0-9]*) (?<prev>[0-9a-f]{64}|genesis)\n\z'
     if ($matched | is-empty) or $matched.schema.0 != $MERKLE_SCHEMA {
-        error make {msg: $"malformed root statement ($file): expected '($MERKLE_SCHEMA) <64 lowercase hex>' with exactly one trailing newline"}
+        error make {msg: $"malformed root statement ($file): expected '($MERKLE_SCHEMA) <64 lowercase hex> <seq> <prev root hex or genesis>' with exactly one trailing newline"}
     }
-    $matched.root.0
+    let rec = $matched | first
+    let seq = $rec.seq | into int
+    # genesis and seq 0 are one claim — "nothing came before this". Half of it
+    # describes a chain nobody can walk: seq 0 with a predecessor hash points at
+    # a seal its own count says does not exist, and genesis at seq 5 hides four.
+    if ($rec.prev == "genesis") != ($seq == 0) {
+        error make {msg: $"inconsistent root statement ($file): seq ($seq) with prev ($rec.prev) — genesis pairs with seq 0, and with nothing else"}
+    }
+    {root: $rec.root seq: $seq prev: $rec.prev}
 }

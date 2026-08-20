@@ -159,8 +159,8 @@ def "golden root for the fixed mini-manifest, statement byte-exact" [] {
     assert equal $result.leaves 4
     # Signature and OTS cover exact bytes: one statement line, one "\n"
     let statement = open --raw $"($tmp_dir)/multiproofs/tree-root.txt" | into string
-    assert equal $statement $"multiproof-merkle-v1 ($GOLDEN_MINI_ROOT)\n"
-    assert equal (parse-root-statement $"($tmp_dir)/multiproofs/tree-root.txt") $GOLDEN_MINI_ROOT
+    assert equal $statement $"multiproof-merkle-v2 ($GOLDEN_MINI_ROOT) 0 genesis\n"
+    assert equal (parse-root-statement $"($tmp_dir)/multiproofs/tree-root.txt") {root: $GOLDEN_MINI_ROOT seq: 0 prev: "genesis"}
 }
 
 # The IPFS root CID rides in the manifest as the "." row (tree-hashes.nu), and
@@ -291,17 +291,70 @@ def "malformed root statements are rejected" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/tree-root.txt"
     let root = "one" | hash sha256
+    let prev = "zero" | hash sha256
 
     for bad in [
-        $"multiproof-merkle-v1 ($root)\n\n" # extra trailing newline
-        $"multiproof-merkle-v1 ($root)" # missing newline
-        $"multiproof-merkle-v1 ($root | str uppercase)\n" # uppercase hex
-        $"($root)\n" # bare hash, no statement prefix
-        $"multiproof-merkle-v2 ($root)\n" # another schema — parser must track MERKLE_SCHEMA
+        $"multiproof-merkle-v2 ($root) 1 ($prev)\n\n" # extra trailing newline
+        $"multiproof-merkle-v2 ($root) 1 ($prev)" # missing newline
+        $"multiproof-merkle-v2 ($root | str uppercase) 1 ($prev)\n" # uppercase hex
+        $"($root) 1 ($prev)\n" # bare hash, no statement prefix
+        $"multiproof-merkle-v3 ($root) 1 ($prev)\n" # another schema — parser must track MERKLE_SCHEMA
+        $"multiproof-merkle-v2 ($root)\n" # the v1 shape: no seq, no predecessor
+        $"multiproof-merkle-v2 ($root) 01 ($prev)\n" # leading zero — two spellings of one seq under one signature
+        $"multiproof-merkle-v2 ($root) 0 ($prev)\n" # seq 0 naming a predecessor its own count denies
+        $"multiproof-merkle-v2 ($root) 3 genesis\n" # genesis at seq 3 — four seals hidden
     ] {
         $bad | save --raw --force $file
         assert error {|| parse-root-statement $file } $"accepted: ($bad | to json)"
     }
+}
+
+# read-root exists so a consumer never reimplements the statement regex — the
+# test therefore reads through the command the way that consumer does: one
+# snapshot file, named by path.
+@test
+def "read-root returns the statement as data" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let written = merkle write-root --repo $repo
+
+    let snapshot = $"($tmp_dir)/snap-tree-root.txt"
+    cp $"($repo)/multiproofs/tree-root.txt" $snapshot
+    assert equal (merkle read-root $snapshot) {root: $written.root seq: 0 prev: "genesis"}
+
+    # The one place a missing statement is reported, so the consumer walking
+    # seals/ never needs a check of its own.
+    let err = try { merkle read-root $"($tmp_dir)/absent.txt"; null } catch {|e| $e.msg }
+    assert str contains $err "root statement not found"
+}
+
+@test
+def "the first root statement is genesis at sequence 0" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+
+    let first = merkle write-root --repo $repo
+    assert equal $first.seq 0
+    assert equal $first.prev "genesis"
+}
+
+# The counter is what makes a removed seal visible: seals are keyed by root, so
+# without it a chain of three and a chain of two look alike from any single
+# statement.
+@test
+def "each seal raises the sequence by one and names the root it supersedes" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let first = merkle write-root --repo $repo
+
+    "later\n" | save --force $"($repo)/new.txt"
+    ^git -C $repo add new.txt
+    tree-hashes --repo $repo
+    let second = merkle write-root --repo $repo
+
+    assert equal $second.seq 1
+    assert equal $second.prev $first.root
+    assert equal (parse-root-statement $"($repo)/multiproofs/tree-root.txt") {root: $second.root seq: 1 prev: $first.root}
 }
 
 @test
@@ -984,10 +1037,10 @@ def forge-bundle [dir: path leaf: record key: path]: nothing -> path {
     let leaf_bytes = [$leaf.filepath $leaf.content_sha256 $leaf.content_git $leaf.content_cid]
         | str join "\n" | into binary
     let root = 0x[00] | bytes add --end $leaf_bytes | hash sha256
-    $"multiproof-merkle-v1 ($root)\n" | save --force $"($dir)/multiproofs/tree-root.txt"
+    $"multiproof-merkle-v2 ($root) 0 genesis\n" | save --force $"($dir)/multiproofs/tree-root.txt"
     ssh-sign sign $"($dir)/multiproofs/tree-root.txt" --key $key --pubkeys-dir $"($dir)/multiproofs/pubkeys"
     let proof_file = $"($dir)/proof.json"
-    {schema: "multiproof-merkle-v1" leaf: $leaf path: [] root: $root} | to json | save --force $proof_file
+    {schema: "multiproof-merkle-v2" leaf: $leaf path: [] root: $root} | to json | save --force $proof_file
     $proof_file
 }
 
@@ -1431,7 +1484,7 @@ def "proof against a different seal root throws loudly" [] {
 
     # A later seal rewrote the root statement: verification must name the
     # seal mismatch, not report a quiet invalid
-    root-statement ("other" | hash sha256) | save --raw --force $"($repo)/multiproofs/tree-root.txt"
+    root-statement ("other" | hash sha256) 1 ("earlier" | hash sha256) | save --raw --force $"($repo)/multiproofs/tree-root.txt"
     assert error {|| merkle verify $proof --repo $repo }
 }
 
@@ -1450,7 +1503,7 @@ def make-older-seal [tmp_dir: path]: nothing -> record {
     merkle write-root --repo $repo
     let old_sig = ssh-sign sign $"($repo)/multiproofs/tree-root.txt" --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let proof = merkle prove README.md --repo $repo
-    let old_root = parse-root-statement $"($repo)/multiproofs/tree-root.txt"
+    let old_root = (parse-root-statement $"($repo)/multiproofs/tree-root.txt").root
 
     let snap = $"($tmp_dir)/snap"
     mkdir $snap

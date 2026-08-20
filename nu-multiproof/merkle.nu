@@ -159,8 +159,42 @@ export def write-root [
     }
     let root_hex = mth ($leaves | each { leaf-hash $in }) | encode hex | str lowercase
     let out = merkle-root-path $target
-    root-statement $root_hex | save --raw --force $out
-    {root: $root_hex path: ($out | cwd-relative) leaves: ($leaves | length)}
+    # The seal counter is minted here because this is the one place a root is
+    # written, and the statement being replaced is the only record of the
+    # previous seal — so it has to be read before the save that destroys it.
+    let superseded = if ($out | path exists) { parse-root-statement $out } else { null }
+    # The counter tracks ROOTS, not runs of this command. Re-deriving an
+    # unchanged tree must rewrite the same bytes: the statement is what
+    # co-signers sign, and a seq that moved on a no-op run would make every
+    # co-signer's signature stale over bytes whose meaning never changed —
+    # measured, it cleared them (tests "seal deleted a co-signer sig over bytes
+    # it did not change" and "seal status reports one endorsement entry per
+    # signature"). So a repeat is idempotent, and `seq` counts the seals a
+    # verifier can tell apart.
+    let carry_over = $superseded != null and $superseded.root == $root_hex
+    let counter = match [$superseded $carry_over] {
+        [null, _] => {seq: 0 prev: "genesis"}
+        [$s, true] => {seq: $s.seq prev: $s.prev}
+        [$s, false] => {seq: ($s.seq + 1) prev: $s.root}
+    }
+    root-statement $root_hex $counter.seq $counter.prev | save --raw --force $out
+    {root: $root_hex seq: $counter.seq prev: $counter.prev path: ($out | cwd-relative) leaves: ($leaves | length)}
+}
+
+# Read a root statement back as data: {root, seq, prev}.
+#
+# The parser is internal (_merkle-helpers.nu), and this format is this project's
+# to define — so a consumer asking "which seal is this, and what came before it"
+# gets a command instead of a second implementation of the regex. nu-cybergraph
+# is that consumer: it holds one snapshot directory per seal and walks them.
+@example "read one seal snapshot's statement" { nu-multiproof merkle read-root seals/672c33f2bb0b/tree-root.txt }
+export def read-root [
+    file: path # Statement file to read
+]: nothing -> record<root: string, seq: int, prev: string> {
+    if not ($file | path exists) {
+        error make {msg: $"root statement not found: ($file)"}
+    }
+    parse-root-statement $file
 }
 
 # Extract a compact inclusion proof for one manifest row. The consumer's full
@@ -357,7 +391,7 @@ export def verify [
             $"root statement not found: ($root_file) — --multiproofs-dir must name a directory holding the seal's ($MERKLE_ROOT_FILE)"
         })}
     }
-    let signed_root = parse-root-statement $root_file
+    let signed_root = (parse-root-statement $root_file).root
     if $proof.root != $signed_root {
         error make {msg: $"proof is for a different seal: proof commits to ($proof.root), signed root is ($signed_root)"}
     }

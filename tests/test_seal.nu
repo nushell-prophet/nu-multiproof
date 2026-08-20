@@ -73,7 +73,7 @@ def "seal produces manifest and signed root statement" [] {
     # Merkle root statement derived from the fresh manifest and signed
     let root_file = $"($repo)/multiproofs/tree-root.txt"
     assert ($root_file | path exists) "root statement not created"
-    assert equal (open --raw $root_file | into string) $"multiproof-merkle-v1 ($result.merkle_root)\n"
+    assert equal (open --raw $root_file | into string) $"multiproof-merkle-v2 ($result.merkle_root) 0 genesis\n"
     assert ($result.root_sig | str ends-with $".(principal-of $fx.key).sig")
 }
 
