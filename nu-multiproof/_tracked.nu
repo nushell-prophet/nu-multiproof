@@ -70,7 +70,7 @@ export def tracked-entries [root: path]: nothing -> table {
     # Why reject symlinks (mode 120000) rather than follow or hash them: one
     # manifest row must describe one object. `open --raw` follows the link, so
     # content_sha256 and content_cid would describe the target while
-    # content_git describes git's blob holding the link string — one row, two
+    # the git columns describe git's blob holding the link string — one row, two
     # objects, and two honest verifiers (re-hash the worktree vs. rebuild from
     # git objects) that disagree without either being wrong. A link pointing
     # outside the repo would also pull foreign content into the sealed

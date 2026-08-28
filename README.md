@@ -275,14 +275,39 @@ Network tests are held out of the default run because of that permanent write, n
 
 `nu-multiproof tree-hashes` writes `multiproofs/tree-hashes.csv`:
 one row per git-tracked file, one per parent directory, and one for the repo root `.`.
-A file row names the same bytes three ways
-— `content_sha256` (raw bytes), `content_git` (git's blob object, from a temp index over the working tree, not from HEAD) and `content_cid` (IPFS CID v0).
+A file row names the same bytes four ways
+— `content_sha256` (raw bytes), `content_git_sha1` and `content_git_sha256` (git's blob object in each object format, from a temp index over the working tree, not from HEAD) and `content_cid` (IPFS CID v0).
 A directory row has no `content_sha256`,
 since a directory has no bytes of its own;
-its `content_git` is git's tree object and its `content_cid` the UnixFS directory.
+its git columns hold git's tree object and its `content_cid` the UnixFS directory.
 The `.` row carries the root CID alone.
 Rows under `multiproofs/` are excluded,
 so the manifest never describes its own proofs.
+
+The git columns are a **lookup key, not an integrity anchor**:
+they are there so a file can be found cheaply in a repo whatever object format that repo uses.
+Integrity is what `content_sha256` and `content_cid` are for.
+
+Both formats are always present, in every manifest, whatever format the repo being described runs.
+Most repos in the world are SHA-1,
+so a manifest carrying SHA-256 alone would answer none of their `git hash-object` lookups
+— and a column that exists only sometimes is a column no verifier can rely on.
+Carrying both also makes every column a function of the content alone,
+so the merkle root no longer depends on the object format of the repo it was built in.
+
+The values are git's object hashes, and they need no git to reproduce:
+for a file it is `H("blob " + len + "\0" + bytes)`,
+for a directory `H` over git's tree object bytes (sorted entries, modes, child hashes),
+with `H` = SHA-1 for one column and SHA-256 for the other.
+`tree-hashes` does not reproduce them that way, though:
+it asks git, in a throwaway bare repo created with `--object-format` and pointed at the real working tree,
+which answers for the format the described repo does not run.
+So `content_git_sha256` differs from `content_sha256` only by that `blob <len>\0` header.
+
+**Cross-repo checks still use `content_sha256`.**
+The raw content hash is identical wherever the file is hosted and however it is stored;
+the git columns are hosting-independent but git-shaped
+— they say what git *would* call these bytes, and stop there.
 
 Beside the manifest, `tree-hashes` records which commit that manifest describes:
 `multiproofs/snapshot.txt`, one line
@@ -531,16 +556,17 @@ so an independent implementation reproduces the root from the same CSV (referenc
 - **Leaves**: all CSV rows (directory rows and the `.` root-CID row included), sorted by `filepath`
   — byte-wise lexicographic over the UTF-8 path bytes, no locale, no Unicode normalization.
   Duplicate filepaths are a hard error.
-- **Columns**: exactly the four below, no more and no fewer.
-  A fifth column is refused rather than ignored
+- **Columns**: exactly the five below, no more and no fewer.
+  A sixth column is refused rather than ignored
   — the leaf bytes would not say it was there,
   so two manifests differing only in a dropped column would share a root.
-- **Leaf bytes**: the four parsed field values (RFC 4180 CSV parsing, not raw lines) joined with `\n`:
-  `filepath \n content_sha256 \n content_git \n content_cid`.
+- **Leaf bytes**: the five parsed field values (RFC 4180 CSV parsing, not raw lines) joined with `\n`:
+  `filepath \n content_sha256 \n content_git_sha1 \n content_git_sha256 \n content_cid`.
 - **Charset constraints** (make the `\n`-join injective; reject, never normalize):
   `filepath` is non-empty and contains no bytes < 0x20;
   `content_sha256` is empty or 64 lowercase hex;
-  `content_git` is empty or 40/64 lowercase hex (SHA-1 or SHA-256 git repos);
+  `content_git_sha1` is empty or 40 lowercase hex;
+  `content_git_sha256` is empty or 64 lowercase hex;
   `content_cid` is empty or a base58btc CIDv0 (`Qm` + 44 chars).
 - **Path containment**: `filepath` has no leading `/` and no `..` component.
   `verify` joins it onto the target directory and reads it,
@@ -551,7 +577,7 @@ so an independent implementation reproduces the root from the same CSV (referenc
   Bare `.` is legal on purpose:
   it is the root-CID row.
 - **Symlinks**: refused, never followed.
-  Following one would take `content_sha256` and `content_cid` from the target while `content_git` stays git's blob of the link string
+  Following one would take `content_sha256` and `content_cid` from the target while the git columns stay git's blob of the link string
   — one row describing two objects,
   and a link pointing outside the repo would pull foreign content into the catalogue.
   `tree-hashes` errors and names the offending paths.
@@ -569,7 +595,7 @@ so an independent implementation reproduces the root from the same CSV (referenc
   and `side` must be exactly `left` or `right`.
   This is the most common interop bug in merkle verifiers,
   so it fails loudly instead of folding something plausible.
-- **Root statement**: exactly `multiproof-merkle-v2 <64 lowercase hex> <seq> <prev>` + one trailing `\n`.
+- **Root statement**: exactly `multiproof-merkle-v3 <64 lowercase hex> <seq> <prev>` + one trailing `\n`.
   The statement form (not a bare hash) keeps the signature from being replayed in another hash-signing context.
   `seq` is a decimal count with no leading zeros, starting at 0,
   and `prev` is the root this seal supersedes

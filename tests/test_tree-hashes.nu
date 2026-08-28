@@ -19,7 +19,8 @@ def cleanup [] {
 const EXPECTED_COLUMNS = [
     filepath
     content_sha256
-    content_git
+    content_git_sha1
+    content_git_sha256
     content_cid
 ]
 
@@ -76,13 +77,16 @@ def "every row carries a CID, directories included" [] {
 }
 
 @test
-def "directories have non-empty content_git" [] {
+def "directories carry a git hash in both formats" [] {
     let repo = make-repo $in.tmp_dir
     let result = tree-hashes --echo --repo $repo
-    let dirs = $result | where content_sha256 == ""
+    # "." has no git hash of its own; every other directory row must have both
+    let dirs = $result | where content_sha256 == "" and filepath != "."
     assert (($dirs | length) > 0) "the fixture tree lost its directory rows"
-    let with_git = $dirs | where content_git != ""
-    assert (($with_git | length) > 0)
+    for d in $dirs {
+        assert ($d.content_git_sha1 =~ '^[0-9a-f]{40}$') $"($d.filepath) content_git_sha1: ($d.content_git_sha1)"
+        assert ($d.content_git_sha256 =~ '^[0-9a-f]{64}$') $"($d.filepath) content_git_sha256: ($d.content_git_sha256)"
+    }
 }
 
 @test
@@ -188,9 +192,10 @@ def "non-ascii filenames come through raw, not C-quoted" [] {
     let row = $table | where filepath == "文件.md"
     assert equal ($row | length) 1 $"raw non-ascii filepath missing; got ($table.filepath)"
     assert ($row.0.content_sha256 | is-not-empty)
-    # content_git exercises the update-index/ls-tree -z path: a quoted path
-    # would silently miss the git_hashes lookup and land empty
-    assert ($row.0.content_git | is-not-empty)
+    # The git columns exercise the update-index/ls-tree -z path: a quoted path
+    # would silently miss the lookup and land empty
+    assert ($row.0.content_git_sha1 | is-not-empty)
+    assert ($row.0.content_git_sha256 | is-not-empty)
 }
 
 @test
@@ -284,15 +289,16 @@ def "a tracked file deleted from the worktree fails the build by name" [] {
 }
 
 @test
-def "directory content_git matches working-tree blob hashes of its files" [] {
+def "directory git hashes match a working-tree index built independently" [] {
     let repo = make-repo $in.tmp_dir
     let result = tree-hashes --echo --repo $repo
     let dirs = $result | where content_sha256 == "" and filepath != "."
-    # For each directory row, the content_git must be non-empty AND must derive
-    # from the same snapshot as its file rows (i.e., the temp-index tree).
-    # We assert parity by recomputing: for each dir, the hash listed in the
-    # manifest must match the tree hash for that path in a fresh temp index
-    # built from the same files.
+    # The manifest carries both formats; this rebuild asks the fixture repo's
+    # own git, so it can only answer for the format that repo runs. The other
+    # column is pinned by the external vectors below, which is the stronger
+    # check anyway — it does not rebuild anything.
+    let format = ^git -C $repo rev-parse --show-object-format | str trim
+    let column = $"content_git_($format)"
     let files = $result | where content_sha256 != "" and filepath != "."
     let tmp_index = $nu.temp-dir | path join $"nutest-tree-(random uuid)"
     rm --force $tmp_index
@@ -313,7 +319,44 @@ def "directory content_git matches working-tree blob hashes of its files" [] {
         | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
     )
     for d in $dirs {
-        assert ($d.content_git | is-not-empty) $"directory ($d.filepath) has empty content_git"
-        assert equal $d.content_git ($expected | get $d.filepath) $"directory ($d.filepath) content_git mismatch"
+        assert equal ($d | get $column) ($expected | get $d.filepath) $"directory ($d.filepath) ($column) mismatch"
+    }
+}
+
+# The vectors below came from git itself, outside this codebase: a working tree
+# holding a.txt = "hello" and d/b.txt = "world", hashed by `git write-tree` in a
+# repo of each object format. They are what makes this more than a round-trip of
+# our own builder — and they are the whole point of the change, since one of the
+# two columns can never come from the repo the manifest describes.
+const HELLO_WORLD_TREE = {
+    sha1: {
+        "a.txt": "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"
+        "d": "0980762b58316262116e0b114d3bd5d44256399f"
+        "d/b.txt": "04fea06420ca60892f73becee3614f6d023a4b7f"
+    }
+    sha256: {
+        "a.txt": "8aec4e4876f854f688d0ebfc8f37598f38e5fd6903cccc850ca36591175aeb60"
+        "d": "866ab7eca3c129182cf41594e1234c0827856d9770c2be1b7e611f20262b433c"
+        "d/b.txt": "8df3dab4ddfa6eb2a34065cda27d95af2709d4d2658e1b5fbd145822acf42b28"
+    }
+}
+
+@test
+def "both git columns hold the same values whatever format the repo runs" [] {
+    let tmp_dir = $in.tmp_dir
+    for format in [sha1 sha256] {
+        let repo = $"($tmp_dir)/($format)"
+        mkdir $"($repo)/d"
+        ^git -C $repo init --quiet --object-format $format
+        "hello" | save --raw --force $"($repo)/a.txt"
+        "world" | save --raw --force $"($repo)/d/b.txt"
+        ^git -C $repo add -- a.txt d/b.txt
+        let rows = tree-hashes --echo --repo $repo | select filepath content_git_sha1 content_git_sha256
+
+        for path in [a.txt d d/b.txt] {
+            let row = $rows | where filepath == $path | first
+            assert equal $row.content_git_sha1 ($HELLO_WORLD_TREE.sha1 | get $path) $"($format) repo, ($path), sha1 column"
+            assert equal $row.content_git_sha256 ($HELLO_WORLD_TREE.sha256 | get $path) $"($format) repo, ($path), sha256 column"
+        }
     }
 }

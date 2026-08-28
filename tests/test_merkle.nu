@@ -44,20 +44,26 @@ def principal-of [key: path]: nothing -> string {
     open --raw $"($key).pub" | pubkey fingerprint
 }
 
+# A 40-hex stand-in for a git SHA-1 object hash: nushell's `hash` offers no
+# sha1, and these rows are fixture bytes rather than values some git produced.
+def fake-sha1 [seed: string]: nothing -> string {
+    $seed | hash sha256 | str substring 0..<40
+}
+
 # Fixed 4-row manifest for golden-root pinning. Deliberately unsorted (builder
 # must sort itself) with a numeric-looking filepath (must stay a string) and a
 # directory row (empty sha256/cid).
 def write-mini-manifest [repo: path] {
     mkdir $"($repo)/multiproofs"
     [
-        {filepath: "z.txt" content_sha256: ("one" | hash sha256) content_git: ("two" | hash sha256) content_cid: ""}
-        {filepath: "docs" content_sha256: "" content_git: ("three" | hash sha256) content_cid: ""}
-        {filepath: "docs/a.md" content_sha256: ("four" | hash sha256) content_git: ("five" | hash sha256) content_cid: "QmNwvubv2KpTeugGN29uBnaZhZkDCwG4kMrx2vAEBk9nPo"}
-        {filepath: "42" content_sha256: ("six" | hash sha256) content_git: ("seven" | hash sha256) content_cid: ""}
+        {filepath: "z.txt" content_sha256: ("one" | hash sha256) content_git_sha1: (fake-sha1 "two") content_git_sha256: ("two" | hash sha256) content_cid: ""}
+        {filepath: "docs" content_sha256: "" content_git_sha1: (fake-sha1 "three") content_git_sha256: ("three" | hash sha256) content_cid: ""}
+        {filepath: "docs/a.md" content_sha256: ("four" | hash sha256) content_git_sha1: (fake-sha1 "five") content_git_sha256: ("five" | hash sha256) content_cid: "QmNwvubv2KpTeugGN29uBnaZhZkDCwG4kMrx2vAEBk9nPo"}
+        {filepath: "42" content_sha256: ("six" | hash sha256) content_git_sha1: (fake-sha1 "seven") content_git_sha256: ("seven" | hash sha256) content_cid: ""}
     ] | to csv | save --force $"($repo)/multiproofs/tree-hashes.csv"
 }
 
-const GOLDEN_MINI_ROOT = "1bb128f5734e4063378753825da46f637ab6a8747973b8f1507d8e6f5404c9a0"
+const GOLDEN_MINI_ROOT = "fffe0c09f1f3a7d030f6246c4b3bbdb07727cfc26e1b0433f57c07151180119a"
 
 # Git repo whose manifest has rows README.md, sub, sub/inner.txt (n=3).
 def make-test-repo [tmp_dir: path]: nothing -> path {
@@ -159,7 +165,7 @@ def "golden root for the fixed mini-manifest, statement byte-exact" [] {
     assert equal $result.leaves 4
     # Signature and OTS cover exact bytes: one statement line, one "\n"
     let statement = open --raw $"($tmp_dir)/multiproofs/tree-root.txt" | into string
-    assert equal $statement $"multiproof-merkle-v2 ($GOLDEN_MINI_ROOT) 0 genesis\n"
+    assert equal $statement $"multiproof-merkle-v3 ($GOLDEN_MINI_ROOT) 0 genesis\n"
     assert equal (parse-root-statement $"($tmp_dir)/multiproofs/tree-root.txt") {root: $GOLDEN_MINI_ROOT seq: 0 prev: "genesis"}
 }
 
@@ -174,8 +180,8 @@ def "the root-CID row is a covered leaf" [] {
     let cid = "QmNwvubv2KpTeugGN29uBnaZhZkDCwG4kMrx2vAEBk9nPo"
     let other_cid = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
     let rows = [
-        {filepath: "." content_sha256: "" content_git: "" content_cid: $cid}
-        {filepath: "z.txt" content_sha256: ("one" | hash sha256) content_git: ("two" | hash sha256) content_cid: ""}
+        {filepath: "." content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: $cid}
+        {filepath: "z.txt" content_sha256: ("one" | hash sha256) content_git_sha1: (fake-sha1 "two") content_git_sha256: ("two" | hash sha256) content_cid: ""}
     ]
     mkdir $"($tmp_dir)/multiproofs"
     $rows | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
@@ -197,7 +203,7 @@ def "the root-CID row is a covered leaf" [] {
 def "an empty manifest is refused - the empty root is constant and replayable" [] {
     let tmp_dir = $in.tmp_dir
     mkdir $"($tmp_dir)/multiproofs"
-    "filepath,content_sha256,content_git,content_cid\n"
+    "filepath,content_sha256,content_git_sha1,content_git_sha256,content_cid\n"
         | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
     let err = try { merkle write-root --repo $tmp_dir; null } catch {|e| $e.msg }
@@ -229,7 +235,7 @@ def "an empty git repo cannot mint a root - its one-row manifest is constant too
 def "duplicate filepaths are a hard error - equivocation guard" [] {
     let tmp_dir = $in.tmp_dir
     mkdir $"($tmp_dir)/multiproofs"
-    let row = {filepath: "a.txt" content_sha256: ("one" | hash sha256) content_git: "" content_cid: ""}
+    let row = {filepath: "a.txt" content_sha256: ("one" | hash sha256) content_git_sha1: "" content_git_sha256: "" content_cid: ""}
     [$row $row] | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
     # Not bare `assert error` because: it stays green on ANY error (e.g.
@@ -245,8 +251,8 @@ def "newline in filepath is rejected - leaf forgery guard" [] {
     mkdir $"($tmp_dir)/multiproofs"
     # A tracked file named like a serialized record would otherwise inject
     # attacker-chosen hash fields into the leaf bytes
-    let evil = $"evil\n(('x' | hash sha256))\n(('y' | hash sha256))\n"
-    [{filepath: $evil content_sha256: ("one" | hash sha256) content_git: "" content_cid: ""}]
+    let evil = $"evil\n(('x' | hash sha256))\n((fake-sha1 'y'))\n(('z' | hash sha256))\n"
+    [{filepath: $evil content_sha256: ("one" | hash sha256) content_git_sha1: "" content_git_sha256: "" content_cid: ""}]
         | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
     # Pin the validate-leaf message so an unrelated error can't keep this green
@@ -262,7 +268,7 @@ def "a filepath escaping the repo is rejected - containment guard" [] {
     # a bundle proves a file it does not contain — or one of the verifier's.
     for bad in ["../outside.json" "links/../../outside.json" "/etc/passwd" ".."] {
         let err = try {
-            validate-leaf {filepath: $bad content_sha256: "" content_git: "" content_cid: ""}
+            validate-leaf {filepath: $bad content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: ""}
             null
         } catch {|e| $e.msg }
         assert ($err != null) $"escaping filepath was accepted: ($bad)"
@@ -270,8 +276,8 @@ def "a filepath escaping the repo is rejected - containment guard" [] {
     }
     # "." is the root-CID row — legal, and a file named "..foo" is not a
     # traversal either
-    validate-leaf {filepath: "." content_sha256: "" content_git: "" content_cid: ""}
-    validate-leaf {filepath: "..foo" content_sha256: "" content_git: "" content_cid: ""}
+    validate-leaf {filepath: "." content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: ""}
+    validate-leaf {filepath: "..foo" content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: ""}
 }
 
 @test
@@ -280,7 +286,7 @@ def "uppercase hex in a leaf is rejected, not normalized" [] {
         validate-leaf {
             filepath: "a.txt"
             content_sha256: ("one" | hash sha256 | str uppercase)
-            content_git: ""
+            content_git_sha1: "" content_git_sha256: ""
             content_cid: ""
         }
     }
@@ -294,15 +300,15 @@ def "malformed root statements are rejected" [] {
     let prev = "zero" | hash sha256
 
     for bad in [
-        $"multiproof-merkle-v2 ($root) 1 ($prev)\n\n" # extra trailing newline
-        $"multiproof-merkle-v2 ($root) 1 ($prev)" # missing newline
-        $"multiproof-merkle-v2 ($root | str uppercase) 1 ($prev)\n" # uppercase hex
+        $"multiproof-merkle-v3 ($root) 1 ($prev)\n\n" # extra trailing newline
+        $"multiproof-merkle-v3 ($root) 1 ($prev)" # missing newline
+        $"multiproof-merkle-v3 ($root | str uppercase) 1 ($prev)\n" # uppercase hex
         $"($root) 1 ($prev)\n" # bare hash, no statement prefix
-        $"multiproof-merkle-v3 ($root) 1 ($prev)\n" # another schema — parser must track MERKLE_SCHEMA
-        $"multiproof-merkle-v2 ($root)\n" # the v1 shape: no seq, no predecessor
-        $"multiproof-merkle-v2 ($root) 01 ($prev)\n" # leading zero — two spellings of one seq under one signature
-        $"multiproof-merkle-v2 ($root) 0 ($prev)\n" # seq 0 naming a predecessor its own count denies
-        $"multiproof-merkle-v2 ($root) 3 genesis\n" # genesis at seq 3 — four seals hidden
+        $"multiproof-merkle-v2 ($root) 1 ($prev)\n" # another schema — parser must track MERKLE_SCHEMA
+        $"multiproof-merkle-v3 ($root)\n" # the v1 shape: no seq, no predecessor
+        $"multiproof-merkle-v3 ($root) 01 ($prev)\n" # leading zero — two spellings of one seq under one signature
+        $"multiproof-merkle-v3 ($root) 0 ($prev)\n" # seq 0 naming a predecessor its own count denies
+        $"multiproof-merkle-v3 ($root) 3 genesis\n" # genesis at seq 3 — four seals hidden
     ] {
         $bad | save --raw --force $file
         assert error {|| parse-root-statement $file } $"accepted: ($bad | to json)"
@@ -605,7 +611,7 @@ def "a leaf that commits to no content is not valid" [] {
     let dir = $"($tmp_dir)/ghostly"
     mkdir $dir
     let proof = forge-bundle $dir {
-        filepath: "ghost" content_sha256: "" content_git: "" content_cid: ""
+        filepath: "ghost" content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
 
     let result = merkle verify $proof --repo $dir
@@ -846,7 +852,7 @@ def "a leaf resolving into a sibling directory is outside, not inside" [] {
 
     let proof = forge-bundle $repo {
         filepath: "out/x.txt" content_sha256: ("secret\n" | hash sha256)
-        content_git: "" content_cid: ""
+        content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let result = merkle verify $proof --repo $repo
     assert equal $result.content_verified "outside"
@@ -866,7 +872,7 @@ def "a file row landing on a directory gets a verdict, not an I/O error" [] {
 
     let proof = forge-bundle $dir {
         filepath: "notafile" content_sha256: ("anything" | hash sha256)
-        content_git: "" content_cid: ""
+        content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let result = merkle verify $proof --repo $dir
     assert equal $result.content_verified "directory"
@@ -1034,13 +1040,13 @@ def forge-bundle [dir: path leaf: record key: path]: nothing -> path {
     cp $"($key).pub" $"($dir)/multiproofs/pubkeys/attacker.pub"
     # Leaf and root serialized here from the README spec, not via leaf-hash/mth:
     # a single-leaf tree's root IS the leaf hash.
-    let leaf_bytes = [$leaf.filepath $leaf.content_sha256 $leaf.content_git $leaf.content_cid]
+    let leaf_bytes = [$leaf.filepath $leaf.content_sha256 $leaf.content_git_sha1 $leaf.content_git_sha256 $leaf.content_cid]
         | str join "\n" | into binary
     let root = 0x[00] | bytes add --end $leaf_bytes | hash sha256
-    $"multiproof-merkle-v2 ($root) 0 genesis\n" | save --force $"($dir)/multiproofs/tree-root.txt"
+    $"multiproof-merkle-v3 ($root) 0 genesis\n" | save --force $"($dir)/multiproofs/tree-root.txt"
     ssh-sign sign $"($dir)/multiproofs/tree-root.txt" --key $key --pubkeys-dir $"($dir)/multiproofs/pubkeys"
     let proof_file = $"($dir)/proof.json"
-    {schema: "multiproof-merkle-v2" leaf: $leaf path: [] root: $root} | to json | save --force $proof_file
+    {schema: "multiproof-merkle-v3" leaf: $leaf path: [] root: $root} | to json | save --force $proof_file
     $proof_file
 }
 
@@ -1058,7 +1064,7 @@ def "verify refuses a forged proof whose leaf points outside the bundle" [] {
     "inside\n" | save --force $"($honest_dir)/inside.txt"
     let honest = forge-bundle $honest_dir {
         filepath: "inside.txt" content_sha256: ("inside\n" | hash sha256)
-        content_git: "" content_cid: ""
+        content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let ok = merkle verify $honest --repo $honest_dir
     assert $ok.valid "the hand-built bundle must otherwise verify"
@@ -1071,7 +1077,7 @@ def "verify refuses a forged proof whose leaf points outside the bundle" [] {
     mkdir $evil_dir
     let evil = forge-bundle $evil_dir {
         filepath: "../outside.txt" content_sha256: ("secret\n" | hash sha256)
-        content_git: "" content_cid: ""
+        content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let err = try { merkle verify $evil --repo $evil_dir; null } catch {|e| $e.msg }
     assert ($err != null) "a proof for a file outside the bundle was verified"
@@ -1096,7 +1102,7 @@ def "a leaf that is a symlink, or reaches out through one, is not content-verifi
     ^ln -s $"($tmp_dir)/outside.txt" $"($link_dir)/leaked.txt"
     let link_proof = forge-bundle $link_dir {
         filepath: "leaked.txt" content_sha256: ("secret\n" | hash sha256)
-        content_git: "" content_cid: ""
+        content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let linked = merkle verify $link_proof --repo $link_dir
     assert equal $linked.content_verified "symlink"
@@ -1110,7 +1116,7 @@ def "a leaf that is a symlink, or reaches out through one, is not content-verifi
     ^ln -s $"($tmp_dir)/no-such-file" $"($broken_dir)/leaked.txt"
     let broken_proof = forge-bundle $broken_dir {
         filepath: "leaked.txt" content_sha256: ("secret\n" | hash sha256)
-        content_git: "" content_cid: ""
+        content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     assert equal (merkle verify $broken_proof --repo $broken_dir).content_verified "symlink"
 
@@ -1122,7 +1128,7 @@ def "a leaf that is a symlink, or reaches out through one, is not content-verifi
     ^ln -s $tmp_dir $"($parent_dir)/up"
     let parent_proof = forge-bundle $parent_dir {
         filepath: "up/outside.txt" content_sha256: ("secret\n" | hash sha256)
-        content_git: "" content_cid: ""
+        content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let escaped = merkle verify $parent_proof --repo $parent_dir
     assert equal $escaped.content_verified "outside"
@@ -1143,7 +1149,7 @@ def "a manifest that no longer yields the signed root is caught" [] {
     "inside\n" | save --force $"($dir)/inside.txt"
     let leaf = {
         filepath: "inside.txt" content_sha256: ("inside\n" | hash sha256)
-        content_git: "" content_cid: ""
+        content_git_sha1: "" content_git_sha256: "" content_cid: ""
     }
     let proof = forge-bundle $dir $leaf $key
     let manifest = $"($dir)/multiproofs/tree-hashes.csv"
@@ -1159,7 +1165,7 @@ def "a manifest that no longer yields the signed root is caught" [] {
     # rebuild can see that the CSV beside it is a different tree.
     [
         $leaf
-        {filepath: "later.txt" content_sha256: ("later\n" | hash sha256) content_git: "" content_cid: ""}
+        {filepath: "later.txt" content_sha256: ("later\n" | hash sha256) content_git_sha1: "" content_git_sha256: "" content_cid: ""}
     ] | to csv | save --force $manifest
     let desynced = merkle verify $proof --repo $dir
     assert $desynced.structure_valid "the proof itself still folds to the signed root"

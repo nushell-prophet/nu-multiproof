@@ -11,8 +11,53 @@ use _cid-helpers.nu node-cid
 use _tracked.nu content-tree
 use _repo.nu repo-root
 use _layout.nu [ multiproofs-dir manifest-path ]
-use _temp-helpers.nu with-temp-file
+use _temp-helpers.nu [ with-temp-dir with-temp-file ]
 use _snapshot.nu write-snapshot
+
+# Git object hashes for every tracked file AND its parent directories, in one
+# object format, keyed by repo-relative path.
+#
+# Why a scratch repo rather than the target's own: git hashes only in the format
+# its own repo was created with, so the other format would be missing — and the
+# 2026-07-18 session assumed that meant assembling tree object bytes by hand, in
+# the trust path. It does not: `git init --object-format` gives that format a
+# home, GIT_WORK_TREE still points at the real working tree, and git produces
+# blob and tree hashes there.
+#
+# Why git and not a hash computed here: git defines what a git object hash is,
+# nushell has no sha1 at all, and nothing here serializes a git tree object — so
+# for three of the four halves of these columns git is the only source. Not for
+# speed: measured 2026-08-28 on git 2.39.5 over 2460 files, git's blob pass and
+# the equivalent nushell one land within 10% of each other.
+#
+# Why a temp index over the working tree and not `ls-tree HEAD`: HEAD reflects
+# committed state, not the tree the manifest describes. One `write-tree` gives
+# blob AND tree hashes from the same snapshot, so a modified file changes its
+# parent directory's hash too.
+def git-hashes [root: path tracked_files: list<string> format: string]: nothing -> record {
+    if ($tracked_files | is-empty) { return {} }
+
+    with-temp-dir $"build-tree-($format)" {|scratch|
+        # --bare: the scratch holds objects only; the tree being hashed is the
+        # target's, named by GIT_WORK_TREE.
+        ^git init --quiet --object-format $format --bare $scratch
+        with-temp-file $"build-tree-index-($format)" {|tmp_index|
+            with-env {GIT_DIR: $scratch GIT_WORK_TREE: $root GIT_INDEX_FILE: $tmp_index} {
+                # Why -z on all three: same core.quotePath issue as ls-files
+                # above — ls-tree C-quotes non-ASCII paths, so the lookup by raw
+                # path would silently miss them.
+                $tracked_files | str join (char -i 0) | ^git -C $root update-index --add -z --stdin
+                let tree = ^git -C $root write-tree | str trim
+                ^git -C $root ls-tree -r -t -z $tree
+            }
+        }
+    }
+    | split row (char -i 0)
+    | where { $in != "" }
+    | parse "{mode} {type} {hash}\t{path}"
+    | select path hash
+    | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
+}
 
 def build-tree [
     --repo: path # Target git repo root (default: git root of current directory)
@@ -34,29 +79,13 @@ def build-tree [
 
     let nodes = $tree.nodes
 
-    # Git hashes: build a temp index from working-tree files, then ls-tree the
-    # resulting tree. Gives blob AND tree hashes from the same snapshot, so a
-    # modified file's parent dir hash changes too. Not `ls-tree HEAD` because:
-    # it reflects committed state, not the working tree the manifest describes.
-    let git_hashes = if ($tracked_files | is-empty) {
-        {}
-    } else {
-        # Why -z on all three: same core.quotePath issue as ls-files above —
-        # ls-tree C-quotes non-ASCII paths, so the git_hashes lookup by raw
-        # path would silently miss them.
-        with-temp-file "build-tree-index" {|tmp_index|
-            with-env {GIT_INDEX_FILE: $tmp_index} {
-                $tracked_files | str join (char -i 0) | ^git -C $root update-index --add -z --stdin
-                let tree = ^git -C $root write-tree | str trim
-                ^git -C $root ls-tree -r -t -z $tree
-            }
-        }
-        | split row (char -i 0)
-        | where { $in != "" }
-        | parse "{mode} {type} {hash}\t{path}"
-        | select path hash
-        | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
-    }
+    # Both git object formats, always — never just the one this repo happens to
+    # run. The column is a lookup key, so a manifest that carries only SHA-256
+    # is useless to the SHA-1 repos that are most of the world. Carrying both
+    # also makes every column a function of the content alone, so the merkle
+    # root stops depending on the repo's object format.
+    let git_sha1 = git-hashes $root $tracked_files "sha1"
+    let git_sha256 = git-hashes $root $tracked_files "sha256"
 
     # Join lookup tables into final CSV structure. Every row carries a CID —
     # files from their own node, directories from the node folded above.
@@ -65,7 +94,13 @@ def build-tree [
             {
                 filepath: $e.rel
                 content_sha256: $e.content_sha256
-                content_git: ($git_hashes | get --optional $e.rel | default "")
+                # Why: a lookup key, not an integrity anchor — it is here so a
+                # file can be found cheaply in a repo whatever object format
+                # that repo uses. The user's own framing, 2026-07-18: "this is
+                # not about integrity, it is about cheap lookup of files in
+                # repositories, whatever format they are in."
+                content_git_sha1: ($git_sha1 | get --optional $e.rel | default "")
+                content_git_sha256: ($git_sha256 | get --optional $e.rel | default "")
                 content_cid: ($nodes | get $e.rel | node-cid)
             }
         }
@@ -76,7 +111,7 @@ def build-tree [
     # ("." sorts before ".woodpecker.yaml"), not sit appended last — merkle
     # leaf ordering depends on the CSV honoring its own rule.
     $rows
-    | append {filepath: "." content_sha256: "" content_git: "" content_cid: ($nodes | get "." | node-cid)}
+    | append {filepath: "." content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: ($nodes | get "." | node-cid)}
     | sort-by filepath
 }
 

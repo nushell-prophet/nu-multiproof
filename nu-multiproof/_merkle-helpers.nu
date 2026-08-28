@@ -6,12 +6,15 @@
 # Internal module: mod.nu does not re-export _*.nu files. merkle.nu and tests
 # import the names they need explicitly.
 
-export const MERKLE_SCHEMA = "multiproof-merkle-v2"
+# v3: the leaf gained a second git column. A root computed over the v2 leaf
+# bytes describes a different serialization of the same manifest, so the token
+# has to move with it — a verifier must never fold v2 bytes against a v3 root.
+export const MERKLE_SCHEMA = "multiproof-merkle-v3"
 
-const LEAF_COLUMNS = [filepath content_sha256 content_git content_cid]
+const LEAF_COLUMNS = [filepath content_sha256 content_git_sha1 content_git_sha256 content_cid]
 
 # Injectivity guard (forgery fix): git allows "\n" in filenames, so a name
-# like "evil\n<64hex>\n<64hex>\n<cid>" would serialize into leaf bytes that
+# like "evil\n<64hex>\n<40hex>\n<64hex>\n<cid>" would serialize into leaf bytes that
 # parse as a DIFFERENT record with attacker-chosen hashes. Constraining the
 # charsets makes the "\n"-join injective. Both builder and verifier call this;
 # reject (never normalize) violations — uppercase hex included.
@@ -38,22 +41,27 @@ export def validate-leaf [row: record]: nothing -> nothing {
     if $row.content_sha256 != "" and $row.content_sha256 !~ '^[0-9a-f]{64}$' {
         error make {msg: $"leaf content_sha256 must be empty or 64 lowercase hex chars: ($row.content_sha256)"}
     }
-    # 40 or 64: seal supports SHA-1 and SHA-256 git repos, so a manifest's git
-    # object hash is legitimately either digest length.
-    if $row.content_git != "" and $row.content_git !~ '^([0-9a-f]{40}|[0-9a-f]{64})$' {
-        error make {msg: $"leaf content_git must be empty or 40/64 lowercase hex chars: ($row.content_git)"}
+    # Each git column is pinned to its own digest length. The single column this
+    # replaced accepted 40 or 64 because it carried whichever format the repo
+    # ran; now the format is in the column name, so a length that disagrees with
+    # the name is a manifest describing something other than what it claims.
+    if $row.content_git_sha1 != "" and $row.content_git_sha1 !~ '^[0-9a-f]{40}$' {
+        error make {msg: $"leaf content_git_sha1 must be empty or 40 lowercase hex chars: ($row.content_git_sha1)"}
+    }
+    if $row.content_git_sha256 != "" and $row.content_git_sha256 !~ '^[0-9a-f]{64}$' {
+        error make {msg: $"leaf content_git_sha256 must be empty or 64 lowercase hex chars: ($row.content_git_sha256)"}
     }
     if $row.content_cid != "" and $row.content_cid !~ '^Qm[1-9A-HJ-NP-Za-km-z]{44}$' {
         error make {msg: $"leaf content_cid must be empty or a base58btc CIDv0: ($row.content_cid)"}
     }
 }
 
-# Leaf hash = sha256(0x00 ++ leaf_bytes), where leaf_bytes is the four PARSED
+# Leaf hash = sha256(0x00 ++ leaf_bytes), where leaf_bytes is the five PARSED
 # field values (not the raw CSV line — quoting is not canonical) joined with
 # "\n". The 0x00/0x01 prefixes are RFC 6962 domain separation: without them an
 # inner node can be presented as a leaf (second-preimage attack).
 export def leaf-hash [row: record]: nothing -> binary {
-    let leaf_bytes = [$row.filepath $row.content_sha256 $row.content_git $row.content_cid]
+    let leaf_bytes = [$row.filepath $row.content_sha256 $row.content_git_sha1 $row.content_git_sha256 $row.content_cid]
         | str join (char nl)
         | into binary
     0x[00] | bytes add --end $leaf_bytes | hash sha256 --binary
@@ -138,7 +146,7 @@ export def load-leaves [manifest: path]: nothing -> table {
     $rows
 }
 
-# One-line root statement: "multiproof-merkle-v2 <64 lowercase hex> <seq> <prev>"
+# One-line root statement: "multiproof-merkle-v3 <64 lowercase hex> <seq> <prev>"
 # + exactly one trailing "\n". Statement form, not a bare hash — a signature over
 # a bare hash under the generic "file" namespace could be replayed into any other
 # context where the key signs hashes.

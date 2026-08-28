@@ -37,8 +37,10 @@ export def snapshot-statement [commit: string]: nothing -> string {
 # Read the commit back out of a record file.
 #
 # Both git object formats are accepted by hex length — 40 for sha1, 64 for
-# sha256. No format token is stored: length separates the two, and validate-leaf
-# already reads content_git the same way.
+# sha256. No format token is stored: the commit is HEAD of the repo at hand, so
+# the format is whatever that repo runs and the length says which. (The manifest
+# went the other way — it names both formats in two columns — because a lookup
+# key is used against repos other than the one it was written in.)
 #
 # The schema token is captured and compared, never spelled into the regex — the
 # lesson from parse-root-statement, where hardcoding it let the parser keep
