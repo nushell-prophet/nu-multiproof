@@ -189,7 +189,22 @@ and it is why the log of this repo reads as a list of invariants
 nu toolkit.nu test            # runs all tests under tests/; exits non-zero on any failure
 nu toolkit.nu test --no-fail  # exit 0 even on failures (fail-on-error is the default)
 nu toolkit.nu test --network  # runs tests-network/ instead — reaches the internet; one test writes a permanent public timestamp
+nu toolkit.nu test --threads 0 # nutest's own parallelism back (0 means one per core) — see the warning below
 ```
+
+The suite runs on one thread by default and takes about 17 seconds.
+That is not a preference:
+nutest's own default runs every suite in parallel and every test inside it in parallel too,
+firing roughly 1500 short-lived processes in 3.5 seconds,
+and under Apple `container` that wedges the terminal of the whole VM on the fourth or fifth consecutive run
+— the guest keeps running, but nothing it prints reaches the screen again until the machine is restarted.
+Thirty consecutive single-threaded runs never wedged it.
+So 17 seconds instead of 4 is the price of a terminal that survives,
+and `--threads 0` is the escape hatch, not the faster setting to reach for.
+`--network` goes through the same strategy, so those tests are single-threaded too.
+The fault is in the runtime rather than here,
+so this default should go once it is fixed upstream
+— the reasoning and the measurements are in the commit that set it.
 
 Requires `nutest` as a sibling directory:
 ```sh
