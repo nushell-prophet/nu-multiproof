@@ -165,8 +165,8 @@ def "golden root for the fixed mini-manifest, statement byte-exact" [] {
     assert equal $result.leaves 4
     # Signature and OTS cover exact bytes: one statement line, one "\n"
     let statement = open --raw $"($tmp_dir)/multiproofs/tree-root.txt" | into string
-    assert equal $statement $"multiproof-merkle-v3 ($GOLDEN_MINI_ROOT) 0 genesis\n"
-    assert equal (parse-root-statement $"($tmp_dir)/multiproofs/tree-root.txt") {root: $GOLDEN_MINI_ROOT seq: 0 prev: "genesis"}
+    assert equal $statement $"multiproof-merkle-v4 ($GOLDEN_MINI_ROOT) 0 genesis none\n"
+    assert equal (parse-root-statement $"($tmp_dir)/multiproofs/tree-root.txt") {root: $GOLDEN_MINI_ROOT seq: 0 prev: "genesis" beacon: "none"}
 }
 
 # The IPFS root CID rides in the manifest as the "." row (tree-hashes.nu), and
@@ -299,16 +299,24 @@ def "malformed root statements are rejected" [] {
     let root = "one" | hash sha256
     let prev = "zero" | hash sha256
 
+    let beacon = $"bitcoin:964771:($root)"
     for bad in [
-        $"multiproof-merkle-v3 ($root) 1 ($prev)\n\n" # extra trailing newline
-        $"multiproof-merkle-v3 ($root) 1 ($prev)" # missing newline
-        $"multiproof-merkle-v3 ($root | str uppercase) 1 ($prev)\n" # uppercase hex
-        $"($root) 1 ($prev)\n" # bare hash, no statement prefix
-        $"multiproof-merkle-v2 ($root) 1 ($prev)\n" # another schema — parser must track MERKLE_SCHEMA
-        $"multiproof-merkle-v3 ($root)\n" # the v1 shape: no seq, no predecessor
-        $"multiproof-merkle-v3 ($root) 01 ($prev)\n" # leading zero — two spellings of one seq under one signature
-        $"multiproof-merkle-v3 ($root) 0 ($prev)\n" # seq 0 naming a predecessor its own count denies
-        $"multiproof-merkle-v3 ($root) 3 genesis\n" # genesis at seq 3 — four seals hidden
+        $"multiproof-merkle-v4 ($root) 1 ($prev) none\n\n" # extra trailing newline
+        $"multiproof-merkle-v4 ($root) 1 ($prev) none" # missing newline
+        $"multiproof-merkle-v4 ($root | str uppercase) 1 ($prev) none\n" # uppercase hex
+        $"($root) 1 ($prev) none\n" # bare hash, no statement prefix
+        $"multiproof-merkle-v2 ($root) 1 ($prev) none\n" # another schema — parser must track MERKLE_SCHEMA
+        $"multiproof-merkle-v4 ($root)\n" # the v1 shape: no seq, no predecessor
+        $"multiproof-merkle-v4 ($root) 01 ($prev) none\n" # leading zero — two spellings of one seq under one signature
+        $"multiproof-merkle-v4 ($root) 0 ($prev) none\n" # seq 0 naming a predecessor its own count denies
+        $"multiproof-merkle-v4 ($root) 3 genesis none\n" # genesis at seq 3 — four seals hidden
+        $"multiproof-merkle-v3 ($root) 1 ($prev)\n" # the v3 shape: no beacon field at all
+        $"multiproof-merkle-v4 ($root) 1 ($prev)\n" # v4 token, v3 body — the field is not optional
+        $"multiproof-merkle-v4 ($root) 1 ($prev) ($beacon | str upcase)\n" # uppercase beacon hash
+        $"multiproof-merkle-v4 ($root) 1 ($prev) bitcoin:0964771:($root)\n" # leading zero in the beacon height
+        $"multiproof-merkle-v4 ($root) 1 ($prev) bitcoin:964771\n" # beacon height with no hash
+        $"multiproof-merkle-v4 ($root) 1 ($prev) ethereum:964771:($root)\n" # a chain this format does not define
+        $"multiproof-merkle-v4 ($root) 1 ($prev) ($beacon) ($beacon)\n" # a second beacon appended
     ] {
         $bad | save --raw --force $file
         assert error {|| parse-root-statement $file } $"accepted: ($bad | to json)"
@@ -326,7 +334,7 @@ def "read-root returns the statement as data" [] {
 
     let snapshot = $"($tmp_dir)/snap-tree-root.txt"
     cp $"($repo)/multiproofs/tree-root.txt" $snapshot
-    assert equal (merkle read-root $snapshot) {root: $written.root seq: 0 prev: "genesis"}
+    assert equal (merkle read-root $snapshot) {root: $written.root seq: 0 prev: "genesis" beacon: "none"}
 
     # The one place a missing statement is reported, so the consumer walking
     # seals/ never needs a check of its own.
@@ -342,6 +350,61 @@ def "the first root statement is genesis at sequence 0" [] {
     let first = merkle write-root --repo $repo
     assert equal $first.seq 0
     assert equal $first.prev "genesis"
+}
+
+# The beacon travels with the counter, so it inherits the counter's idempotence
+# — deliberately. A fresh beacon on every derivation would rewrite bytes whose
+# meaning never moved, and `seal` would then clear every co-signer's signature
+# over them: the beacon would cost exactly what the seq counter was built to
+# avoid. So a carry-over ignores the beacon it is handed.
+@test
+def "re-deriving an unchanged tree keeps the beacon it was sealed under" [] {
+    let repo = make-test-repo $in.tmp_dir
+    let statement = $"($repo)/multiproofs/tree-root.txt"
+    let first_beacon = "bitcoin:0:000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+
+    let first = merkle write-root --repo $repo --beacon $first_beacon
+    assert equal $first.beacon $first_beacon
+    let bytes = open --raw $statement
+
+    let again = merkle write-root --repo $repo --beacon "bitcoin:800000:00000000000000000002a7c4c1e48d76c5a37902165a270156b7a8d72728a054"
+    assert equal $again.beacon $first_beacon
+    assert equal (open --raw $statement) $bytes "an unchanged tree rewrote its statement"
+}
+
+@test
+def "a new root carries the beacon it was minted with" [] {
+    let repo = make-test-repo $in.tmp_dir
+    let later_beacon = "bitcoin:800000:00000000000000000002a7c4c1e48d76c5a37902165a270156b7a8d72728a054"
+    merkle write-root --repo $repo --beacon "bitcoin:0:000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+
+    "later\n" | save --force $"($repo)/new.txt"
+    ^git -C $repo add new.txt
+    tree-hashes --repo $repo
+    let second = merkle write-root --repo $repo --beacon $later_beacon
+
+    assert equal $second.seq 1
+    assert equal $second.beacon $later_beacon
+    assert equal (parse-root-statement $"($repo)/multiproofs/tree-root.txt").beacon $later_beacon
+}
+
+@test
+def "a malformed beacon is refused before the statement is touched" [] {
+    let repo = make-test-repo $in.tmp_dir
+    let statement = $"($repo)/multiproofs/tree-root.txt"
+    merkle write-root --repo $repo
+    let bytes = open --raw $statement
+
+    assert error {|| merkle write-root --repo $repo --beacon "bitcoin:0:not-a-hash" }
+    assert equal (open --raw $statement) $bytes "a refused beacon still rewrote the statement"
+}
+
+# A statement with no beacon is legal, and is what an offline derivation writes:
+# a bound nobody could mint is better stated as absent than faked.
+@test
+def "a derivation with no beacon says so" [] {
+    let repo = make-test-repo $in.tmp_dir
+    assert equal (merkle write-root --repo $repo).beacon "none"
 }
 
 # The counter is what makes a removed seal visible: seals are keyed by root, so
@@ -360,7 +423,7 @@ def "each seal raises the sequence by one and names the root it supersedes" [] {
 
     assert equal $second.seq 1
     assert equal $second.prev $first.root
-    assert equal (parse-root-statement $"($repo)/multiproofs/tree-root.txt") {root: $second.root seq: 1 prev: $first.root}
+    assert equal (parse-root-statement $"($repo)/multiproofs/tree-root.txt") {root: $second.root seq: 1 prev: $first.root beacon: "none"}
 }
 
 @test
@@ -1043,10 +1106,10 @@ def forge-bundle [dir: path leaf: record key: path]: nothing -> path {
     let leaf_bytes = [$leaf.filepath $leaf.content_sha256 $leaf.content_git_sha1 $leaf.content_git_sha256 $leaf.content_cid]
         | str join "\n" | into binary
     let root = 0x[00] | bytes add --end $leaf_bytes | hash sha256
-    $"multiproof-merkle-v3 ($root) 0 genesis\n" | save --force $"($dir)/multiproofs/tree-root.txt"
+    $"multiproof-merkle-v4 ($root) 0 genesis none\n" | save --force $"($dir)/multiproofs/tree-root.txt"
     ssh-sign sign $"($dir)/multiproofs/tree-root.txt" --key $key --pubkeys-dir $"($dir)/multiproofs/pubkeys"
     let proof_file = $"($dir)/proof.json"
-    {schema: "multiproof-merkle-v3" leaf: $leaf path: [] root: $root} | to json | save --force $proof_file
+    {schema: "multiproof-merkle-v4" leaf: $leaf path: [] root: $root} | to json | save --force $proof_file
     $proof_file
 }
 
@@ -1490,7 +1553,7 @@ def "proof against a different seal root throws loudly" [] {
 
     # A later seal rewrote the root statement: verification must name the
     # seal mismatch, not report a quiet invalid
-    root-statement ("other" | hash sha256) 1 ("earlier" | hash sha256) | save --raw --force $"($repo)/multiproofs/tree-root.txt"
+    root-statement ("other" | hash sha256) 1 ("earlier" | hash sha256) "none" | save --raw --force $"($repo)/multiproofs/tree-root.txt"
     assert error {|| merkle verify $proof --repo $repo }
 }
 

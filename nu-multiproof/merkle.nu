@@ -18,6 +18,7 @@ use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
     root-statement parse-root-statement validate-leaf
 ]
+use _beacon-helpers.nu [BEACON_NONE validate-beacon]
 use _allowed-signers.nu check-signer-known
 use _stamps.nu [scan-stamps pick-stamp]
 use ssh-sign.nu
@@ -137,10 +138,20 @@ def derive-dir-cid [target: path, leaf: record, bundle: bool]: nothing -> record
 
 # Build the tree from the manifest and write the root statement file
 # (multiproofs/tree-root.txt) — the artifact seal signs and stamps.
+# --beacon is the seal's lower time bound: a Bitcoin block nobody could have
+# named earlier, minted by `beacon latest` and passed in here. It is a parameter
+# and not a fetch because this command is a pure local derivation — the network
+# lives in `seal` (steps 1, 2 and 5), and a live call inside the one place a root is
+# minted would make an offline re-derivation impossible. Bare `write-root` writes
+# `none`, which is a legal statement: an offline seal says so rather than
+# claiming a bound it could not mint.
 @example "derive and record the merkle root" { nu-multiproof merkle write-root }
 export def write-root [
     --repo: path # Target git repo root (default: git root of current directory)
+    --beacon: string = $BEACON_NONE # Lower time bound for a NEW root: `bitcoin:<height>:<hash>` from `beacon latest`
 ]: nothing -> record {
+    # Before the manifest is read, so a malformed token costs nothing.
+    validate-beacon $beacon
     let target = repo-root $repo
     let manifest = manifest-path $target
     let leaves = load-leaves $manifest
@@ -162,7 +173,16 @@ export def write-root [
     # The seal counter is minted here because this is the one place a root is
     # written, and the statement being replaced is the only record of the
     # previous seal — so it has to be read before the save that destroys it.
-    let superseded = if ($out | path exists) { parse-root-statement $out } else { null }
+    #
+    # A repo with no statement yet supersedes the genesis pseudo-seal: seq -1, so
+    # the first real seal counts 0, and root `genesis`, so `prev` is always its
+    # predecessor's root — spelled the way the format already spells "nothing
+    # came before". That leaves one rule instead of a first-seal case. The
+    # sentinel carries nothing else on purpose: a real root is 64 hex, so it can
+    # never equal one and the carry-over branch below can never read it; were
+    # that ever to change, the `select` there fails on the missing columns
+    # instead of writing invented ones.
+    let superseded = if ($out | path exists) { parse-root-statement $out } else { {root: "genesis" seq: -1} }
     # The counter tracks ROOTS, not runs of this command. Re-deriving an
     # unchanged tree must rewrite the same bytes: the statement is what
     # co-signers sign, and a seq that moved on a no-op run would make every
@@ -171,26 +191,36 @@ export def write-root [
     # it did not change" and "seal status reports one endorsement entry per
     # signature"). So a repeat is idempotent, and `seq` counts the seals a
     # verifier can tell apart.
-    let carry_over = $superseded != null and $superseded.root == $root_hex
-    let counter = match [$superseded $carry_over] {
-        [null, _] => {seq: 0 prev: "genesis"}
-        [$s, true] => {seq: $s.seq prev: $s.prev}
-        [$s, false] => {seq: ($s.seq + 1) prev: $s.root}
+    #
+    # The beacon travels with the counter, and for the same reason: it describes
+    # a SEAL, and re-deriving an unchanged tree is not a new seal. A fresh
+    # beacon on every run would rewrite bytes whose meaning never moved, and
+    # `seal` would then clear every co-signer's signature over them — the exact
+    # regression the idempotence above exists to prevent. So the passed --beacon
+    # is deliberately ignored on a carry-over; the statement keeps the one it was
+    # minted with, and the bound it states stays the bound that seal earned.
+    let counter = if $superseded.root == $root_hex {
+        $superseded | select seq prev beacon
+    } else {
+        {seq: ($superseded.seq + 1) prev: $superseded.root beacon: $beacon}
     }
-    root-statement $root_hex $counter.seq $counter.prev | save --raw --force $out
-    {root: $root_hex seq: $counter.seq prev: $counter.prev path: ($out | cwd-relative) leaves: ($leaves | length)}
+    root-statement $root_hex $counter.seq $counter.prev $counter.beacon | save --raw --force $out
+    {root: $root_hex seq: $counter.seq prev: $counter.prev beacon: $counter.beacon path: ($out | cwd-relative) leaves: ($leaves | length)}
 }
 
-# Read a root statement back as data: {root, seq, prev}.
+# Read a root statement back as data: {root, seq, prev, beacon}.
 #
 # The parser is internal (_merkle-helpers.nu), and this format is this project's
 # to define — so a consumer asking "which seal is this, and what came before it"
 # gets a command instead of a second implementation of the regex. nu-cybergraph
 # is that consumer: it holds one snapshot directory per seal and walks them.
+# `beacon` comes back as the raw token, `none` included — the same shape `prev`
+# has, and the shape the signature covers. `beacon verify` is what turns it into
+# a checked bound; nothing that only reads a file may report one.
 @example "read one seal snapshot's statement" { nu-multiproof merkle read-root seals/672c33f2bb0b/tree-root.txt }
 export def read-root [
     file: path # Statement file to read
-]: nothing -> record<root: string, seq: int, prev: string> {
+]: nothing -> record<root: string, seq: int, prev: string, beacon: string> {
     if not ($file | path exists) {
         error make {msg: $"root statement not found: ($file)"}
     }
@@ -391,7 +421,15 @@ export def verify [
             $"root statement not found: ($root_file) — --multiproofs-dir must name a directory holding the seal's ($MERKLE_ROOT_FILE)"
         })}
     }
-    let signed_root = (parse-root-statement $root_file).root
+    let signed_statement = parse-root-statement $root_file
+    let signed_root = $signed_statement.root
+    # What the statement SAYS its lower bound is — reported, never checked here.
+    # Confirming it means asking independent explorers whether that height really
+    # carries that hash, and this command makes no network call: every other line
+    # of it is a local recomputation, and a reader who could not tell a reported
+    # token from a checked one would read a green verify as a dated claim.
+    # `beacon verify` is the checker. Same rule `seal status` follows for names.
+    let beacon_report = if $signed_statement.beacon == $BEACON_NONE { "absent" } else { $signed_statement.beacon }
     if $proof.root != $signed_root {
         error make {msg: $"proof is for a different seal: proof commits to ($proof.root), signed root is ($signed_root)"}
     }
@@ -548,6 +586,7 @@ export def verify [
     let enumerated_by = if $content_enumeration == null { "" } else { $" \(via ($content_enumeration)\)" }
     print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (the row commits to no content)' })($enumerated_by)"
     print $"ots:       ($ots_status.status)"
+    print $"beacon:    ($beacon_report) \(as stated — `beacon verify` checks it against Bitcoin\)"
     for e in $endorsements {
         print $"endorsed:  ($e.status) — ($e.signer)"
     }
@@ -565,6 +604,7 @@ export def verify [
         content_enumeration: $content_enumeration
         signatures: $sig_check.sigs
         ots: $ots_status
+        beacon: $beacon_report
         endorsements: $endorsements
         error: $error
     }

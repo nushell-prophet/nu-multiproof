@@ -6,10 +6,17 @@
 # Internal module: mod.nu does not re-export _*.nu files. merkle.nu and tests
 # import the names they need explicitly.
 
-# v3: the leaf gained a second git column. A root computed over the v2 leaf
-# bytes describes a different serialization of the same manifest, so the token
-# has to move with it — a verifier must never fold v2 bytes against a v3 root.
-export const MERKLE_SCHEMA = "multiproof-merkle-v3"
+use _beacon-helpers.nu [BEACON_TOKEN_PATTERN validate-beacon]
+
+# The token moves with every change to the bytes it names, and pre-1.0 the older
+# form is refused rather than migrated (see 32e613f, 6ff7096: the stale statement
+# is deleted and the chain restarts at genesis).
+# v3: the leaf gained a second git column, so a root computed over v2 leaf bytes
+# describes a different serialization of the same manifest — a verifier must
+# never fold v2 bytes against a v3 root.
+# v4: the statement gained the beacon field, its lower time bound. The tree is
+# untouched; the SIGNED BYTES are not, and they are what the token describes.
+export const MERKLE_SCHEMA = "multiproof-merkle-v4"
 
 const LEAF_COLUMNS = [filepath content_sha256 content_git_sha1 content_git_sha256 content_cid]
 
@@ -146,10 +153,11 @@ export def load-leaves [manifest: path]: nothing -> table {
     $rows
 }
 
-# One-line root statement: "multiproof-merkle-v3 <64 lowercase hex> <seq> <prev>"
-# + exactly one trailing "\n". Statement form, not a bare hash — a signature over
-# a bare hash under the generic "file" namespace could be replayed into any other
-# context where the key signs hashes.
+# One-line root statement — the bytes a seal signs:
+#   "multiproof-merkle-v4 <64 lowercase hex> <seq> <prev> <beacon>"
+# plus exactly one trailing "\n". Statement form, not a bare hash — a signature
+# over a bare hash under the generic "file" namespace could be replayed into any
+# other context where the key signs hashes.
 #
 # `seq` counts seals from 0 and rises by exactly 1 per seal; `prev` is the root
 # this seal supersedes, or the literal `genesis` for the first one. Why both sit
@@ -159,6 +167,10 @@ export def load-leaves [manifest: path]: nothing -> table {
 # first seal: a sentinel shaped like a hash gets read as a hash by any verifier
 # that forgets the special case.
 #
+# `beacon` is the lower time bound: a token minted by `beacon latest`, or the
+# literal `none` when the seal was made offline. Its grammar lives in
+# _beacon-helpers.nu, the argument for having it at all in beacon.nu.
+#
 # What the number is worth: multiproofs/ is excluded from the manifest, so `seq`
 # is not under the merkle root. It rests on the signature over these bytes and on
 # their OTS anchor — a key holder can restate any number, what they cannot do is
@@ -167,8 +179,13 @@ export def root-statement [
     root_hex: string
     seq: int # 0 for the first seal, then +1 per seal
     prev: string # root this seal supersedes, or "genesis"
+    beacon: string # lower time bound: a beacon token, or "none" (_beacon-helpers.nu)
 ]: nothing -> string {
-    $"($MERKLE_SCHEMA) ($root_hex) ($seq) ($prev)\n"
+    # Validated here, at the one place a statement is formed: this field is the
+    # only one whose value comes from off the machine, and an unparseable token
+    # would otherwise be found by the next reader of a file already signed.
+    validate-beacon $beacon
+    $"($MERKLE_SCHEMA) ($root_hex) ($seq) ($prev) ($beacon)\n"
 }
 
 # Parse a root statement file, byte-exact. Editors love adding trailing
@@ -176,7 +193,7 @@ export def root-statement [
 #
 # Returns the whole record, not the root alone: a caller handed a bare hash
 # cannot check the chain that hash is a link in.
-export def parse-root-statement [file: path]: nothing -> record<root: string, seq: int, prev: string> {
+export def parse-root-statement [file: path]: nothing -> record<root: string, seq: int, prev: string, beacon: string> {
     let content = open --raw $file | into string
     # The schema token is captured and compared against MERKLE_SCHEMA rather
     # than spelled into the regex: hardcoding it made the parser keep accepting
@@ -186,9 +203,27 @@ export def parse-root-statement [file: path]: nothing -> record<root: string, se
     # `0|[1-9][0-9]*`, not `\d+`: under `into int` both "7" and "007" become 7,
     # so two byte strings would state one seq — and the signature covers bytes,
     # not the parsed value.
-    let matched = $content | parse --regex '\A(?<schema>\S+) (?<root>[0-9a-f]{64}) (?<seq>0|[1-9][0-9]*) (?<prev>[0-9a-f]{64}|genesis)\n\z'
+    #
+    # The beacon alternation is spliced in from _beacon-helpers.nu rather than
+    # spelled again — the token grammar has one home, and a format whose
+    # signature covers exact bytes must not have two readings of a field.
+    #
+    # One line per field, in the order the statement writes them, joined into a
+    # single regex. `\A` and `\n\z` pin both ends: that is how "exactly one
+    # trailing newline" becomes a parse failure instead of something a reader
+    # would be tempted to trim.
+    let pattern = [
+        '\A'
+        '(?<schema>\S+) '
+        '(?<root>[0-9a-f]{64}) '
+        '(?<seq>0|[1-9][0-9]*) '
+        '(?<prev>[0-9a-f]{64}|genesis) '
+        '(?<beacon>' $BEACON_TOKEN_PATTERN ')'
+        '\n\z'
+    ] | str join
+    let matched = $content | parse --regex $pattern
     if ($matched | is-empty) or $matched.schema.0 != $MERKLE_SCHEMA {
-        error make {msg: $"malformed root statement ($file): expected '($MERKLE_SCHEMA) <64 lowercase hex> <seq> <prev root hex or genesis>' with exactly one trailing newline"}
+        error make {msg: $"malformed root statement ($file): expected '($MERKLE_SCHEMA) <64 lowercase hex> <seq> <prev root hex or genesis> <beacon token or none>' with exactly one trailing newline"}
     }
     let rec = $matched | first
     let seq = $rec.seq | into int
@@ -198,5 +233,5 @@ export def parse-root-statement [file: path]: nothing -> record<root: string, se
     if ($rec.prev == "genesis") != ($seq == 0) {
         error make {msg: $"inconsistent root statement ($file): seq ($seq) with prev ($rec.prev) — genesis pairs with seq 0, and with nothing else"}
     }
-    {root: $rec.root seq: $seq prev: $rec.prev}
+    {root: $rec.root seq: $seq prev: $rec.prev beacon: $rec.beacon}
 }

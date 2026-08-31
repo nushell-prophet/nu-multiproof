@@ -10,6 +10,8 @@ use _ots-helpers.nu freeze-bundle
 use _key-helpers.nu [ with-signing-key signing-principal ]
 use _stamps.nu [ scan-stamps pick-stamp format-stamp ]
 use _commit-proposal.nu seal-commit-line
+use _beacon-helpers.nu [BEACON_NONE validate-beacon]
+use beacon.nu
 
 # Full seal pipeline: hash+root-cid → sign → stamp.
 #
@@ -17,17 +19,24 @@ use _commit-proposal.nu seal-commit-line
 #   1. Upgrade pending OTS — opportunistic; tries all .ots files. "Still
 #      pending" is silent (Bitcoin confirmation takes hours/days, so this just
 #      progresses previous seals); any other failure is printed and skipped
-#   2. tree-hashes — regenerate the manifest from current worktree files: one
+#   2. beacon — mint the lower time bound (a cross-checked Bitcoin block) and
+#      carry it into the statement written in step 3. Done here, before any
+#      artifact is rewritten, so an explorer outage costs nothing
+#   3. tree-hashes — regenerate the manifest from current worktree files: one
 #      in-process pass emits per-file, per-dir and the root "." row together, so
 #      the manifest is written once, complete. Then derive the merkle root
 #      statement (multiproofs/tree-root.txt) from the fresh manifest
-#   3. ssh-sign — sign the root statement
-#   4. ots stamp — timestamp the root statement AND every signature over it
+#   4. ssh-sign — sign the root statement
+#   5. ots stamp — timestamp the root statement AND every signature over it
 #      (--no-stamp to skip, --no-content-anchor to stamp the signatures only),
 #      so the content and each endorsement are dated separately. A proof commits
 #      to one file's hash, so two claims need two — but both land in ONE bundle,
 #      the root statement's, so a single directory answers "this content existed
 #      by T, and signer X endorsed it by T2"
+#
+# These numbers name the stages, and the body below is commented with them. They
+# are not quite the order the body runs: step 2 runs first, because the mint has
+# to happen before anything on disk is touched, and step 1 rewrites .ots files.
 #
 # Committing is deliberately outside this pipeline. It's a user decision with
 # context (message, scope, timing). `--propose-commit` does not weaken that: it
@@ -40,7 +49,7 @@ use _commit-proposal.nu seal-commit-line
 # gives explicit key choice for a one-off. "Seal but do not sign" is
 # `tree-hashes` followed by `merkle write-root` — the two commands this step
 # wraps — so the flag bought a second name for a path that already exists.
-# The live form is plain `seal` in an initialized repo — step 4 then posts the
+# The live form is plain `seal` in an initialized repo — step 5 then posts the
 # root statement's digest to the public OTS calendar, a permanent public write.
 # That is why it is named here in prose and the example below stays offline:
 # an @example must be pasteable into a throwaway directory without side
@@ -60,9 +69,10 @@ use _commit-proposal.nu seal-commit-line
 }
 export def main [
     --repo: path # Target git repo root (default: git root of current directory)
-    --no-stamp # Skip OTS timestamping (on by default — seal should be complete)
+    --no-stamp # Seal offline: no beacon, no OTS timestamp (both are on by default — a seal should be complete)
+    --beacon: string # Use this beacon token instead of minting one (`beacon latest`, or `none`)
     --no-content-anchor # Stamp only the signatures, leaving the root statement undated
-    --response-file: path # Calendar answer for step 4, instead of posting the digest
+    --response-file: path # Calendar answer for step 5, instead of posting the digest
     --propose-commit # Leave a `git commit` for this seal in the prompt, unrun
 ]: nothing -> record {
     # Why refused rather than given a precedence: they ask for different things —
@@ -71,16 +81,16 @@ export def main [
     # skip the post they asked for. Checked first, while failing is still free:
     # everything below either rewrites artifacts or writes to a public calendar.
     if $no_stamp and $no_content_anchor {
-        error make {msg: "--no-stamp and --no-content-anchor are alternatives: --no-stamp skips step 4 entirely, --no-content-anchor runs it over the signatures only"}
+        error make {msg: "--no-stamp and --no-content-anchor are alternatives: --no-stamp skips step 5 entirely, --no-content-anchor runs it over the signatures only"}
     }
     let root = repo-root $repo
     let manifest_path = manifest-path $root
     let root_statement_path = merkle-root-path $root
     let ots_dir = ots-dir $root
 
-    # Ask the signing question before touching anything. Step 2 rewrites the
+    # Ask the signing question before touching anything. Step 3 rewrites the
     # manifest and the root statement and clears signatures over changed bytes;
-    # when step 3 then discovered an unregistered key, the seal had already
+    # when step 4 then discovered an unregistered key, the seal had already
     # left a regenerated manifest, a new unsigned root, and possibly a deleted
     # co-signer signature behind. Same check `ssh-sign sign` runs — asked
     # early, not enforced twice: sign keeps it for standalone use.
@@ -90,6 +100,36 @@ export def main [
     # repo removed.
     let signer = with-signing-key --root $root {|signing_key|
         signing-principal $signing_key (pubkeys-dir $root)
+    }
+
+    # 2. Mint the lower time bound here, in the same "before anything is touched"
+    # window as the signing question, and for the same reason: everything below
+    # rewrites artifacts or writes to a public calendar, and an explorer that
+    # does not answer must not cost a regenerated manifest and a cleared
+    # co-signer signature.
+    #
+    # Why no --no-beacon flag: minting is a network call exactly like the
+    # calendar post, so it rides on --no-stamp, which is already the flag every
+    # offline path passes — the @example, the whole test suite. One correction
+    # to the assumption that suggested a shared flag: a calendar and a block
+    # explorer are different hosts, so one can answer while the other does not.
+    # When a beacon was asked for and no explorer answers, this throws rather
+    # than writing `none`: a statement claiming no bound where the caller asked
+    # for one is a weaker claim made silently, which is the shape this repo
+    # refuses everywhere else.
+    #
+    # --beacon is the test seam and the deliberate override, the same seam
+    # --response-file is for the calendar: without it the whole path from token
+    # to signed bytes could only be exercised against live explorers, so it
+    # would not be exercised at all. A caller passing an older block only
+    # weakens its own bound, which harms nobody else (beacon.nu).
+    let beacon_token = if $beacon != null {
+        validate-beacon $beacon
+        $beacon
+    } else if $no_stamp {
+        $BEACON_NONE
+    } else {
+        (beacon latest).token
     }
 
     # Fingerprint every artifact regen rewrites, before regen: a sig covers
@@ -118,7 +158,7 @@ export def main [
         }
     }
 
-    # 2. Regenerate the manifest in one pass: per-file, per-dir AND the root "."
+    # 3. Regenerate the manifest in one pass: per-file, per-dir AND the root "."
     #    row together, so the manifest is written once,
     #    complete, before any signature exists.
     let root_cid = tree-hashes root-cid --repo $root
@@ -129,11 +169,15 @@ export def main [
     # 32-byte commitment instead of keeping the whole CSV (see merkle.nu).
     # Immediately after regen, so no window where the statement describes a
     # previous manifest.
-    let merkle_result = merkle write-root --repo $root
-    $result = ($result | insert merkle_root $merkle_result.root)
+    # The beacon reaches the statement here, and write-root decides whether it
+    # lands: an unchanged root carries the previous beacon over, so re-sealing an
+    # untouched tree rewrites the same bytes and leaves every co-signer signature
+    # standing (merkle.nu write-root).
+    let merkle_result = merkle write-root --repo $root --beacon $beacon_token
+    $result = ($result | insert merkle_root $merkle_result.root | insert beacon $merkle_result.beacon)
 
     # Why: a sig from a previous seal signs the previous bytes — stale exactly
-    # when regen changed them. Clear those before step 3 signs fresh; sigs
+    # when regen changed them. Clear those before step 4 signs fresh; sigs
     # over unchanged bytes are still valid and survive, whoever made them — a
     # co-signer's sig is not this seal's to delete. Uses the shared discovery
     # so the bare `.sig` form is cleared too, not just `.<signer>.sig`.
@@ -158,7 +202,7 @@ export def main [
         }
     }
 
-    # 3. Sign the root statement — the one signed artifact. The root is
+    # 4. Sign the root statement — the one signed artifact. The root is
     # derived from every manifest row (the "." root-CID row included), so it
     # authenticates the full CSV indirectly: rebuild the tree, compare roots.
     # The transitional whole-CSV signature was dropped as unneeded legacy.
@@ -172,7 +216,7 @@ export def main [
     }
     $result = ($result | insert root_sig $root_sig)
 
-    # 4. OTS timestamps — two of them, because an OTS proof commits to the hash
+    # 5. OTS timestamps — two of them, because an OTS proof commits to the hash
     # of one file and these are two separate claims:
     #   the root statement -> the CONTENT existed by T
     #   the signature      -> the ENDORSEMENT existed by T
@@ -214,7 +258,7 @@ export def main [
     # stay.
     # Why pass out-dir explicitly: ots stamp defaults it to the CWD's git root,
     # but seal may target a different repo via --repo (same fix as pubkeys-dir
-    # in step 3). Without it, `seal --repo /other` writes the bundle into the
+    # in step 4). Without it, `seal --repo /other` writes the bundle into the
     # CWD's repo, or fails when CWD is not a repo.
     #
     # Why --response-file is forwarded: without it the only way to reach this
@@ -253,7 +297,7 @@ export def main [
             $result = ($result | insert root_ots $root_stamp.ots)
         }
 
-        # Every signature over the root, not only the one step 3 just made: a
+        # Every signature over the root, not only the one step 4 just made: a
         # co-signer's endorsement is as undated as seal's own was, and this
         # loop is the whole cost of dating it. Shared discovery, so the bare
         # `<file>.sig` form is stamped too.

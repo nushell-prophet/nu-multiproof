@@ -1,6 +1,13 @@
 use std/assert
 use std/testing *
 
+# A seal that stamps also mints a beacon, and both reach the network. The
+# calendar half is stood down by --response-file; this is the other half, and it
+# is the same kind of seam: without it the path from a minted token to the signed
+# bytes could only run against live explorers, so it would not run here at all.
+# The value is the Bitcoin genesis block, so nothing about it can go stale.
+const TEST_BEACON = "bitcoin:0:000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+
 use ../nu-multiproof/seal.nu
 use ../nu-multiproof/ssh-sign.nu
 use ../nu-multiproof/ots.nu
@@ -54,6 +61,36 @@ def cleanup [] {
 
 # seal happy path with --no-stamp: avoids the OTS calendar network call, but
 # still exercises tree-hashes regen + signing-key resolution + sig clearing.
+# The beacon is minted before anything is rewritten, so an offline seal states
+# no bound rather than claiming one — and a seal handed a token puts exactly
+# that token under the signature.
+@test
+def "an offline seal states no lower bound, and a given beacon lands under the signature" [] {
+    let fx = make-sealable-repo $in.tmp_dir
+    let statement = $"($fx.repo)/multiproofs/tree-root.txt"
+
+    let offline = seal --repo $fx.repo --no-stamp
+    assert equal $offline.beacon "none"
+    assert ((open --raw $statement | into string) | str ends-with " none\n")
+
+    "v2\n" | save --force $"($fx.repo)/file.txt"
+    ^git -C $fx.repo add file.txt
+    let bounded = seal --repo $fx.repo --no-stamp --beacon $TEST_BEACON
+    assert equal $bounded.beacon $TEST_BEACON
+    assert ((open --raw $statement | into string) | str ends-with $" ($TEST_BEACON)\n")
+    # The signature is over the bytes the beacon is part of — that is the whole
+    # point of putting it in the statement rather than beside it.
+    assert (ssh-sign verify $statement --pubkeys-dir $fx.pubkeys | any { $in.valid })
+}
+
+@test
+def "seal refuses a malformed beacon before touching the repo" [] {
+    let fx = make-sealable-repo $in.tmp_dir
+    let statement = $"($fx.repo)/multiproofs/tree-root.txt"
+    assert error {|| seal --repo $fx.repo --no-stamp --beacon "bitcoin:1:zz" }
+    assert not ($statement | path exists) "a refused beacon still wrote a statement"
+}
+
 @test
 def "seal produces manifest and signed root statement" [] {
     # The fixture leaves a SHA-1 repo, which seal must handle: it hashes file
@@ -73,7 +110,7 @@ def "seal produces manifest and signed root statement" [] {
     # Merkle root statement derived from the fresh manifest and signed
     let root_file = $"($repo)/multiproofs/tree-root.txt"
     assert ($root_file | path exists) "root statement not created"
-    assert equal (open --raw $root_file | into string) $"multiproof-merkle-v3 ($result.merkle_root) 0 genesis\n"
+    assert equal (open --raw $root_file | into string) $"multiproof-merkle-v4 ($result.merkle_root) 0 genesis none\n"
     assert ($result.root_sig | str ends-with $".(principal-of $fx.key).sig")
 }
 
@@ -267,7 +304,7 @@ def "seal puts the root statement, its signature and both anchors in one bundle"
     let response = $"($tmp_dir)/calendar-response.bin"
     build-calendar-response | save --raw --force $response
 
-    let result = seal --repo $fx.repo --response-file $response
+    let result = seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response
 
     let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
     let bundle = $result.root_ots | path dirname
@@ -310,7 +347,7 @@ def "seal --no-content-anchor dates every signature and leaves the content undat
     let response = $"($tmp_dir)/calendar-response.bin"
     build-calendar-response | save --raw --force $response
 
-    let result = seal --repo $fx.repo --no-content-anchor --response-file $response
+    let result = seal --repo $fx.repo --no-content-anchor --beacon $TEST_BEACON --response-file $response
 
     assert equal ($result | get --optional root_ots) null "the root statement was stamped anyway"
     assert equal (list-dirs $fx.ots_dir) [$result.bundle] "the seal spread itself over more than one bundle"
@@ -349,7 +386,7 @@ def "seal status reports a --no-content-anchor seal as an undated-content endors
     let fx = make-sealable-repo $tmp_dir
     let response = $"($tmp_dir)/calendar-response.bin"
     build-calendar-response | save --raw --force $response
-    seal --repo $fx.repo --no-content-anchor --response-file $response | ignore
+    seal --repo $fx.repo --no-content-anchor --beacon $TEST_BEACON --response-file $response | ignore
 
     let rows = seal status --repo $fx.repo
     assert equal ($rows | length) 1
@@ -384,7 +421,7 @@ def "seal --no-content-anchor refuses to overwrite a frozen copy of other conten
     $other | save --force $"($planted)/tree-root.txt"
 
     let err = try {
-        seal --repo $fx.repo --no-content-anchor --response-file $response
+        seal --repo $fx.repo --no-content-anchor --beacon $TEST_BEACON --response-file $response
         null
     } catch {|e| $e.msg }
 
@@ -409,7 +446,7 @@ def "a rejected calendar answer leaves no bundle behind for --no-content-anchor"
     # block failed with pipeline input"). The inner error is what a user sees
     # rendered, and `debug` is where a catch can still find it.
     let err = try {
-        seal --repo $fx.repo --no-content-anchor --response-file $garbage
+        seal --repo $fx.repo --no-content-anchor --beacon $TEST_BEACON --response-file $garbage
         null
     } catch {|e| $e.debug }
 
@@ -505,7 +542,7 @@ def "seal status reports the seal in force with both anchors" [] {
     let fx = make-sealable-repo $tmp_dir
     let response = $"($tmp_dir)/calendar-response.bin"
     build-calendar-response | save --raw --force $response
-    let result = seal --repo $fx.repo --response-file $response
+    let result = seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response
 
     let rows = seal status --repo $fx.repo
     assert equal ($rows | length) 1 "one seal produced more than one bundle"
@@ -530,11 +567,11 @@ def "seal status marks only the bundle whose snapshot is the live artifact" [] {
     let response = $"($tmp_dir)/calendar-response.bin"
     build-calendar-response | save --raw --force $response
 
-    seal --repo $fx.repo --response-file $response | ignore
+    seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response | ignore
     "v2\n" | save --force $"($fx.repo)/file.txt"
     ^git -C $fx.repo add file.txt
     ^git -C $fx.repo commit -q -m "v2"
-    let second = seal --repo $fx.repo --response-file $response
+    let second = seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response
 
     let rows = seal status --repo $fx.repo
     assert equal ($rows | length) 2 "the second seal did not produce its own bundle"
@@ -654,7 +691,7 @@ def "seal status names the file the bundle is keyed by when it holds two" [] {
     let fx = make-sealable-repo $tmp_dir
     let response = $"($tmp_dir)/calendar-response.bin"
     build-calendar-response | save --raw --force $response
-    let result = seal --repo $fx.repo --response-file $response
+    let result = seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response
     let bundle = $result.root_ots | path dirname
 
     # `aaa.csv` sorts before `tree-root.txt`, so ls order picks the wrong one.
@@ -743,9 +780,9 @@ def "a second seal over unchanged content re-anchors the new signature" [] {
     let response = $"($tmp_dir)/calendar-response.bin"
     build-calendar-response | save --raw --force $response
 
-    let first = seal --repo $fx.repo --response-file $response
+    let first = seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response
     let first_sig = open --raw ($first.root_sig) | hash sha256
-    let second = seal --repo $fx.repo --response-file $response
+    let second = seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response
     let second_sig = open --raw ($second.root_sig) | hash sha256
     assert ($first_sig != $second_sig) "the key turned out deterministic — this test proves nothing"
 
@@ -782,7 +819,7 @@ def "seal status reports one endorsement entry per signature" [] {
 
     seal --repo $fx.repo --no-stamp | ignore
     ssh-sign sign $"($fx.repo)/multiproofs/tree-root.txt" --key $bob_key --pubkeys-dir $fx.pubkeys
-    seal --repo $fx.repo --response-file $response | ignore
+    seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response | ignore
 
     let row = seal status --repo $fx.repo | first
     assert equal $row.signers 2 "the co-signer's signature was not carried into the bundle"

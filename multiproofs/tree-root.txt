@@ -1,1 +1,0 @@
-multiproof-merkle-v3 a0c12474bc8d1fe29a7cba5b3ff95c9b4d5fbf5f77d12d42b8101e50f3058294 0 genesis

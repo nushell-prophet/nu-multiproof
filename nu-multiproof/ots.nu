@@ -1,7 +1,8 @@
 # Pure Nushell OpenTimestamps implementation — no `ots` CLI dependency.
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
-use _ots-helpers.nu [ bundle-dir-for copy-path-for check-frozen-copy write-frozen-copy check-block-header check-fetched-header ]
+use _ots-helpers.nu [ bundle-dir-for copy-path-for check-frozen-copy write-frozen-copy check-block-header ]
+use _explorer.nu [ NETWORK_TIMEOUT DEFAULT_EXPLORERS check-min-sources block-hash-at fetch-header ]
 use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
@@ -32,18 +33,8 @@ const CALENDAR_ALLOWLIST = [
     "calendar.eternitywall.com"
     "calendar.catallaxy.com"
 ]
-# Every outbound call is bounded. Without it a black-holed connection hangs
-# `stamp`, `upgrade` and `verify` with no output and no way back but Ctrl-C —
-# and `seal` runs `upgrade` over every archived stamp in a loop. 30s is well
-# past the calendars' and explorers' normal response time.
-const NETWORK_TIMEOUT = 30sec
-# Esplora-compatible block explorers, queried independently and cross-checked
-# so verification never rests on a single source. Both expose the same routes:
-#   /block-height/<h> -> block hash   and   /block/<hash>/header -> raw 80 bytes.
-const DEFAULT_EXPLORERS = [
-    "https://mempool.space/api"
-    "https://blockstream.info/api"
-]
+# The network layer — timeout, explorer list, cross-check — is _explorer.nu,
+# shared with `beacon`.
 
 # LEB128 varuint decode at offset
 def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
@@ -767,37 +758,6 @@ def emit-verify [result: record fail: bool]: nothing -> record {
     $result
 }
 
-# GET an Esplora endpoint, returning its trimmed text body or null on any
-# non-200 / transport error (so a single flaky mirror doesn't abort the run).
-def esplora-get [url: string]: nothing -> any {
-    let r = try { http get --full --allow-errors --max-time $NETWORK_TIMEOUT $url } catch { return null }
-    if $r.status != 200 { return null }
-    $r.body | into string | str trim
-}
-
-# Fetch a block header from one explorer and hand back its 80 bytes.
-#
-# Why the answer is checked here (check-fetched-header) and not in the `try`
-# around check-block-header: everything about the fetched answer — did an
-# explorer respond, is it hex, is it header-sized, does it hash to the
-# cross-checked block hash at all — is operational and must throw. Folded into
-# that `try` it became `valid: false`, which handed the one explorer serving
-# the header a one-request veto over any valid proof: a 200 carrying an HTML
-# error page — or a header with a single flipped byte — read as "this proof
-# does not match Bitcoin", and `--fail` exited non-zero on it. The block hash
-# was already cross-checked by --min-sources explorers before this fetch, so a
-# header that does not hash to it can only be this explorer's fault — the
-# "outage, not a verdict" class. check-block-header keeps its own 80-byte and
-# claimed-hash guards as preconditions for its other callers; from this path
-# they can no longer fire.
-def fetch-header [src: string block_hash: string]: nothing -> binary {
-    let header_hex = esplora-get $"($src)/block/($block_hash)/header"
-    if $header_hex == null {
-        error make {msg: $"could not fetch the header for block ($block_hash) from ($src)"}
-    }
-    check-fetched-header $src $block_hash $header_hex
-}
-
 # Independently verify a Bitcoin-anchored OTS proof against real block headers.
 # Why: `info`/`upgrade` only echo the block height the calendar reported —
 # nothing checks it against Bitcoin. This does. It looks the height up on
@@ -829,9 +789,7 @@ export def verify [
     --min-sources: int = 2 # Explorers that must agree before a result is asserted
     --fail # Exit non-zero on an invalid proof (for CI)
 ]: nothing -> record {
-    if $min_sources < 1 {
-        error make {msg: "--min-sources must be at least 1"}
-    }
+    check-min-sources $min_sources
     let parsed = open --raw $ots_file | into binary | parse-ots
 
     match $parsed.attestation.type {
@@ -865,39 +823,15 @@ export def verify [
         return (emit-verify ($base | merge {content_verified: false error: $"content mismatch: ($file) is not what the proof commits to"}) $fail)
     }
 
-    # Cross-check height -> block hash across independent explorers.
-    let lookups = $sources | each {|src|
-            {source: $src hash: (esplora-get $"($src)/block-height/($height)")}
-        }
-    let ok_lookups = $lookups | where hash != null
-    if ($ok_lookups | is-empty) {
-        error make {msg: $"no explorer returned block ($height) — cannot verify"}
-    }
-    # Why this throws instead of returning valid: false — and why it exists at
-    # all. Nothing below bounds the work behind the header, so the cross-check
-    # IS the defence. With one responder there is none: whoever answers serves
-    # the height -> hash mapping and a header they made, and the header supplies
-    # block_time, which this command reports as the timestamp. The attacker
-    # would set the date — the one claim the whole system exists to make. One
-    # explorer timing out was enough to arrange that, and the old code answered
-    # valid: true with no field a consumer could key on to notice.
-    # Throwing, not valid: false, because this is the same class as "no
-    # explorer answered": validity could not be asserted, and calling a good
-    # proof invalid is its own false statement.
-    if ($ok_lookups | length) < $min_sources {
-        error make {
-            msg: $"only ($ok_lookups | length) of ($sources | length) explorers answered for block ($height), below --min-sources ($min_sources) — cannot verify"
-            help: "a single responder is not a cross-check: it would choose both the block hash and the time this reports. Retry, add --sources, or pass --min-sources 1 to accept one source deliberately."
-        }
-    }
-    let distinct = $ok_lookups | get hash | str lowercase | uniq
-    if ($distinct | length) > 1 {
-        error make {msg: $"explorers disagree on block ($height): ($distinct | str join ', ')"}
-    }
-    let block_hash = $distinct | first
+    # Cross-check height -> block hash across independent explorers. The three
+    # ways that can fail all throw (see _explorer.nu block-hash-at): they mean
+    # validity could not be asserted, and calling a good proof invalid is its
+    # own false statement.
+    let looked_up = block-hash-at $height $sources $min_sources
+    let block_hash = $looked_up.hash
+    let confirmed = $looked_up.sources_confirmed
 
-    let src = $ok_lookups | first | get source
-    let header_bytes = fetch-header $src $block_hash
+    let header_bytes = fetch-header ($confirmed | first) $block_hash
 
     # Self-verify the header. A failure here means the proof does not match the
     # real block -> invalid proof, not an operational error. Everything about
@@ -906,7 +840,6 @@ export def verify [
     # inside this try it would read as "invalid proof". Only the merkle-root
     # binding is left to fail here, and that mismatch is about the proof.
     let checked = try { check-block-header $header_bytes $expected_root $block_hash } catch {|e| {error: $e.msg} }
-    let confirmed = $ok_lookups | get source
     if ($checked.error? != null) {
         return (emit-verify ($base | merge {block_hash: $block_hash sources_confirmed: $confirmed error: $checked.error}) $fail)
     }

@@ -19,6 +19,7 @@ That establishes the guards do something, not that the design is sound.
 |-------|-----------|-----------|
 | **This content existed at a specific time** | OpenTimestamps | Hash chain anchored to a Bitcoin block header |
 | **This file was in the catalogued snapshot** | Merkle inclusion proof | RFC 6962-style binary tree over the manifest rows; one signed 32-byte root verifies a proof of ~log2(n) hashes |
+| **This seal is no OLDER than a moment** | Beacon | A recent Bitcoin block, named in the signed statement — its hash could not have been known before that block was mined |
 
 Each proof type is independent.
 Use either or both.
@@ -104,6 +105,12 @@ nu-multiproof ots upgrade multiproofs/ots-timestamps/tree-root.ABCD1234/tree-roo
 nu-multiproof ots info multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
 # Independently verify the Bitcoin anchor against real block headers
 nu-multiproof ots verify multiproofs/ots-timestamps/tree-root.ABCD1234/tree-root.ots
+
+# Mint a lower time bound — the cross-checked Bitcoin block `seal` writes into
+# the statement. `seal` runs this itself; run it directly to see what it picks.
+nu-multiproof beacon latest
+# Check the bound a statement claims, against real block headers
+nu-multiproof beacon verify multiproofs/tree-root.txt
 
 # Extract a compact inclusion proof for one manifest row
 nu-multiproof merkle prove README.md
@@ -595,11 +602,15 @@ so an independent implementation reproduces the root from the same CSV (referenc
   and `side` must be exactly `left` or `right`.
   This is the most common interop bug in merkle verifiers,
   so it fails loudly instead of folding something plausible.
-- **Root statement**: exactly `multiproof-merkle-v3 <64 lowercase hex> <seq> <prev>` + one trailing `\n`.
+- **Root statement**: exactly `multiproof-merkle-v4 <64 lowercase hex> <seq> <prev> <beacon>` + one trailing `\n`.
   The statement form (not a bare hash) keeps the signature from being replayed in another hash-signing context.
   `seq` is a decimal count with no leading zeros, starting at 0,
   and `prev` is the root this seal supersedes
   — or the literal `genesis`, which pairs with `seq 0` and with nothing else.
+  `beacon` is either the literal `none` or `bitcoin:<height>:<64 lowercase hex block hash>`
+  — the seal's lower time bound, see "The lower bound" below.
+  The height is a decimal count with no leading zeros, for the same reason `seq` is:
+  a signature covers bytes, and two spellings of one number are two byte strings stating one value.
   Why the counter:
   a root says what a tree held, never which seal it was,
   and `multiproofs/` keeps only the live statement,
@@ -876,14 +887,81 @@ and the signature stamps add nothing.
 
 One direction this does *not* give:
 OTS bounds a time from above only ("no later than T"), never from below.
-A lower bound has to come from inside the signed bytes
-— some recent unpredictable value the signer could not have known earlier.
+That is what the beacon is for — see "The lower bound" below.
 
 The two `origin-proofs/` bundles do the reverse
 — a signature over the `.ots` rather than a stamp over the signature (see the note above).
 A signature over a proof adds no time,
 since the proof's authority is the chain;
 read them as history.
+
+### The lower bound
+
+An OpenTimestamps proof says the content existed no LATER than a block.
+Nothing in it says the seal is not older,
+and an SSH signature carries no time at all,
+so a statement written today fits a bundle from last year and nothing on disk contradicts it.
+
+A beacon closes that direction.
+It is a public value nobody could have known before a fixed moment,
+and `seal` writes one into the bytes it signs:
+the fourth field of the root statement, `bitcoin:<height>:<hash>`.
+The claim is then simple —
+this statement did not exist before that block was mined,
+because its hash could not have been named earlier.
+
+The two anchors bracket the seal:
+the beacon blocks backdating,
+the OTS stamp blocks post-dating,
+and the claim is only as tight as the gap between the two blocks.
+
+```nushell no-run
+use nu-multiproof/
+# what seal will embed: the cross-checked block, six deep
+nu-multiproof beacon latest
+# check a statement's bound against Bitcoin
+nu-multiproof beacon verify multiproofs/tree-root.txt
+```
+
+The source is a Bitcoin block, six below the chain tip.
+Bitcoin and not a randomness beacon such as NIST's or drand,
+because it is the only chain data this repo already trusts and already cross-checks:
+`beacon` asks independent explorers to agree on the height to hash mapping,
+which is `ots verify`'s trust argument unchanged (see "Verifying a timestamp").
+Another source would add a second trust root, a second parser and a second outage story
+for a claim that is not stronger.
+Six blocks below the tip and not the tip itself,
+because a tip block can be orphaned:
+the explorers then serve a different hash at that height,
+and a beacon minted from it is unverifiable for the life of the seal
+— a permanent break bought for about an hour of tightness at the lower end.
+
+Minting reaches the network, exactly as the calendar post does,
+so it rides on the same flag:
+`seal --no-stamp` seals offline and writes `none`, which is a legal statement.
+There is no `--no-beacon`.
+When a beacon was asked for and no explorer answers,
+`seal` throws before it rewrites anything
+— a statement claiming no bound where the caller asked for one is a weaker claim made silently.
+`seal --beacon <token>` passes one in instead of minting, which is how the tests seal offline;
+a caller naming an older block only weakens its own bound.
+
+Read what a beacon does NOT prove.
+It does not say the seal happened AT that time.
+A signer can hold a fresh beacon and sign a year later, and nothing here detects that;
+a signer can also pick an older block and weaken their own bound, which harms nobody else.
+Only backdating becomes impossible.
+The block's own timestamp is worth even less on its own —
+it is chosen by the miner, bounded by consensus only loosely —
+so `beacon verify` reports it as the miner's claim and treats the HEIGHT as the fact.
+
+A statement whose beacon names a height that does not carry that hash is `valid: false`:
+a reorg or a fabricated bound, indistinguishable from here, and the same conclusion either way.
+Too few explorers answering, or explorers disagreeing, throws instead
+— that is an outage, not a fact about the statement.
+`merkle verify` reports the token the statement carries and never a verdict on it:
+it makes no network call, and a reader who could not tell a reported bound from a checked one
+would read a green verify as a dated claim.
 
 ## Verifying a timestamp
 
