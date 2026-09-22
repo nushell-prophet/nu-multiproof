@@ -21,10 +21,18 @@ That establishes the guards do something, not that the design is sound.
 | **This file was in the catalogued snapshot** | Merkle inclusion proof | RFC 6962-style binary tree over the manifest rows; one signed 32-byte root verifies a proof of ~log2(n) hashes |
 | **This seal is no OLDER than a moment** | Beacon | A recent Bitcoin block, named in the signed statement — its hash could not have been known before that block was mined |
 
-Each proof type can be used independently.
+Each claim is checked on its own.
+The beacon is the one that is not *produced* on its own:
+it is a field of the root statement,
+so it is minted when that statement is written.
 
-`ssh-sign` is not a third claim
-— it is the signing step under both.
+`ssh-sign` is not a fourth claim
+— it is the signing step under two of them.
+The root statement it signs is what carries the merkle root and the beacon,
+so those two rest on a signature.
+The content anchor does not:
+an OTS proof is a hash compare, checkable with no key material at all,
+which is why the content and the endorsement are stamped separately (see "Dating the endorsement").
 It signs a file with an SSH key,
 and verifies every `.sig` beside a file against the keys in `multiproofs/pubkeys/`,
 separating "content changed" from "key not registered".
@@ -61,11 +69,69 @@ Binding a fingerprint to a person is the verifier's own step:
 compare it against one you hold from elsewhere.
 See "Verifying commit signatures" below.
 
-Both hash file contents themselves,
+The merkle tree and the CID both hash file contents themselves,
 so neither constrains the repo:
 any git repo works, SHA-1 or SHA-256.
 
+## Prerequisites
+
+- [Nushell](https://www.nushell.sh/)
+  — the suite passes on 0.115.1;
+  the minimum supported version has not been established
+- `git` (any repo)
+- `chmod`
+  — `pubkey canonical` writes a key to a temp file at 0600 before handing it to `ssh-keygen`,
+  so it sits on the same path as `ssh-keygen` below and is checked for at the same moment
+- `ssh-keygen`, from OpenSSH
+  — for signing, and also for **verifying**:
+  `pubkey canonical` defers to `ssh-keygen` to decide what is a well-formed key,
+  so anything that renders a trust list needs it.
+  That includes `init`, `ssh-sign verify` and `merkle verify`.
+  A missing binary is reported as a broken toolchain, never as a verdict about the artifact
+
+### Testing
+
+Tests use [nutest](https://github.com/vyadh/nutest).
+Clone it as a sibling directory:
+
+```bash
+git clone https://github.com/vyadh/nutest ../nutest
+```
+
+```nushell no-run
+nu toolkit.nu test              # runs tests/; exits non-zero on any failure
+nu toolkit.nu test --no-fail    # exit 0 even when tests fail
+nu toolkit.nu test --threads 0  # nutest's own parallelism (0 means one per core)
+nu toolkit.nu test --network    # runs tests-network/ instead — reaches the internet, and
+                                # one test writes a permanent public timestamp
+```
+
+The script form, because the subcommand is defined as `main test`.
+`use toolkit.nu` imports it as `toolkit main test`, and `use toolkit.nu *` as `main test`
+— neither gives a bare `toolkit test`, and the script form needs no import at all.
+Run it from the repo root: both `toolkit.nu` and `../nutest` are relative to it.
+
+Network tests are held out of the default run because of that permanent write, not because they are optional.
+
+The suite runs on one thread and takes about twenty seconds.
+That is not a preference:
+nutest's own default runs every suite and every test in parallel,
+firing roughly 1500 short-lived processes in 3.5 seconds,
+which wedges the terminal of the whole VM under Apple `container` on the fourth or fifth consecutive run.
+`--threads 0` is the escape hatch, not the faster setting to reach for.
+
 ## Quick start
+
+`use nu-multiproof/` names the module directory inside this repo, relative to the current one,
+so it resolves from the repo root; from anywhere else, give the path to that directory.
+
+Every command that works on a repo takes `--repo`,
+defaulting to the git root of the current directory
+— `init`, `tree-hashes`, `tree-hashes root-cid`, `merkle write-root`, `merkle prove`, `merkle verify`, `seal` and `seal status`.
+`ssh-sign sign`, `ssh-sign verify` and `ots stamp` predate the rule:
+they resolve the git root of the current directory with no way to override it,
+so a chain using them runs from inside the target repo.
+The remaining commands take bytes or a file path and no repo at all.
 
 ```nushell no-run
 use nu-multiproof/
@@ -111,14 +177,15 @@ nu-multiproof beacon latest
 # Check the bound a statement claims, against real block headers
 nu-multiproof beacon verify multiproofs/tree-root.txt
 
-# Extract a compact inclusion proof for one manifest row
+# Extract a compact inclusion proof for one manifest row. A path the
+# manifest does not list is an error naming `tree-hashes --echo`.
 nu-multiproof merkle prove README.md
 # Verify it: fold to the signed root, check signatures, content, OTS status
 nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.json
 
-# The whole pipeline in one step: manifest → merkle root → SSH signature →
-# OTS stamp, then upgrade any pending stamp it finds. This is the command
-# everything below is written in terms of.
+# The whole pipeline in one step: upgrade pending stamps → beacon → manifest →
+# merkle root → SSH signature → OTS stamp. This is the command everything
+# below is written in terms of; the five stages are listed under Quick start.
 nu-multiproof seal
 nu-multiproof seal --repo path/to/other/repo   # seal a repo other than the CWD's
 nu-multiproof seal --propose-commit            # leave the git commit in the prompt, unrun
@@ -132,6 +199,39 @@ nu-multiproof seal status
 # The CID v0 of any bytes, standalone — the same one tree-hashes puts in content_cid
 open --raw README.md | nu-multiproof cid-v0
 ```
+
+### The five stages of `seal`
+
+The rest of this document refers to these by number.
+
+1. **Upgrade** every pending `.ots` it finds — opportunistic, so earlier seals progress.
+   Still pending is silent; any other failure is printed and skipped.
+2. **Beacon** — mint the lower time bound and carry it into the statement stage 3 writes.
+   It runs before anything on disk is touched, so an explorer outage costs nothing.
+3. **Manifest and root** — regenerate `multiproofs/tree-hashes.csv` from the worktree,
+   then derive `multiproofs/tree-root.txt` from it.
+4. **Sign** the root statement.
+5. **Stamp** the root statement and every signature over it, into one bundle.
+
+`--no-stamp` skips stages 2 and 5; `--no-content-anchor` runs stage 5 over the signatures only.
+Stage 1 is not skipped by either,
+so `--no-stamp` reaches the network anyway when the tree holds a pending `.ots`
+— it seals offline only in a repo with nothing left to upgrade.
+
+`seal` refuses a repo with no tracked files:
+the root of a no-file tree is the same for every empty repo,
+so a signature over it would state nothing about this one.
+A repo that has files but no commit yet seals normally
+— only `multiproofs/snapshot.txt` is withheld, since there is no HEAD to name.
+The same holds for a dirty tree, and a stale snapshot record is deleted rather than left behind.
+
+`init` is safe to re-run.
+It creates nothing that is already there,
+names the key already registered,
+and exits 0.
+A re-run with `--pubkey` adds that key if the trust list does not hold it,
+and says so if it does;
+a bare re-run registers the signing key from `git config`, which after the first run is already there.
 
 ### Sealing under an explicit key
 
@@ -147,6 +247,10 @@ nu-multiproof merkle write-root                     # mint the root statement ov
 nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ./otherkey
 nu-multiproof ots stamp multiproofs/tree-root.txt   # optional — the time anchor
 ```
+
+`merkle write-root` mints no beacon of its own:
+its `--beacon` defaults to `none`, so this chain produces a statement with no lower bound
+unless a token from `beacon latest` is passed in.
 
 That is what `merkle write-root` is for on its own:
 it is the only way to mint `tree-root.txt` without `seal`,
@@ -245,37 +349,41 @@ Outside a REPL `commandline edit` still writes the engine's repl buffer
 and only the REPL reads that back,
 so the flag is inert in a script rather than an error (pinned by "asking for a commit proposal leaves the seal result untouched").
 
-## Prerequisites
+## Exit status
 
-- [Nushell](https://www.nushell.sh/)
-  — developed and tested on 0.114.1;
-  the minimum supported version has not been established
-- `git` (any repo)
-- `ssh-keygen`, from OpenSSH
-  — for signing, and also for **verifying**:
-  `pubkey canonical` defers to `ssh-keygen` to decide what is a well-formed key,
-  so anything that renders a trust list needs it.
-  That includes `init`, `ssh-sign verify` and `merkle verify`.
-  A missing binary is reported as a broken toolchain, never as a verdict about the artifact
+A verdict is a returned value, not an exit code.
+`ots verify`, `beacon verify`, `merkle verify` and `ssh-sign verify` all return a record carrying `valid`,
+and all four **exit 0 whether that field is `true` or `false`**.
+So a CI job that only reads the exit code passes on a tampered artifact.
 
-### Testing
+Pass `--fail` to those four commands to make a not-valid result exit 1.
+Without it the record is returned and the caller decides,
+so `--fail` is the flag that turns a report into a gate.
 
-Tests use [nutest](https://github.com/vyadh/nutest).
-Clone it as a sibling directory:
+Two of the four are pinned by tests
+— "verify --fail errors on invalid signature" for `ssh-sign verify`,
+and the `merkle verify` cases in `tests/test_merkle.nu`.
+`ots verify --fail` and `beacon verify --fail` behave the same way but no test holds them there.
 
-```bash
-git clone https://github.com/vyadh/nutest ../nutest
-```
+Everything else exits non-zero by throwing, with no flag needed.
+That is the difference between a verdict and a broken run,
+and the two never share an exit code:
 
-```nushell no-run
-use toolkit.nu *
-main test              # runs tests/; exits non-zero on any failure
-main test --no-fail    # exit 0 even when tests fail
-main test --network    # runs tests-network/ instead — reaches the internet, and
-                       # one test writes a permanent public timestamp
-```
+- A refusal to make a claim at all
+  — `merkle verify --signer <fingerprint>` where the trust list holds no such key,
+  `merkle prove <path>` where the path is not in the manifest,
+  `ots verify` on a proof that is still pending.
+- A toolchain problem
+  — `ssh-keygen` or `chmod` missing from `PATH`.
+- An outage
+  — fewer than `--min-sources` explorers answering, or explorers disagreeing.
+- `ots stamp` losing the race for `<stem>.ots`.
+  The digest already reached the calendar, so the assembled proof is parked beside it
+  and the path is named in the error.
+- `seal --no-stamp` together with `--no-content-anchor`, refused before anything is touched.
 
-Network tests are held out of the default run because of that permanent write, not because they are optional.
+`nu toolkit.nu test` exits non-zero on any failing test.
+That is `--fail` again, on by default there, with `--no-fail` to opt out.
 
 ## Content manifest
 
@@ -429,9 +537,33 @@ Which fingerprints count is still a statement only the verifier can make
 `merkle verify` folds the proof to the signed root,
 checks the SSH signatures over the root statement,
 re-hashes the on-disk file against the proven `content_sha256` when present,
-and reports the OTS anchor as a status (`absent`/`pending`/`anchored` — a fresh seal stays pending until Bitcoin confirms, hours or days).
+and reports the OTS anchor.
 A proof whose embedded root differs from the signed root is for a different seal
 and fails loudly rather than reporting invalid.
+
+It prints a human summary and returns a record of twelve fields.
+Four of them decide the verdict:
+
+- `structure_valid` — the proof path folds to the signed root. **Blocks `valid`.**
+- `manifest_root` — the root rebuilt from `multiproofs/tree-hashes.csv`, or `null` when no CSV is there.
+  A value differing from `root` **blocks `valid`**; `null` does not.
+- `signatures` — one row per `.sig` beside the root statement, `{signer, valid, sig}`.
+  No valid signature **blocks `valid`**, and under `--signer` it must be a valid one from that fingerprint.
+- `content_verified` — the state table below. Only `true` passes, so every other value **blocks `valid`**.
+
+`valid` is their conjunction.
+The other seven fields are report, and none of them can lower it
+— an undated seal is not an invalid one:
+
+- `root` — the root the signed statement holds.
+- `leaf` — the manifest row the proof is about, all five columns.
+- `content_enumeration` — `"git-index"`, `"walk"`, or `null` for a row that consulted no file set.
+- `ots` — `{status, ots, height}`, where `status` is `absent`, `pending` or `anchored`.
+  A fresh seal stays pending until Bitcoin confirms, hours or days.
+- `beacon` — the token the statement carries, reported and never checked here.
+- `endorsements` — one row per signature that verified, `{signer, status, ots, height}`.
+- `error` — the first reason `valid` is false, or `null`.
+  It is a fuller sentence than the printed summary's one-word verdict, not the same string.
 
 The content leg answers with a state, not a boolean,
 and **only `true` passes**
@@ -619,7 +751,8 @@ so an independent implementation reproduces the root from the same CSV (referenc
   — `multiproofs/` is outside the manifest,
   so `seq` is not under the merkle root;
   it rests on the signature over these bytes and on their OTS anchor.
-- **Reading it back**: `merkle read-root <file>` parses a statement file and returns `{root, seq, prev}`.
+- **Reading it back**: `merkle read-root <file>` parses a statement file and returns `{root, seq, prev, beacon}`
+  — one field per element of the grammar above, `beacon` included.
   It exists so that a consumer walking seal snapshots does not keep a second copy of the format above
   — the parser lives in `_merkle-helpers.nu`, which is internal.
   The path is required and names any statement file, the live `multiproofs/tree-root.txt` included.
@@ -637,9 +770,31 @@ in brief:
   first OTS made from inside this repo post-extraction, Bitcoin block 940583
 
 These are archival artifacts.
-Ongoing operational timestamps live in [`multiproofs/ots-timestamps/`](multiproofs/ots-timestamps/).
+Ongoing operational timestamps live in [`multiproofs/ots-timestamps/`](multiproofs/ots-timestamps/),
+whose layout the next section specifies.
+
+## Timestamp bundles
+
+What `seal` writes under `multiproofs/ots-timestamps/`, what `seal status` reads back out of it,
+and the two directions of time a bundle can bound.
+None of this is specific to the archival directory above.
 
 ### Bundle contract
+
+Three flags decide where a stamp lands and where its bytes come from.
+`ots stamp --out-dir <dir>` is the directory bundles are created in;
+`--into <bundle>` is one existing bundle this stamp joins.
+The two are refused together, before the calendar post, since they name different destinations.
+`--response-file <file>` assembles the proof from a calendar answer already on disk instead of posting the digest,
+which is the only way to exercise this path without a permanent public write
+— `seal --response-file` forwards it to every stamp in stage 5 for the same reason.
+`ots upgrade --calendar <url>` contacts that calendar instead of the one named inside the proof,
+because the URL in the file is attacker input and the one on the command line is the operator's decision;
+`ots upgrade --response-file` is the same offline seam as above.
+
+`<stem>` is the stamped file's name without its extension,
+and `<hash-prefix>` is the first 8 hex digits of its sha256, uppercase
+— uppercase because that is what Nushell's `encode hex` emits, and it is a directory name rather than a value the tree specification constrains.
 
 An OTS bundle directory (`multiproofs/ots-timestamps/<stem>.<hash-prefix>/`) is self-contained provenance:
 every file needed to assert *"content C existed at time T, anchored to Bitcoin block B, and signer X endorsed C by time T2"* lives in the directory,
@@ -659,10 +814,15 @@ Under `--no-content-anchor` the same directory is minted from the same name and 
   — the timestamp over the snapshot's hash.
   A fresh `ots stamp` writes a *pending* calendar attestation here;
   `ots upgrade` replaces it in place with the Bitcoin-anchored one once a block confirms it, hours or days later.
+  Run on a proof that is already anchored it returns `{status: already-verified, path}` and rewrites nothing,
+  so `seal`'s stage 1 can walk every `.ots` in the tree without special-casing the ones it already upgraded.
   Until that upgrade runs, the bundle carries the content and the signature but not yet the anchor,
   so it cannot make the "at time T, in block B" half of the claim above
 - `<stem>.<ext>.<fingerprint>.sig`
-  — SSH signature over the snapshot, copied in at stamp time so it survives the next `seal` (which overwrites the live sig).
+  — SSH signature over the snapshot, copied in at stamp time so it survives a later `seal` that replaces the live sig.
+  A reseal replaces it only when the root statement's bytes changed,
+  or when the key is a randomized one (ECDSA, ecdsa-sk) that signs the same bytes differently each time;
+  a reseal over an unchanged tree under a deterministic key leaves the live `.sig` byte-identical.
   Every signature sitting beside the stamped file is copied, the bare `<stem>.<ext>.sig` form included,
   so a bundle carries one per signer rather than one (pinned by the test "stamp snapshots every signature beside the file it stamps").
   `seal` signs before it stamps,
@@ -733,28 +893,42 @@ Two things about them do not match the grammar above and cannot be fixed by a re
 The `origin-proofs/` bundles carry a signature over the **`.ots`** rather than over the frozen snapshot,
 added by hand after stamping
 — a shape `ots stamp` never writes, since it copies the signatures sitting beside the file it stamps.
-And only `tree-root.83089A30/` holds an endorsement anchor:
-the ten older bundles have none and cannot get one,
-because a stamp made today would date those July signatures to today and make the folder read as though they were dated when sealed.
+And only three `tree-root.*` bundles hold an endorsement anchor
+— `884CE56B`, `9DE3B2AB` and `70CB00B5`, sealed in August 2026.
+The other eleven have none and cannot get one,
+because a stamp made today would date those older signatures to today and make the folder read as though they were dated when sealed.
 
 ### Reading the folder
 
 `nu-multiproof seal status` reports every bundle in one table,
-so "is this sealed, and is it dated yet" needs no reading of directory names and no `ots info` by hand:
+so "is this sealed, and is it dated yet" needs no reading of directory names and no `ots info` by hand.
 
-This repo's own output, with the `bundle` column shortened to its last path segment to fit (it is really repo-relative, `multiproofs/origin-proofs/tree-hashes.93223B2F` and so on):
+It takes `--repo`, defaulting to the git root of the current directory.
+In a repo that is a subdirectory of a larger one, that default resolves upward and the report comes back empty
+— pass `--repo .` to name the directory holding `multiproofs/`.
+A repo with no bundles at all returns an empty list, which prints nothing.
+
+This repo's own output, with the `bundle` column shortened to its last path segment to fit (it is really repo-relative, `multiproofs/origin-proofs/tree-hashes.93223B2F` and so on), rows 2 to 7 elided:
 
 ```
-╭────┬──────────────────────┬─────────────────┬─────────┬─────────────────┬─────────┬──────────╮
-│  # │        bundle        │      file       │ current │     content     │ signers │ endorsed │
-├────┼──────────────────────┼─────────────────┼─────────┼─────────────────┼─────────┼──────────┤
-│  0 │ tree-hashes.93223B2F │ tree-hashes.csv │ false   │ anchored 940583 │       1 │ absent   │
-│ …  │ …                    │ …               │ …       │ …               │       … │ …        │
-│  8 │ tree-root.050186F7   │ tree-root.txt   │ false   │ anchored 958319 │       1 │ absent   │
-│  9 │ tree-root.25A4101E   │ tree-root.txt   │ false   │ anchored 958319 │       1 │ absent   │
-│ 10 │ tree-root.83089A30   │ tree-root.txt   │ true    │ pending         │       1 │ pending  │
-╰────┴──────────────────────┴─────────────────┴─────────┴─────────────────┴─────────┴──────────╯
+╭────┬──────────────────────┬─────────────────┬─────────┬─────────────────┬─────────┬─────────────────╮
+│  # │        bundle        │      file       │ current │     content     │ signers │    endorsed     │
+├────┼──────────────────────┼─────────────────┼─────────┼─────────────────┼─────────┼─────────────────┤
+│  0 │ tree-hashes.93223B2F │ tree-hashes.csv │ false   │ anchored 940583 │       1 │ absent          │
+│  1 │ tree-hashes.CCA016A8 │ tree-hashes.csv │ false   │ anchored 939896 │       1 │ absent          │
+│ …  │ …                    │ …               │ …       │ …               │ …       │ …               │
+│  8 │ tree-root.050186F7   │ tree-root.txt   │         │ anchored 958319 │       1 │ absent          │
+│  9 │ tree-root.25A4101E   │ tree-root.txt   │         │ anchored 958319 │       1 │ absent          │
+│ 10 │ tree-root.70CB00B5   │ tree-root.txt   │         │ anchored 964392 │       1 │ anchored 964392 │
+│ 11 │ tree-root.884CE56B   │ tree-root.txt   │         │ anchored 961656 │       1 │ anchored 961656 │
+│ 12 │ tree-root.9DE3B2AB   │ tree-root.txt   │         │ anchored 963127 │       1 │ anchored 963127 │
+│ 13 │ tree-root.A1E01AFA   │ tree-root.txt   │         │ anchored 959037 │       1 │ absent          │
+╰────┴──────────────────────┴─────────────────┴─────────┴─────────────────┴─────────┴─────────────────╯
 ```
+
+An empty cell is `null`.
+Every `tree-root` bundle reads that here because this repo has no live `multiproofs/tree-root.txt`:
+the statement format moved to v4 and no v4 seal has been made since.
 
 `current` is a byte compare against the live artifact of that name under `multiproofs/`,
 which is the only thing separating the seal in force from the archive
@@ -762,8 +936,9 @@ which is the only thing separating the seal in force from the archive
 It is `null`, not `false`, when no live artifact shares the name:
 `false` says "a later seal superseded this",
 and a bundle over some other file was never in that race (pinned by "seal status reports current as null when no live artifact shares the name").
-`content` and `endorsed` are `absent`, `pending`, or `anchored <height>`,
-and `endorsed` carries one per signature in the bundle.
+`content` and `endorsed` are `absent`, `pending`, or `anchored <height>`.
+`endorsed` is one such value per signature in the bundle, comma-joined into a single string,
+so `where endorsed =~ anchored` works over a bundle with several signers.
 The number is the Bitcoin block the proof binds to
 — the only time an `.ots` carries, since a block's wall-clock time lives in its header and no proof holds one;
 a date therefore needs `ots verify`, which fetches headers and cross-checks explorers,
@@ -809,7 +984,7 @@ so "when did this content exist" and "when was it endorsed" are two claims needi
 An SSH signature carries no timestamp field,
 so with only the root stamped, a `.sig` made today drops into a year-old bundle and nothing on disk contradicts it.
 
-`seal` step 4 therefore stamps `tree-root.txt` **and every signature beside it**, all into the root statement's own bundle:
+`seal` step 5 therefore stamps `tree-root.txt` **and every signature beside it**, all into the root statement's own bundle:
 
 | stamp commits to | claim | reported as |
 | --- | --- | --- |
@@ -823,7 +998,9 @@ with the same `absent | pending | anchored` values as `ots`;
 `height` is the Bitcoin block and is null while pending.
 Where several anchors of the same bytes exist, the reported one is the **lowest** block:
 the claim is "existed no later than T",
-so the earliest anchor is the strongest and the rest follow from it (pinned by "seal status reports the earliest anchor when a bundle holds several").
+so the earliest anchor is the strongest and the rest follow from it.
+`merkle verify` and `seal status` share the helper that picks it,
+which is why the rule is pinned once, under the other command ("seal status reports the earliest anchor when a bundle holds several").
 A stamp is matched to its signer by hashing the signature file, never by a `.sig` name,
 and a signature that did not verify gets no row at all:
 dating bytes says when they existed,
@@ -871,7 +1048,7 @@ What the readers then say:
 `merkle verify` reports `ots: absent`,
 and `seal status` reports the bundle as `file: null`, `content: absent`, `signers: 1` with a dated `endorsed` (pinned by "seal status reports a --no-content-anchor seal as an undated-content endorsement").
 `--no-stamp` and `--no-content-anchor` are refused together
-— one skips step 4, the other runs it over the signatures only (pinned by "seal refuses --no-stamp together with --no-content-anchor, before touching anything").
+— one skips step 5, the other runs it over the signatures only (pinned by "seal refuses --no-stamp together with --no-content-anchor, before touching anything").
 
 Worth having when a signature must outlive its key:
 after a compromise and revocation at time R, only a signature datable before R still means anything,
@@ -932,6 +1109,13 @@ because a tip block can be orphaned:
 the explorers then serve a different hash at that height,
 and a beacon minted from it is unverifiable for the life of the seal
 — a permanent break bought for about an hour of tightness at the lower end.
+
+Both numbers are defaults, and both commands take the same explorer pair as `ots verify`.
+`beacon latest --depth <n>` mints from `n` blocks below the tip; the default is 6.
+`--sources` replaces the explorer list rather than adding to it, on `beacon latest` and `beacon verify` alike,
+so name every explorer to be asked.
+`--min-sources` is how many must answer before a result is asserted; the default is 2 on both.
+Lowering it to 1 rests the bound on a single responder, which is the one party the cross-check exists to not trust.
 
 Minting reaches the network, exactly as the calendar post does,
 so it rides on the same flag:
@@ -1091,6 +1275,47 @@ so rendering the trust file from it and then verifying that repo's commits prove
 Anyone can fork, add their own key and re-sign.
 To make it an identity check, compare the fingerprint git reports against one you hold from elsewhere
 — the same verifier-side step `merkle verify --pubkeys-dir` exists for.
+
+## Limitations
+
+Collected here because each is easy to miss in the section that explains it.
+
+**The work behind a Bitcoin header is not checked.**
+`ots verify` recomputes the header's hash and its merkle binding,
+but `bits` is read out of the very header under examination,
+so "the hash meets its own target" proves nothing.
+Independent explorers agreeing on the height to hash mapping is the whole defence
+— see "Verifying a timestamp".
+
+**A trust list travelling inside the artifact proves only self-consistency.**
+A default `valid: true` says the bundle agrees with itself.
+Anyone can fork, `init` with their own key and re-`seal`.
+`--pubkeys-dir` and `--signer` are how a verifier states its own policy.
+
+**Three commands take no `--repo`** — `ssh-sign sign`, `ssh-sign verify` and `ots stamp`.
+They resolve the git root of the current directory and offer no override.
+
+**`seal`'s opportunistic upgrade walks only the target repo's bundles.**
+A bundle someone sent you keeps its `pending` stamp until `ots upgrade` is run on it directly.
+
+**No test vector covers a file DAG deeper than two levels** — about 7.9 GB.
+The fold there is the same code, but nothing outside this repo pins it.
+
+**A directory that would become a HAMT shard is refused, not approximated.**
+Roughly 6200 files with 8-character names in one directory, fewer as names grow.
+`tree-hashes` errors rather than emit a CID no IPFS client would reproduce.
+
+**The commit proposal is not sanitized for display.**
+A repo path holding ANSI escapes reaches the prompt raw and can repaint the line before you press enter.
+The guarantee is that the block parses as one command, never that it renders honestly.
+
+**Two of the four `--fail` paths have no test** — `ots verify` and `beacon verify`.
+Both behave like the two that do, checked by running, but nothing holds them there.
+
+**Eleven of the fourteen bundles committed here carry no endorsement anchor and cannot get one**,
+and the two under `origin-proofs/` carry a signature over the `.ots` rather than over the snapshot
+— a shape `ots stamp` never writes.
+They are history, not examples of the grammar.
 
 ## License
 
