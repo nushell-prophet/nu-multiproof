@@ -59,10 +59,7 @@ export def sig-path-for [path: path signer?: string]: nothing -> path {
 #
 # The two forms are ambiguous on their own: `doc.txt.sig` is the bare sig of
 # `doc.txt` and also the "txt"-named sig of `doc`. Only the filesystem can say
-# which, so both candidates are tried, bare first — `ssh-sign verify` used to
-# re-implement this and always chose the named reading, so verifying
-# `doc.txt.sig` failed with "cannot find original file", or silently verified a
-# sibling named `doc`.
+# which, so both candidates are tried, bare first.
 export def original-for-sig [sig_path: path]: nothing -> path {
     if not ($sig_path | str ends-with ".sig") {
         error make {msg: $"not a signature file name: ($sig_path)"}

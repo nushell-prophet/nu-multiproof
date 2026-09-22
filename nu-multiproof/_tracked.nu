@@ -228,10 +228,11 @@ export def cid-nodes [file_entries: table dirs: list<string>]: nothing -> record
 #               calls every row "outside". `path relative-to` states the
 #               question directly and throws when there is no such prefix.
 #   directory — a path attesting a content_sha256 that is a directory on
-#               disk. Only a hand-built manifest produces it, and it used to
-#               reach `open --raw <dir>` and die with a bare "I/O error"
-#               naming neither the path nor the leaf: a hostile artifact
-#               crashing the verifier rather than getting a verdict.
+#               disk. Only a hand-built manifest produces it, and without
+#               this branch it reaches `open --raw <dir>` and dies with a
+#               bare "I/O error" naming neither the path nor the leaf — a
+#               hostile artifact crashing the verifier instead of getting
+#               a verdict.
 export def resolve-leaf-file [target: path filepath: string]: nothing -> string {
     let joined = $target | path join $filepath
     if ($joined | path type) == "symlink" { return "symlink" }

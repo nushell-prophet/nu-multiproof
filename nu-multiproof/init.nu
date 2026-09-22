@@ -63,7 +63,7 @@ def resolve-key [root: path pubkey: any]: nothing -> any {
         # names the source file; the source here is git config): replacing it
         # wholesale answered "is not an SSH public key" for every refusal alike
         # — a padded second encoding of a REAL key lost the canonical error
-        # naming both encodings, and a missing ssh-keygen (310c29b) read as a
+        # naming both encodings, and a missing ssh-keygen read as a
         # verdict about the key. Either way the operator went looking for the
         # wrong problem — see resolve-pubkey-file below.
         return (
@@ -87,14 +87,10 @@ def resolve-key [root: path pubkey: any]: nothing -> any {
 
 # Store the key under its fingerprint, or say why nothing was stored.
 #
-# Why the name is the fingerprint and not anything the operator supplies: the
-# name used to be the source file's stem (or, for an inline key, a sanitized key
-# comment), which made it this key's principal in every rendered trust list —
-# hence a charset gate on it, a refusal for a stem another registered key already
-# used, a scan for the same key material filed under a second name, and a rule
-# about what a key comment may become. None of that is here: two files cannot
-# hold one key under two names, because one key has one fingerprint, and no name
-# reaches a trust list at all (see _allowed-signers.nu).
+# Why the name is the fingerprint and not anything the operator supplies: two
+# files cannot hold one key under two names, because one key has one
+# fingerprint, and no name reaches a trust list at all (see
+# _allowed-signers.nu).
 #
 # Not an `--as <label>` flag for a human-readable name, because: nothing reads the
 # name, so `mv` already gives a key any name the operator wants, and a key placed
@@ -104,8 +100,7 @@ def resolve-key [root: path pubkey: any]: nothing -> any {
 # rules the fingerprint removed: a collision when a label is already taken by
 # another key, and a gate on the label (a `/` writes outside pubkeys/, and a
 # control byte makes a name `ls` cannot round-trip, which throws on every later
-# render — see todo/20260727-023419). Same call as `merkle prove --out`, deleted
-# in ad1f7ab: `mv` is the escape hatch.
+# render — see todo/20260727-023419). `mv` is the escape hatch.
 def register [canon: string pubkeys_dir: path root: path]: nothing -> nothing {
     let principal = $canon | pubkey fingerprint
     let dest = $pubkeys_dir | path join $"($principal).pub"

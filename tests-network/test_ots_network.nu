@@ -9,10 +9,9 @@ use ../nu-multiproof/_temp-helpers.nu with-temp-dir
 #
 #   nu toolkit.nu test --network
 #
-# Why out of the main suite rather than gated by an env var: the gate these
-# came from (`if $env.OTS_NETWORK_TEST? != "true" { return }`) reported PASS
-# with zero assertions executed on every default run, and there is no CI to set
-# the variable, so neither had ever run. A test that cannot fail is worse than
+# Why out of the main suite rather than gated by an env var: such a gate
+# reports PASS with zero assertions executed on every default run, and there is
+# no CI to set the variable. A test that cannot fail is worse than
 # no test — it reads as coverage. Here they are absent from the count instead
 # of falsely present in it.
 #
@@ -63,9 +62,7 @@ def "stamp reaches the public calendar, and upgrade will talk to it" [] {
         let file = $dir | path join "doc.txt"
         "hello opentimestamps" | save --raw --force $file
         # `stamp` returns the paths it wrote; it does NOT write <file>.ots
-        # beside the input, it writes a bundle directory. Reading the guessed
-        # path instead of the returned one is how the OTS_NETWORK_TEST version
-        # of this test stayed broken — it could not run, so nothing said so.
+        # beside the input, it writes a bundle directory.
         let result = ots stamp $file --out-dir $dir
 
         let stamped = ots info $result.ots

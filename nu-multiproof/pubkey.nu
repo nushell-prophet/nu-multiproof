@@ -98,7 +98,8 @@ export def canonical []: string -> string {
 # filename, in an allowed_signers line and on a command line beats two forms to
 # keep in sync — and hex is what every other digest in this project is written
 # as. `ssh-keygen -lf` prints the same bytes; the two are pinned against each
-# other by tests/test_pubkey.nu "fingerprint is the digest ssh-keygen prints".
+# other by tests/test_pubkey.nu "fingerprint is the digest ssh-keygen prints,
+# written as hex".
 #
 # Why `canonical` first, rather than hashing whatever arrives: the digest is
 # over the blob bytes as given, and a padded copy of a key has different blob

@@ -41,8 +41,7 @@ export def freeze-bundle [file: path out_dir: path]: nothing -> path {
 # the same bundles, so the rule about how that file appears is enforced once —
 # the same reason check-frozen-copy is one guard rather than one per writer.
 #
-# Not `cp`: a failed `cp` cannot be noticed (see `_fs.nu copy-file`), and both
-# callers were reporting a frozen copy that was never written.
+# Not `cp`: a failed `cp` cannot be noticed (see `_fs.nu copy-file`).
 #
 # Nothing to write when the copy exists: check-frozen-copy has proved it
 # byte-identical by the time this runs, which is the ordinary `seal` path (it
@@ -97,7 +96,7 @@ export def check-frozen-copy [
     }
 }
 
-# Bundle copy-path for an input file. Pure; extracted from `stamp`.
+# Bundle copy-path for an input file. Pure.
 # Why no trailing dot: extensionless input ("README") was producing "README."
 # because `($stem).($ext)` collapsed to "README." when `$ext` was empty.
 export def copy-path-for [file: path bundle_dir: path]: nothing -> string {
@@ -139,9 +138,9 @@ export def check-fetched-header [
 #   2. the header's merkle-root field equals `expected_root` (internal order)
 # Why no proof-of-work check: `bits` travels inside the header being checked,
 # so "hash <= target(bits)" is self-referential. A floor at mainnet's powLimit
-# used to sit here; it only bought ~2^32 hashes (minutes on a GPU) against an
-# attacker who already controls every explorer that answered, and it cost 91
-# lines. A real bound needs the difficulty expected AT this height, or a pinned
+# would only buy ~2^32 hashes (minutes on a GPU) against an attacker who
+# already controls every explorer that answered, and would cost 91 lines.
+# A real bound needs the difficulty expected AT this height, or a pinned
 # block hash, and neither the proof nor the explorer answer carries data we
 # could check that against. The defence is the cross-check in `ots verify`:
 # independent explorers must agree on the height -> hash mapping.

@@ -21,14 +21,9 @@ export const NAMESPACE = "file"
 #
 # Why the principal is derived from the key rather than read off the file name:
 # a line here is a trust statement, and a file name is chosen by whoever put the
-# file there. It used to be the stem, which meant the stem had to be gated as a
-# grammar — a whitespace, quote, `,` or `*` in it wrote a different line than the
-# one intended, and an invisible `\p{Cf}` character wrote a principal that
-# *reads* as another one (`ali<U+200B>ce.pub` registered, signed and verified,
-# and showed as `alice` in a PR diff and in `verify` output). That whole class is
-# gone here, not defended against: nothing a file name holds reaches this line,
-# so `pubkeys/*.pub` may be called anything at all and mallory's key filed as
-# `alice.pub` renders mallory's fingerprint.
+# file there. Nothing a file name holds reaches this line, so `pubkeys/*.pub`
+# may be called anything at all and mallory's key filed as `alice.pub` renders
+# mallory's fingerprint.
 #
 # Why every key goes through `pubkey canonical` rather than being copied
 # through: a key file holding two lines emitted a principal-less second line.
@@ -64,11 +59,8 @@ export def registered-principals [pubkeys_dir: path]: nothing -> list<string> {
 #
 # Why an error rather than a negative verdict: "alice did not sign this" is a
 # claim, and a verifier without alice's key cannot make it — the honest answer
-# is "I cannot tell". `merkle verify` used to fold the two together and return
-# `valid: false` with "no valid signature from signer alice", so a typo in the
-# verifier's OWN flag read as evidence against the artifact. Asked before any
-# other work. Shared here because the rule being applied is this module's: a
-# principal is a key's fingerprint.
+# is "I cannot tell". Asked before any other work. Shared here because the rule
+# being applied is this module's: a principal is a key's fingerprint.
 export def check-signer-known [signer: string pubkeys_dir: path]: nothing -> string {
     let known = registered-principals $pubkeys_dir
     if $signer not-in $known {

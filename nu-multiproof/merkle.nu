@@ -91,13 +91,12 @@ def dir-enumeration [target: path, bundle: bool]: nothing -> string {
 # Returns {verdict, enumeration}: the verdict content_verified reports, and
 # which enumeration reached it (null when none was needed).
 #
-# These rows carry only a content_cid, and nothing ever recomputed it: the
-# branch returned null and `valid` stayed true. So the strongest configuration
-# this tool offers answered `valid: true` for a bundle carrying alice's genuine
-# root, her genuine signature and her genuine proof of the `src` row, with the
-# attacker's own tracked files in src/. A directory absent from disk entirely
-# gave the same answer. Four of this repo's own 42 rows are that shape,
-# including "." — the CID of the whole repo.
+# These rows carry only a content_cid. Left unrecomputed, the strongest
+# configuration this tool offers answers `valid: true` for a bundle carrying
+# alice's genuine root, her genuine signature and her genuine proof of the
+# `src` row, with the attacker's own tracked files in src/. A directory absent
+# from disk entirely gets the same answer. Four of this repo's own 42 rows are
+# that shape, including "." — the CID of the whole repo.
 #
 # The enumeration comes from disk, not from the manifest (see dir-enumeration
 # for which one): a UnixFS directory commits to its entries, so a file added
@@ -124,7 +123,7 @@ def derive-dir-cid [target: path, leaf: record, bundle: bool]: nothing -> record
     # followed links doubles as an oracle about content the bundle does not
     # contain. On the git arm the problems still cover the whole tracked tree
     # rather than this row's subtree — narrowing there would need a second,
-    # differing enumeration of the index (see 785420b). The walk has no such
+    # differing enumeration of the index. The walk has no such
     # cost, so it is scoped with --under: a directory node depends on nothing
     # outside itself, and a walk that is not scoped lets a stray symlink or an
     # unreadable file anywhere under the target report an untouched proof as
@@ -368,18 +367,14 @@ export def verify [
     --bundle # Treat the target as a received artifact: re-derive a directory row by walking it, never through a .git it carries
     --fail # Exit non-zero when the result is not valid (for CI)
 ]: nothing -> record {
-    # Why --signer no longer needs --pubkeys-dir, where it used to be refused
-    # without it: a principal was the *stem of a .pub file*, so over the list
-    # travelling inside the artifact `--signer alice` asked no more than "did a
-    # file named alice.pub sign this" — and mallory's key copied in as alice.pub
-    # answered `alice: valid`, `valid: true`. A principal is now the key's own
+    # Why --signer needs no --pubkeys-dir: a principal is the key's own
     # fingerprint, rendered from the key material rather than the file name, so
-    # the same question is "did the holder of THIS key sign this" whichever
+    # the question it asks is "did the holder of THIS key sign this" whichever
     # directory the key was read from. A bundle cannot rename a key into another
     # principal; the most it can do is not carry the key at all, which
     # check-signer-known reports as an error rather than a verdict. Pinned by
-    # tests/test_merkle.nu "a bundle cannot file a key under another key's
-    # fingerprint".
+    # tests/test_merkle.nu "a bundle cannot file one key under the fingerprint
+    # of another".
     let target = repo-root $repo
     # The trust list, settled before the artifact is even opened: it is the
     # verifier's own input, so a --signer this list holds no key for is an
@@ -437,13 +432,10 @@ export def verify [
     let folded = fold-path (leaf-hash $proof.leaf) $proof.path | encode hex | str lowercase
     let structure_valid = $folded == $signed_root
 
-    # The signed statement is a claim ABOUT the manifest, and nothing checked
-    # the two against each other — verify read the root out of tree-root.txt and
-    # trusted it. `seal` writes the CSV and the statement in two steps, so an
-    # interrupt between them (or a bare `tree-hashes` run afterwards) leaves a
-    # catalogue no signature covers, while proofs of the PREVIOUS seal still
-    # fold to the still-present old statement: valid: true, content_verified:
-    # true, error: null. Not tighter writes in seal, because: two files cannot
+    # The signed statement is a claim ABOUT the manifest. `seal` writes the CSV
+    # and the statement in two steps, so an interrupt between them (or a bare
+    # `tree-hashes` run afterwards) leaves a catalogue no signature covers.
+    # Not tighter writes in seal, because: two files cannot
     # be renamed in one step, so a verifier must not assume the writer finished.
     # null is "not here to check" — the portable bundle layout (README
     # "Verifying without the origin repo") carries no CSV. A manifest
@@ -487,7 +479,7 @@ export def verify [
     } else {
         # Why a status and not null: null means "nothing to check". Every
         # status resolve-leaf-file returns is a real divergence from the sealed
-        # catalogue — folded into null they yielded `valid: true`, misleading
+        # catalogue — folded into null they would yield `valid: true`, misleading
         # consumers keying only on .valid.
         let resolved = resolve-leaf-file $target $proof.leaf.filepath
         if $resolved != "ok" {
@@ -542,8 +534,8 @@ export def verify [
     }
 
     # No status branch returns null: only `$content_verified == true` passes.
-    # A `== null` escape here once made "nothing checked" read as valid — the
-    # fail-open hole 970f402 closed. Do not add one back for a new status.
+    # A `== null` escape here would make "nothing checked" read as valid — a
+    # fail-open hole. Do not add one for a new status.
     let valid = $structure_valid and $manifest_matches and $signed_ok and $content_verified == true
     let error = if not $structure_valid {
         "proof path does not fold to the signed root"
@@ -557,9 +549,8 @@ export def verify [
         $"($proof.leaf.filepath) commits to no content at all — the row carries neither a content_sha256 nor a content_cid, so there is nothing about it to check"
     } else if $content_verified == "missing" and $proof.leaf.content_sha256 == "" {
         # Two disk states share this verdict: a tracked file deleted from the
-        # worktree (the ordinary mid-edit state, which used to crash the
-        # re-derivation with a bare "Eval block failed"), and a row naming a
-        # directory no tracked file sits under.
+        # worktree (the ordinary mid-edit state), and a row naming a directory
+        # no tracked file sits under.
         $"($proof.leaf.filepath) is proven as a directory, but its sealed content is not all on disk — a tracked file was deleted, no tracked files sit under it at all, or a bundle does not carry that subtree"
     } else if $content_verified == "missing" {
         $"($proof.leaf.filepath) attests a content_sha256 but is absent on disk"

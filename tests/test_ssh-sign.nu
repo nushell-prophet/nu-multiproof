@@ -341,10 +341,10 @@ def "verify --fail errors on invalid signature" [] {
     assert equal ($results | first | get valid) false
 }
 
-# A typo'd sig path is the verifier's own mistake, and used to fall through to
-# `{valid: false, error: invalid_signature}` — the verifier's typo reading as
-# evidence against the artifact, the exact shape check-signer-known refuses for
-# --signer. It must throw, naming the path the caller typed.
+# A typo'd sig path is the verifier's own mistake; a `{valid: false, error:
+# invalid_signature}` row would read it as evidence against the artifact, the
+# exact shape check-signer-known refuses for --signer. It must throw, naming
+# the path the caller typed.
 @test
 def "verify throws on a named sig path that does not exist" [] {
     let tmp_dir = $in.tmp_dir
@@ -466,8 +466,8 @@ def "registration compares key material, not the spacing around it" [] {
 }
 
 # A bare `<file>.sig` — what plain `ssh-keygen -Y sign` writes, and what an
-# older seal left behind. Verifying it by name used to strip `.txt.sig` and
-# look for `doc`: "cannot find original file", or a silent verify of a sibling
+# older seal left behind. Read as the named form — strip `.txt.sig`, look for
+# `doc` — it gives "cannot find original file", or a silent verify of a sibling
 # actually named `doc`.
 @test
 def "verify resolves the bare sig form of a file with an extension" [] {
@@ -478,7 +478,7 @@ def "verify resolves the bare sig form of a file with an extension" [] {
 
     mkdir $pubkeys_dir
     "hello world" | save --force $test_file
-    # A decoy with the name the old grammar resolved to.
+    # A decoy at the name the named-form reading would pick.
     "not this one" | save --force $"($tmp_dir)/doc"
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     cp $"($key_path).pub" ($pubkeys_dir | path join "alice.pub")
@@ -610,14 +610,8 @@ def "a failed signing ceremony leaves the previous signature alone" [] {
     assert equal (open --raw $sig_path) "THE SIGNATURE FROM AN EARLIER GOOD RUN"
 }
 
-# What used to be a grammar and is now nothing to state. A signer name became a
-# principal in the trust list, so `sign` had to refuse the names the renderer
-# refused — `al ice.pub` signed fine and then made every later verify in that repo
-# throw — and `--name` was interpolated into the sig's file name, so a slash put
-# the signature in another directory, out of discovery's reach. Both entry points
-# for such a name are gone: `--name` does not exist, and the pubkey file's own
-# name is not read. So the hostile names below are all *file* names, and every one
-# of them signs and verifies.
+# The pubkey file's own name is not read, so the hostile names below are all
+# *file* names, and every one of them signs and verifies.
 @test
 def "a pubkey file name the trust list could never express still signs and verifies" [] {
     let tmp_dir = $in.tmp_dir

@@ -184,15 +184,15 @@ export def main [
     #
     # Why the manifest goes through the same rule instead of being swept
     # unconditionally: `ssh-sign sign multiproofs/tree-hashes.csv` is a public
-    # command, and the sweep deleted a signature the user made deliberately,
-    # saying nothing — it read "leftover from the era when seal signed the CSV"
-    # into a file that only says who signed which bytes. Bytes are the one thing
-    # a seal can check: unchanged bytes mean the sig still verifies, whoever
-    # made it and whenever; changed bytes make it stale wherever it came from.
-    # Frozen copies inside OTS bundle dirs stay — they're archival.
+    # command, and the sweep would delete a signature the user made
+    # deliberately, saying nothing — reading "leftover" into a file that only
+    # says who signed which bytes. Bytes are the one thing a seal can check:
+    # unchanged bytes mean the sig still verifies, whoever made it and
+    # whenever; changed bytes make it stale wherever it came from. Frozen
+    # copies inside OTS bundle dirs stay — they're archival.
     #
-    # Why it prints: this deletes signed evidence, and the previous silence is
-    # how a deliberate signature could go without anyone noticing.
+    # Why it prints: this deletes signed evidence, and silence is how a
+    # deliberate signature could go without anyone noticing.
     $regen_targets | zip $pre_hashes | each {|pair|
         if (open --raw $pair.0 | hash sha256) != $pair.1 {
             sig-files-for $pair.0 | each {|sig|

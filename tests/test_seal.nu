@@ -196,12 +196,10 @@ def "seal re-runs without sig conflict" [] {
     assert equal ($root_sigs | length) 1
 }
 
-# `ssh-sign sign multiproofs/tree-hashes.csv` is a public command, and seal
-# used to sweep whatever it produced on the next run, silently — reading
-# "leftover from the era when seal signed the CSV" into a file that only says
-# who signed which bytes. The manifest now follows the same rule as the root
-# statement: a signature over bytes regen did not change still verifies, so it
-# stays; once the bytes change it is stale and goes.
+# `ssh-sign sign multiproofs/tree-hashes.csv` is a public command, and the
+# manifest follows the same rule as the root statement: a signature over bytes
+# regen did not change still verifies, so it stays; once the bytes change it is
+# stale and goes.
 @test
 def "a deliberate manifest signature survives an unchanged reseal" [] {
     let fx = make-sealable-repo $in.tmp_dir
@@ -254,8 +252,7 @@ def "an unregistered signing key refuses the seal before it rewrites anything" [
 # The same rule on the root statement, and on a signature this seal did not
 # make. Bytes are the only thing seal can check: unchanged bytes mean the sig
 # still verifies, whoever made it; changed bytes make it stale wherever it came
-# from. Written with a co-signer rather than --no-sign, which used to be the
-# only way to see a surviving sig — the flag is gone, the rule is not.
+# from.
 @test
 def "seal keeps a co-signer sig over unchanged bytes and clears it once they change" [] {
     let tmp_dir = $in.tmp_dir
@@ -290,13 +287,11 @@ def "seal keeps a co-signer sig over unchanged bytes and clears it once they cha
 # lands in the repo seal was pointed at, holding all four parts of the claim:
 # the artifact it signed, that artifact's anchor, the signature it made, and
 # that signature's anchor. `--repo /other` writing its bundle into the CWD's
-# repo was a real bug, found by reading rather than by this suite.
+# repo is how that goes wrong.
 #
-# Why the directory count is asserted: the signature's proof used to derive its
-# own bundle name, so one seal moment produced two directories — the content
-# bundle holding an endorsement it could not date, and a second bundle holding a
-# date for content it did not carry. Both proofs verify either way, so only the
-# listing catches a regression here.
+# Why the directory count is asserted: both proofs verify whether they sit in
+# one bundle or two, so only the listing catches a split — one bundle holding an
+# endorsement it cannot date, another holding a date for content it does not carry.
 @test
 def "seal puts the root statement, its signature and both anchors in one bundle" [] {
     let tmp_dir = $in.tmp_dir
@@ -756,7 +751,7 @@ def "seal status reports the earliest anchor when a bundle holds several" [] {
 # A repo whose signing key is ECDSA, so signing the same bytes twice yields
 # DIFFERENT signature bytes (measured: ed25519 is deterministic, ECDSA and
 # ecdsa-sk are not — and this repo's own key is ecdsa-sk, per README). Every other
-# test here uses the ed25519 fixture, which is why the state below stayed green.
+# test here uses the ed25519 fixture, so nothing else reaches the state below.
 def make-sealable-repo-ecdsa [tmp_dir: path]: nothing -> record {
     let fx = make-sealable-repo $tmp_dir
     let key_path = $"($tmp_dir)/ecdsakey"

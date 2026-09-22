@@ -25,10 +25,8 @@ const EXPECTED_COLUMNS = [
 ]
 
 # Why every shape test builds its own repo: `tree-hashes` without --repo hashes
-# whatever git root the CWD happens to sit in, so these tests used to state a
-# property of a neighbouring checkout, not of this code. They only held while
-# that neighbour stayed convenient — a monorepo that tracks one symlink (which
-# _tracked.nu rejects, by design) failed all of them at once.
+# whatever git root the CWD happens to sit in, so the assertions would state a
+# property of a neighbouring checkout, not of this code.
 # The tree carries what those assertions need: files, two levels of directory,
 # and hidden tracked files at both levels.
 def make-repo [tmp_dir: path]: nothing -> string {
@@ -133,9 +131,9 @@ def "one pass emits . row, per-dir CIDs, and root-cid wrapper" [] {
     # tree of all-lowercase names cannot catch that.
     "zebra\n" | save --force $"($repo)/Zebra.txt"
     "apple\n" | save --force $"($repo)/apple.txt"
-    # Hidden tracked file: `ipfs add` used to skip dotfiles without --hidden,
-    # which dropped it from per-file CIDs and from the dir/root CIDs the seal
-    # signs. The file set now comes from git, so nothing can skip it silently.
+    # Hidden tracked file: `ipfs add` skips dotfiles without --hidden. Here the
+    # file set comes from git, so nothing can drop one from the per-file CIDs
+    # or from the dir/root CIDs the seal signs.
     "hidden\n" | save --force $"($repo)/.hidden"
     ^git -C $repo add . o+e>| ignore
     ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
@@ -270,7 +268,7 @@ def "a walk scoped to a subtree offers no node above that subtree" [] {
 # Builder and verifier share one enumeration (content-tree), but not one
 # behavior: the verifier turns a deleted tracked file into a "missing" verdict,
 # while the builder must refuse to seal a tree it cannot read — loudly, naming
-# the path, not with the bare "Eval block failed" `open` used to die with.
+# the path.
 @test
 def "a tracked file deleted from the worktree fails the build by name" [] {
     let tmp_dir = $in.tmp_dir
@@ -326,8 +324,8 @@ def "directory git hashes match a working-tree index built independently" [] {
 # The vectors below came from git itself, outside this codebase: a working tree
 # holding a.txt = "hello" and d/b.txt = "world", hashed by `git write-tree` in a
 # repo of each object format. They are what makes this more than a round-trip of
-# our own builder — and they are the whole point of the change, since one of the
-# two columns can never come from the repo the manifest describes.
+# our own builder, since one of the two columns can never come from the repo the
+# manifest describes.
 const HELLO_WORLD_TREE = {
     sha1: {
         "a.txt": "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"

@@ -97,17 +97,15 @@ const RULES = [
 # delimiters stay — so all copies of a line keep the same length and a position
 # found on one applies to the others. A construct written INSIDE a string is
 # prose, not a call: `def "listing survives glob metacharacters"` is a test
-# name and this file's own `offender:` samples are violations on purpose. Both
-# used to be reported, which is why this file linted only the sources.
+# name and this file's own `offender:` samples are violations on purpose.
 #
-# Why a scan and not two `str replace --regex` passes, which is what this was:
+# Why a scan and not two `str replace --regex` passes:
 # `"[^"]*"` pairs quotes blindly, so `$"a=\"x\" (ls $dir | get name)"` — the
-# shape `tests/test_pubkey.nu:127` already writes — had its escaped quote read
-# as a terminator, and the emptied span then swallowed the live `ls`. Measured:
-# that line planted in a source file passed the linter. Two passes also lose to
-# a mixed line (`let a = 'it"s'` before a `glob`, `"x'y"` after): whichever
-# quote type goes first mis-pairs across the other's body. Blanking a linter
-# does not fail loudly — it just stops finding things.
+# shape `tests/test_pubkey.nu:127` already writes — has its escaped quote read
+# as a terminator, and the emptied span swallows the live `ls`. Two passes also
+# lose to a mixed line (`let a = 'it"s'` before a `glob`, `"x'y"` after):
+# whichever quote type goes first mis-pairs across the other's body. Blanking
+# a linter does not fail loudly — it just stops finding things.
 #
 # An INTERPOLATED string keeps its body by default: `$"…(ls $dir)…"` holds a
 # real call inside the parens, and a `$"…"` naming a forbidden construct as
@@ -177,10 +175,10 @@ def violations [text: string]: nothing -> list<record> {
             let code = $line.text | blank-strings
             # Excuses and the trailing-comment split are decided on the copy
             # with interpolation prose blanked too: a flag or a ` #` only
-            # counts in code position. Splitting the RAW text on ` #` was
-            # fail-open — `" #"` inside any string hid the rest of that line
-            # from every rule — and `$"using --all"` beside a bare `ls` used
-            # to excuse it, because the interpolation's prose was kept.
+            # counts in code position. Splitting the RAW text on ` #` is
+            # fail-open — `" #"` inside any string hides the rest of that line
+            # from every rule — and keeping the interpolation's prose lets
+            # `$"using --all"` excuse a bare `ls` beside it.
             let excuse = $line.text | blank-strings --prose
             let cut = $excuse | split row " #" | first | split chars | length
             let clip = {|s| $s | split chars | take $cut | str join }
@@ -247,9 +245,9 @@ def "every rule matches its offender and clears its allowed form" [] {
         assert ($on_allowed | is-empty) $"rule '($rule.name)' rejects its own allowed sample"
 
         # The excuse token planted inside a `$"…"` on the same line: prose, so
-        # it must not excuse the real offender beside it. It did — interpolated
-        # bodies are kept for matching, and the excuse was looked up on that
-        # same copy.
+        # it must not excuse the real offender beside it. Interpolated bodies
+        # are kept for matching, so an excuse looked up on that same copy would
+        # find this one.
         if $rule.unless != null {
             let on_interp = violations $rule.interp_excused | where rule == $rule.name
             assert ($on_interp | is-not-empty) $"rule '($rule.name)': its unless token inside an interpolated string excused the offender"
@@ -263,9 +261,9 @@ def "a comment naming a forbidden construct is not a violation" [] {
     assert equal (violations 'let x = 1 # was: ls $dir') []
 }
 
-# The other half of the same rule, and what kept this file out of tests/ until
-# now: a construct named inside a string is prose. Both cases below are real —
-# the first is a test name in test_fs.nu, the second this file's own sample.
+# The other half of the same rule: a construct named inside a string is prose.
+# Both cases below are real — the first is a test name in test_fs.nu, the
+# second this file's own sample.
 @test
 def "a forbidden construct inside a string literal is not a violation" [] {
     assert equal (violations 'def "listing works when the directory name holds glob metacharacters" [] {') []
@@ -274,12 +272,12 @@ def "a forbidden construct inside a string literal is not a violation" [] {
     assert equal (violations 'let hits = glob $"($dir)/*.pub"' | get rule) ["no glob pattern built from a path"]
 }
 
-# Every line here passed the two-regex stripper this replaced — the blanked
-# span ran past where the string actually ended and took a live call with it.
-# A linter that stops finding things says nothing while it does so, so the
-# cases that broke it are pinned rather than remembered.
+# Every line here is one where a blanked span can run past where the string
+# actually ends and take a live call with it. A linter that stops finding
+# things says nothing while it does so, so these cases are pinned rather than
+# remembered.
 @test
-def "a call the blanking used to swallow is still a violation" [] {
+def "a call the blanking must not swallow is still a violation" [] {
     # An escaped quote is not a terminator. This exact shape is written at
     # tests/test_pubkey.nu:127.
     assert equal (
@@ -306,10 +304,10 @@ def "a call the blanking used to swallow is still a violation" [] {
     ) ["no apostrophe in a def name"]
 }
 
-# The comment split used to run on RAW text, so `" #"` inside any string cut
-# the line there and hid everything after it from every rule — fail-open. The
-# split point is now found on the fully-blanked copy, where only a real ` #`
-# in code position survives.
+# A comment split run on raw text would cut the line at a `" #"` inside a
+# string and hide everything after it from every rule — fail-open. The split
+# point is found on the fully-blanked copy, where only a real ` #` in code
+# position survives.
 @test
 def "a hash inside a string does not hide the code after it" [] {
     assert equal (

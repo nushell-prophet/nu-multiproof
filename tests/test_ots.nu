@@ -142,7 +142,7 @@ def "upgrade rejects malformed response and leaves original intact" [] {
 
 # Pure-function regression checks on the copy-path construction. Why split
 # from stamp: the trailing-dot bug lived in string transformation, not in the
-# network call — testing it directly removes the OTS_NETWORK_TEST gate.
+# network call — testing it directly needs no network at all.
 @test
 def "copy-path-for extensionless input has no trailing dot" [] {
     let result = (copy-path-for "/tmp/x/README" "/tmp/x/README.deadbeef")
@@ -203,7 +203,7 @@ def "check-block-header does not bound the work behind a header" [] {
     # to a merkle root and to its own double-SHA256, and claims nothing about
     # the work behind it. What stops a forged header is `ots verify`'s
     # requirement that independent explorers agree on the height -> hash
-    # mapping; a powLimit floor used to sit here and only bought ~2^32 hashes.
+    # mapping; a powLimit floor would buy only ~2^32 hashes.
     # Pinned so a future reader does not mistake acceptance for a work check.
     let root = "forged" | hash sha256 --binary
     let header = 0x[01000000]
@@ -221,10 +221,10 @@ def "check-block-header does not bound the work behind a header" [] {
     assert equal $r.merkle_root ($root | encode hex | str lowercase)
 }
 
-# The explorer serving the header used to hold a one-request veto: a header
-# with one flipped byte, inside verify's `try`, read as "this proof does not
-# match Bitcoin" — `valid: false`, `--fail` exit non-zero — for a proof that
-# verified fine with the source order swapped. The block hash was cross-checked
+# The explorer serving the header would otherwise hold a one-request veto: a
+# header with one flipped byte, inside verify's `try`, reads as "this proof does
+# not match Bitcoin" — `valid: false`, `--fail` exit non-zero — for a proof that
+# verifies fine with the source order swapped. The block hash was cross-checked
 # by --min-sources explorers before the header fetch, so a header-vs-hash
 # mismatch can only be the explorer's fault: an outage, not a verdict.
 @test
@@ -246,9 +246,8 @@ def "check-fetched-header hands back the bytes of a genuine header" [] {
 
 # --- Bitcoin-anchored bundle, without the network ---
 #
-# The two tests that needed a live network moved to tests-network/, which
-# nutest does not discover. They were gated on OTS_NETWORK_TEST and so reported
-# PASS with nothing executed on every run.
+# Tests that need a live network live in tests-network/, which nutest does not
+# discover.
 
 @test
 def "verify reports content mismatch without touching the network" [] {
@@ -256,7 +255,7 @@ def "verify reports content mismatch without touching the network" [] {
     # file hash, sees it differs from the proof commitment, and returns
     # valid:false early. So this exercises the real command's parse ->
     # content-check -> early-return path against a committed bitcoin bundle
-    # with zero network dependence — no OTS_NETWORK_TEST gate.
+    # with zero network dependence.
     let bundle = "tests/../multiproofs/origin-proofs/tree-hashes.CCA016A8"
     let result = ots verify $"($bundle)/tree-hashes.ots" --file "tests/test_ots.nu"
     assert equal $result.valid false
@@ -273,7 +272,7 @@ def "verify rejects a pending proof" [] {
     assert ($result | str contains "pending")
 }
 
-# --- format conformance: bytes this parser used to read past ---
+# --- format conformance: bytes a lenient parser reads past ---
 #
 # Every proof below is built by hand, not by this repo's writer. Round-tripping
 # the writer proves self-consistency; these pin conformance, which is what
@@ -1000,10 +999,10 @@ def "stamp refuses an --into that exists but is not a real directory" [] {
 
 # An unreadable incumbent `<stem>.ots` cannot be placed, so it cannot be shown
 # safe to rename either — and the archival name it would get asserts "a previous
-# proof of the same content". It used to slip through the guard silently: the
-# corrupt file was archived and the new stamp took `<stem>.ots`, leaving the
-# `doc.txt` beside it paired with a proof of different content, which is the exact
-# state the guard exists to prevent.
+# proof of the same content". Let through, the corrupt file would be archived
+# and the new stamp would take `<stem>.ots`, leaving the `doc.txt` beside it
+# paired with a proof of different content, which is the exact state the guard
+# exists to prevent.
 @test
 def "stamp --into refuses when the incumbent proof cannot be read" [] {
     let tmp_dir = $in.tmp_dir

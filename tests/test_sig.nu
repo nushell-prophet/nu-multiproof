@@ -99,9 +99,8 @@ def "discovery returns signatures only, not directories or links wearing the nam
 
 # The ambiguity `original-for-sig` resolves, asked from the discovery side:
 # `doc.txt.gz.sig` is the bare sig of `doc.txt.gz` when that file exists, and
-# only otherwise a "gz"-named sig of `doc.txt`. Discovery used to skip the
-# question, so `seal` cleared an archive's signature as a stale signature of
-# the manifest while the archive itself sat untouched.
+# only otherwise a "gz"-named sig of `doc.txt`. Skip the question and `seal`
+# clears an archive's signature as stale while the archive sits untouched.
 @test
 def "the bare signature of a sibling file is not ours" [] {
     let tmp_dir = $in.tmp_dir

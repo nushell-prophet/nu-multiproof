@@ -21,8 +21,7 @@ That establishes the guards do something, not that the design is sound.
 | **This file was in the catalogued snapshot** | Merkle inclusion proof | RFC 6962-style binary tree over the manifest rows; one signed 32-byte root verifies a proof of ~log2(n) hashes |
 | **This seal is no OLDER than a moment** | Beacon | A recent Bitcoin block, named in the signed statement — its hash could not have been known before that block was mined |
 
-Each proof type is independent.
-Use either or both.
+Each proof type can be used independently.
 
 `ssh-sign` is not a third claim
 — it is the signing step under both.
@@ -397,9 +396,7 @@ The root also authenticates the whole catalogue, indirectly:
 it is computed from every row,
 so anyone holding the full CSV can rebuild the tree and must land on the signed root
 — alter one row and the roots diverge.
-That is why `seal` itself no longer signs the CSV:
-earlier versions did during a transition,
-and git tag `pre-drop-manifest-sig` marks the last version that produced such a signature.
+That is why `seal` itself does not sign the CSV.
 `ssh-sign sign multiproofs/tree-hashes.csv` still works,
 and a signature over the manifest is cleared by exactly the same rule as one over the root statement
 — it survives a reseal that regenerates identical bytes, and goes when the bytes change (pinned by "a deliberate manifest signature survives an unchanged reseal").
@@ -784,8 +781,8 @@ so a stray file dropped into a bundle is not mistaken for its content;
 where a bundle holds two stamped non-signature files, the one it is *named* after wins,
 since that hash is the bundle's reason to exist (pinned by "seal status names the file the bundle is keyed by when it holds two").
 Symlinks inside a bundle are skipped rather than followed
-— the bytes behind a link are not the ones the name describes,
-and following one used to abort the whole report (pinned by "seal status reports a bundle holding symlinks instead of failing").
+— the bytes behind a link are not the ones the name describes
+(pinned by "seal status reports a bundle holding symlinks instead of failing").
 
 `endorsed` is empty when `signers` is 0,
 and otherwise carries one entry per signature in sorted signature-file order (pinned by "seal status reports one endorsement entry per signature").
@@ -793,8 +790,8 @@ A bundle whose only stamped content is a signature reads `file: null`, `content:
 it carries an endorsement and its date but no content snapshot,
 and `signers` is what tells it apart from a bundle holding nothing (pinned by "seal status reports a signature-only bundle as an undated-content endorsement").
 Two layouts read this way
-— the one `seal` wrote before the two anchors shared a directory, which has no frozen copy at all,
-and what `seal --no-content-anchor` writes today, which does have one but no proof over it.
+— a bundle with no frozen copy at all,
+and what `seal --no-content-anchor` writes, which does have one but no proof over it.
 `file` names the snapshot a proof in the bundle commits to,
 so an unstamped frozen copy is not named there.
 
@@ -986,7 +983,7 @@ It does not trust the calendar at all:
    it does not check the work behind the header.
    `bits` is read out of the very header under examination,
    so "the hash meets its own target" proves nothing;
-   a floor at mainnet's `powLimit` used to sit here and bought only ~2^32 hashes, minutes on a GPU, against an attacker who already controls every explorer that answered.
+   a floor at mainnet's `powLimit` would buy only ~2^32 hashes, minutes on a GPU, against an attacker who already controls every explorer that answered.
    A real bound needs the difficulty expected at that height, or a pinned block hash,
    and neither the proof nor the explorer answer carries data to check that against.
    So step 1

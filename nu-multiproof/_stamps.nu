@@ -60,10 +60,6 @@ export def scan-stamps [ots_dir: path --recursive]: nothing -> list<record> {
 # Among several anchored proofs of the same content, the LOWEST block wins. The
 # claim being made is "these bytes existed no later than T", so the earliest
 # anchor is the strongest one available and every later anchor is implied by it.
-# This used to be `$anchored | first`, i.e. `ls` order — invisible for as long as
-# only the word "anchored" came out of here, and a wrong number as soon as the
-# height was reported: a bundle holding anchors at 123456 and 100 answered 100 or
-# 123456 depending on how the archival filename sorted.
 export def pick-stamp [stamps: list]: nothing -> record<status: string, ots: any, height: any> {
     if ($stamps | is-empty) { return {status: "absent" ots: null height: null} }
     # No `height != null` filter: `parse-ots` always sets it for a bitcoin

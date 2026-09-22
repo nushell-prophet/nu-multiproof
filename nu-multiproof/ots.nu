@@ -13,8 +13,6 @@ const HEADER_MAGIC = 0x[00 4f70656e54696d657374616d7073 0000 50726f6f66 00 bf89e
 # Op tags stay byte literals throughout (0x08 sha256, 0x03 RIPEMD-160, 0xf0
 # append, 0xf1 prepend): `match` arms must be literal patterns, and `stamp`
 # writes raw bytes (0x[f0]) where an int const would need converting first.
-# OP_SHA256 used to be a const here and was bypassed at three of its four
-# sites — a name spelled one way and meant another is worse than the byte.
 const TAG_ATTESTATION = 0x00
 const TAG_FORK = 0xff
 const ATT_PENDING = 0x[83dfe30d2ef90c8e]
@@ -403,11 +401,10 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     let hash_prefix = $file_hash | encode hex | str substring 0..<8
     let stem = ($file | path parse | get stem)
 
-    # Why parse what we just built, before anything is written: only the HTTP
-    # status was checked, so a calendar answering 200 with `b"x"` produced a
-    # full success record, exit 0, and an .ots that `info` rejects with
-    # "unknown op tag: 60". `upgrade` has validated before writing since
-    # 2844626; `stamp` never did.
+    # Why parse what we just built, before anything is written: checking only
+    # the HTTP status lets a calendar answering 200 with `b"x"` produce a full
+    # success record, exit 0, and an .ots that `info` rejects with "unknown op
+    # tag: 60". `upgrade` validates before writing for the same reason.
     let validation = try {
         let reparsed = $ots | parse-ots
         if $reparsed.hash != $file_hash {
@@ -429,9 +426,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
         # are the only material a later recovery (or the reference `ots` CLI,
         # which reads constructs this parser refuses, such as forks) can work
         # from. Named for the moment AND for its own bytes: the timestamp
-        # alone repeats within one second, and --force then let a second
-        # failing stamp silently swallow the first one's nonce — three failing
-        # stamps in a second left one file. Bound to the proof's hash (like
+        # alone repeats within one second. Bound to the proof's hash (like
         # the parked-file branch below), a name collision can only be the same
         # bytes. Pinned by tests/test_ots.nu "rejected stamps in the same
         # second each keep their nonce".
@@ -576,10 +571,9 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
 
     # The frozen copy, written through the one writer `freeze-bundle` also uses,
     # which refuses the file if it no longer hashes to what this proof commits
-    # to. It used to be a `cp` here, which reported a frozen copy for a file
-    # that was not there.
+    # to.
     #
-    # Why after the `.ots` write: `save` raises where `cp` did not, and a throw
+    # Why after the `.ots` write: the copy can raise, and a throw
     # ahead of that write would lose this run's assembled proof with the nonce
     # in it, after the digest already reached the calendar — the loss every
     # branch above is arranged to prevent. Why not before the calendar post,

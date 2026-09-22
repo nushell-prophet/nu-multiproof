@@ -42,11 +42,8 @@ def cleanup [] {
     rm --recursive --force $in.tmp_dir
 }
 
-# The key comment used to become the file name, sanitized — `alice@bar.com`
-# registered as `alicebarcom.pub`, and that stem was then this key's principal in
-# every trust list the repo rendered. Nothing derives a name from a comment now:
-# the name is the fingerprint, and the comment does not survive `pubkey canonical`
-# at all.
+# Nothing derives a file name from a key comment: the name is the fingerprint,
+# and the comment does not survive `pubkey canonical` at all.
 @test
 def "an inline key registers under its fingerprint, not its comment" [] {
     let tmp_dir = $in.tmp_dir
@@ -61,11 +58,9 @@ def "an inline key registers under its fingerprint, not its comment" [] {
     assert equal (registered $repo) [$"(principal-of $"($key_path).pub").pub"]
 }
 
-# A key with no comment used to be named after its *type*, and splitting on a
-# single space made `ssh-ed25519  AAAA…` look like three fields, so the "comment"
-# the name came from was the base64 blob itself. Neither field decides a name any
-# more; the vector stays because the spacing still has to reach `canonical`
-# intact.
+# The vector is the spacing: `ssh-ed25519  AAAA…` looks like three fields when
+# split on a single space, and the line still has to reach `canonical` intact.
+# No field of it decides a name — the fingerprint does.
 @test
 def "a commentless inline key registers under its fingerprint, whatever the spacing" [] {
     let tmp_dir = $in.tmp_dir
@@ -219,11 +214,8 @@ def "init reports the same key registered twice as already registered" [] {
     assert equal (open --raw $"($repo)/multiproofs/pubkeys/($name)") $first
 }
 
-# The same key from two differently named files. This used to be a refusal —
-# two matching files under two stems made `ssh-sign`'s signer lookup die with
-# "multiple pubkeys match" — and there is nothing left to refuse: one key has one
-# fingerprint, so both registrations land on the same path and the second is a
-# no-op.
+# The same key from two differently named files. One key has one fingerprint, so
+# both registrations land on the same path and the second is a no-op.
 @test
 def "the same key offered under two file names registers once" [] {
     let tmp_dir = $in.tmp_dir
@@ -239,9 +231,8 @@ def "the same key offered under two file names registers once" [] {
     assert equal (registered $repo) [$"(principal-of $"($key_path).pub").pub"]
 }
 
-# Two different keys carrying the same comment used to collide on the derived
-# name, and the second was refused. They are two keys, so they now register side
-# by side — a key's identity is not a string anyone else can occupy.
+# Two different keys carrying the same comment are two keys, so they register
+# side by side — a key's identity is not a string anyone else can occupy.
 @test
 def "two different keys sharing a comment both register" [] {
     let tmp_dir = $in.tmp_dir
@@ -315,10 +306,9 @@ def "init refuses a second encoding of a key it already holds" [] {
 }
 
 # The same padded-encoding refusal through the inline `key::` path. The catch
-# there used to replace every inner error with "is not an SSH public key" — but
-# this key IS a real public key, and the canonical error naming both encodings
-# (given vs what OpenSSH writes) is the one thing telling the operator what is
-# actually wrong with it. It must reach them intact.
+# there must not flatten the inner error into "is not an SSH public key": this
+# key IS a real public key, and only the canonical error naming both encodings
+# (given vs what OpenSSH writes) tells the operator what is wrong with it.
 @test
 def "an inline key:: padded encoding surfaces the canonical error naming both encodings" [] {
     let tmp_dir = $in.tmp_dir
@@ -332,12 +322,11 @@ def "an inline key:: padded encoding surfaces the canonical error naming both en
     assert equal (registered $repo) []
 }
 
-# The toolchain refusal (310c29b) through the inline `key::` path: with
-# ssh-keygen off PATH the same catch replaced "this is a toolchain problem"
-# with a verdict about the key — undoing exactly what 310c29b fixed one frame
-# below. Same probe shape as tests/test_pubkey.nu "a missing ssh-keygen is
-# reported as a toolchain problem, not a bad key"; git joins the PATH because
-# init reads the key out of git config before any parsing happens.
+# The toolchain refusal through the inline `key::` path: with ssh-keygen off
+# PATH the catch there must not turn "this is a toolchain problem" into a
+# verdict about the key. Same probe shape as tests/test_pubkey.nu "a missing
+# ssh-keygen is reported as a toolchain problem, not a bad key"; git joins the
+# PATH because init reads the key out of git config before any parsing happens.
 @test
 def "a missing ssh-keygen through key:: stays a toolchain problem, not a bad key" [] {
     let tmp_dir = $in.tmp_dir
@@ -363,11 +352,9 @@ def "a missing ssh-keygen through key:: stays a toolchain problem, not a bad key
     assert (not ($out.stdout | str contains "not an SSH public key")) $"a good key was blamed: ($out.stdout)"
 }
 
-# The key type used to reach a file name when the key carried no comment, so a
-# type that is a path wrote outside pubkeys/: `key::ssh-../../../../pwned Zm9v`
-# created /tmp/pwned.pub. The file name is a fingerprint now, so no field of the
-# key can steer a path — but the line is still refused where it should be, in
-# `pubkey canonical`, which only accepts the types OpenSSH writes.
+# A key type that is a path — `key::ssh-../../../../pwned Zm9v` — is refused in
+# `pubkey canonical`, which only accepts the types OpenSSH writes. The file name
+# is a fingerprint, so no field of the key can steer a path either.
 @test
 def "init refuses an inline key whose type names a path" [] {
     let tmp_dir = $in.tmp_dir
@@ -384,12 +371,8 @@ def "init refuses an inline key whose type names a path" [] {
     assert equal (registered $repo) []
 }
 
-# Every one of these source file names used to make `init` refuse the key: the
-# stem became the destination name and hence this key's principal, so `*` would
-# have been trusted for every signer and `ali<U+200B>ce` would have read as
-# `alice` in a PR diff and in every `verify` line. The stem is not read at all
-# now — each of these registers, under the key's fingerprint — and the gate that
-# used to be needed here is gone rather than relocated.
+# The source file's stem is not read at all, and nothing gates it: every one of
+# these names registers, under the key's fingerprint.
 @test
 def "a source file name the trust list could never express registers fine" [] {
     let tmp_dir = $in.tmp_dir

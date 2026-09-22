@@ -2,8 +2,7 @@
 #
 # Why closures, not "make a path, remember to remove it": the hand-written form
 # — create, work, `rm` — skips the `rm` on every throw, and this repo wrote it
-# six separate times (56b07e5, 98d0abb, 13fe73f, 52feb4a, 0165d07, e88a559
-# each fixed one instance). `finally` runs on the error path too, and unlike a
+# six separate times. `finally` runs on the error path too, and unlike a
 # `catch` + rethrow it does not flatten the original error.
 
 # Why `| collect` on both: Nushell 0.114.1 deadlocks — forever, no error and no

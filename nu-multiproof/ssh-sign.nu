@@ -89,9 +89,9 @@ export def sign [
 # Why every row carries `sig`, not just the unreadable one: a verdict is about
 # one signature file, and a caller that has to act per-signature could not tell
 # which. `signer` does not answer it — an unreadable row has none, and two rows
-# can share a principal. Without the column, `merkle verify` re-ran discovery
-# and verified a named signature a second time to recover the mapping, which
-# duplicated `sig-files-for` outside the module that owns it and printed the
+# can share a principal. Without the column, `merkle verify` would re-run
+# discovery and verify a named signature a second time to recover the mapping,
+# duplicating `sig-files-for` outside the module that owns it and printing the
 # same signature's verdict twice. A path is not an identity: read `sig` as
 # "which file this verdict is about", never as who signed.
 @example "verify all signatures on the root statement" { nu-multiproof ssh-sign verify multiproofs/tree-root.txt }
@@ -101,8 +101,7 @@ export def verify [
     --fail # Exit non-zero if any signature is invalid (for CI)
 ]: nothing -> table {
     # A positional .sig names both the signature to check and, by inference, the
-    # original it covers. The grammar lives in _sig.nu — reading it here is what
-    # made `doc.txt.sig` resolve to `doc`.
+    # original it covers. The grammar lives in _sig.nu.
     let target = if ($path | str ends-with ".sig") {
         # A named sig that is not on disk is the verifier's own typo, not
         # evidence against the artifact — the same rule check-signer-known
@@ -177,12 +176,8 @@ export def verify [
                     # Even keyless checking failed: junk bytes planted at a sig
                     # name, or a foreign key's sig over content it never signed.
                     # Either way no signing key was established, so there is no
-                    # principal to report. This row used to carry the label off
-                    # the sig's file name as `signer`, which made a junk file
-                    # planted at `doc.<alice-fp>.sig` byte-identical to alice's
-                    # registered key really failing over changed content. The
-                    # sig path says which file to inspect; it is a path, not an
-                    # identity.
+                    # principal to report. The sig path says which file to
+                    # inspect; it is a path, not an identity.
                     print $"($sig_path): unreadable signature \(does not check as an SSH signature over ($path)\)"
                     {signer: null valid: false error: "unreadable_signature" sig: ($sig_path | cwd-relative | into string)}
                 }

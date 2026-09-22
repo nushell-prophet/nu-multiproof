@@ -25,7 +25,7 @@ export def resolve-signing-key [--root: path]: nothing -> record<path: path, tem
         do { ^git config user.signingKey } | complete
     }
     if $git.exit_code != 0 {
-        # Why not "or pass --key": seal has no such flag (ad1f7ab), and this is
+        # Why not "or pass --key": seal has no such flag, and this is
         # the only message its caller ever sees. `ssh-sign sign --key` short-
         # circuits before reaching here, so naming the config serves both.
         error make {msg: "no git signing key configured — set it with: git config user.signingKey <path-to-key>"}
@@ -80,12 +80,6 @@ export def with-signing-key [
 }
 
 # The principal this key signs under: its own fingerprint, from its public half.
-#
-# Why it is not looked up in pubkeys/ any more: the signer used to be the *stem*
-# of whichever registered file held matching key material, so the same key filed
-# twice made every signature fail with "multiple pubkeys match", and a stem the
-# trust-list renderer refused made every later verify in that repo throw. A
-# fingerprint is a property of the key, so neither question arises.
 #
 # Registration is still required, and that is the only reason pubkeys/ is read
 # here: a signature by a key the trust list does not hold is one nothing reading

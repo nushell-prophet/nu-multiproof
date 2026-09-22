@@ -43,16 +43,15 @@ def "one line per key: the principal is the key fingerprint, not the file name" 
     }
 }
 
-# Every stem below used to be refused, and had to be: the stem WAS the principal,
-# so a newline in it wrote a second trust-list entry, a space or comma claimed two
-# principals, `*` claimed every signer at once, and an invisible U+200B or U+202E
-# wrote a principal that *reads* as another one. The whole class is gone rather
-# than defended: the principal is derived from the key, so none of these names
-# reaches a line at all. Each renders exactly one entry, under the key's own
-# fingerprint. Hostile input here is the file name, which no key `init` writes
-# would ever carry.
+# Every stem below is a hostile file name. Were the stem the principal, a space
+# or comma would claim two principals, `*` would claim every signer at once, and
+# an invisible U+200B or U+202E would write a principal that *reads* as another
+# one. The whole class is closed rather than defended: the principal is derived
+# from the key, so none of these names reaches a line at all. Each renders
+# exactly one entry, under the key's own fingerprint — and no key `init` writes
+# would ever carry such a name.
 @test
-def "a file name that used to write its own trust-list entry now writes nothing" [] {
+def "a hostile pubkey file name writes nothing of itself into the trust list" [] {
     let stems = [
         "alice bob"
         "alice,mallory"

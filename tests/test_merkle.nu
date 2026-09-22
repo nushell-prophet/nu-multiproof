@@ -512,9 +512,7 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
     assert equal $result.ots.status "absent"
 
     # Directory row: attests only a content_cid, which verify re-derives from
-    # the tracked files under it. This assertion used to read `null` — that was
-    # the hole, not a property: null meant "nothing checked" and still counted
-    # as valid.
+    # the tracked files under it.
     let dir_result = merkle verify (merkle prove sub --repo $repo) --repo $repo
     assert $dir_result.valid
     assert equal $dir_result.content_verified true
@@ -525,11 +523,11 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
     assert equal $root_row.content_verified true
 }
 
-# The attack the null branch allowed: alice's genuine root, her genuine
-# signature and her genuine proof of the `sub` row, shipped with the attacker's
-# own files inside sub/. Every other check passes — it is her seal — and the
-# one thing that would notice is the directory's content, which nothing
-# recomputed. This repo's own manifest has four such rows, "." among them.
+# The attack: alice's genuine root, her genuine signature and her genuine
+# proof of the `sub` row, shipped with the attacker's own files inside sub/.
+# Every other check passes — it is her seal — and the one thing that would
+# notice is the directory's content. This repo's own manifest has four such
+# rows, "." among them.
 @test
 def "a directory row does not verify against a directory that was rewritten" [] {
     let tmp_dir = $in.tmp_dir
@@ -605,9 +603,7 @@ def "a proven directory swapped for a symlink is refused, not re-derived" [] {
 }
 
 # A tracked file deleted from the worktree is the ordinary mid-edit state, not
-# an attack — and any directory-row verify used to die on it with a bare "Eval
-# block failed with pipeline input" naming neither file nor leaf, while file
-# rows already answered "missing". Both row shapes must yield a verdict.
+# an attack. Both row shapes must yield a verdict.
 @test
 def "a deleted tracked file gives every row a verdict, not a crash" [] {
     let tmp_dir = $in.tmp_dir
@@ -944,10 +940,10 @@ def "a file row landing on a directory gets a verdict, not an I/O error" [] {
 }
 
 # Every discovery step here (pubkeys for the allowed_signers body, the signer
-# lookup, sig files beside the root statement, archived OTS bundles) used to
-# build a glob pattern by interpolating a directory path. A repo checked out
-# under a name holding `[`, `]`, `*` or `?` made those patterns match nothing,
-# and the failures were silent: no keys in the trust list, no signature found.
+# lookup, sig files beside the root statement, archived OTS bundles) takes a
+# directory path. A glob pattern built from one matches nothing, silently, for
+# a repo checked out under a name holding `[`, `]`, `*` or `?`: no keys in the
+# trust list, no signature found.
 @test
 def "signed roundtrip works when the repo path holds glob metacharacters" [] {
     let tmp_dir = $in.tmp_dir
@@ -965,8 +961,8 @@ def "signed roundtrip works when the repo path holds glob metacharacters" [] {
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
 
     let root_result = merkle write-root --repo $repo
-    # Signing reads pubkeys/ to check the key is registered, which is one of the
-    # discovery steps a glob pattern used to break.
+    # Signing reads pubkeys/ to check the key is registered: one of the
+    # discovery steps above.
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
 
     let result = merkle verify (merkle prove README.md --repo $repo) --repo $repo
@@ -996,8 +992,7 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
     assert not $drifted.valid
 
     # Deleted file after sealing: absence is a divergence from the sealed
-    # catalogue, not "nothing to check" — must not collapse into the
-    # directory-row null and read as valid
+    # catalogue, not "nothing to check"
     rm $"($repo)/README.md"
     let missing = merkle verify $proof --repo $repo
     assert $missing.structure_valid
@@ -1250,18 +1245,14 @@ def "a manifest that no longer yields the signed root is caught" [] {
     assert equal $portable.manifest_root null
 }
 
-# The fork-and-file-it-as-alice shape, and the reason `--signer` no longer needs
-# `--pubkeys-dir`. Mallory's key is registered in the bundle's own pubkeys/ under
-# alice's file name and signs the root there. When the principal was a filename
-# stem, `--signer alice` answered `alice: valid` / `valid: true` for a key whose
-# comment is mallory@evil, which is why the flag used to be refused over a
-# bundle-supplied list. A principal is now rendered from the key material, so the
-# bundle can name its files anything and still cannot make its key answer for
-# alice's.
+# The fork-and-file-it-as-alice shape. Mallory's key, whose comment is
+# mallory@evil, is registered in the bundle's own pubkeys/ under alice's file
+# name and signs the root there. A principal is rendered from the key material,
+# so the bundle can name its files anything and still cannot make its key answer
+# for alice's.
 #
 # Everything here is checked against the trust list travelling *inside* the
-# artifact — the weakest configuration the tool offers — because that is where
-# the hole was.
+# artifact — the weakest configuration the tool offers.
 @test
 def "a bundle cannot file one key under the fingerprint of another" [] {
     let tmp_dir = $in.tmp_dir

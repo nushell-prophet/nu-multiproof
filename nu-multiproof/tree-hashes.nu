@@ -118,8 +118,7 @@ def build-tree [
 # Regenerate the manifest and return the root CID (CID v0) it records.
 #
 # The root CID lands in the manifest as the "." row, so it becomes a merkle leaf
-# like any other row and the signed root statement covers it — the whole-CSV
-# signature that used to cover it was dropped in 6bcfa24. Not a separate
+# like any other row and the signed root statement covers it. Not a separate
 # file/git tag/provenance bundle because: the "." row collapses the root CID
 # into the existing manifest — no new artifact to track. tree-hashes.csv is
 # excluded from its own manifest (build-tree filters multiproofs/ out), so the

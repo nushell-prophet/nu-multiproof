@@ -135,9 +135,9 @@ def "canonical refuses the key shapes ssh-keygen reads but pubkeys/ must not hol
 # The refusal an operator actually has to act on, and the one branch where the
 # reason comes from another program. `ssh-keygen -e` retries a public key it
 # cannot read as a *private* key, so at a common umask the temp file trips the
-# UNPROTECTED PRIVATE KEY FILE banner and the reported cause became a
+# UNPROTECTED PRIVATE KEY FILE banner and the reported cause would be a
 # permissions complaint about a path that no longer exists — a message that
-# changed with the operator's umask. Run under a fixed umask 0022 for that
+# varies with the operator's umask. Run under a fixed umask 0022 for that
 # reason: at 0077 the bug is invisible.
 @test
 def "an unreadable key reports the parser reason, not a umask artifact" [] {
