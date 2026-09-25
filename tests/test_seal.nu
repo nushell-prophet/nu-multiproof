@@ -371,7 +371,7 @@ def "seal --no-content-anchor dates every signature and leaves the content undat
     ) "the endorsement anchor does not commit to the signature beside it"
 }
 
-# The row for the bundle above. It is the shape README already describes for a
+# The row for the bundle above. It is the shape SPEC already describes for a
 # signature-only bundle — `file: null`, `content: absent`, a dated `endorsed` —
 # and this is the first thing that produces one, where the test below it builds
 # the same reading by hand from the pre-merge layout.
@@ -821,7 +821,7 @@ def "seal status reports one endorsement entry per signature" [] {
     assert equal $row.endorsed "pending, pending" "one of the two endorsements went undated"
 }
 
-# The docstring and README claim a bundle behind a symlink is not listed. That is
+# The docstring and SPEC claim a bundle behind a symlink is not listed. That is
 # `list-files --recursive` descending real directories only, and a claimed
 # property needs its own test.
 @test
@@ -862,7 +862,7 @@ def "seal status reports a signature-only bundle as an undated-content endorseme
 }
 
 # A parked rejected calendar answer is the one `.ots` this repo writes that is
-# deliberately NOT a proof (README, "rejected"), and it lives directly under
+# deliberately NOT a proof (SPEC, "rejected"), and it lives directly under
 # ots-timestamps/ rather than in a bundle. Parsing it only to print "skipping
 # unparsable OTS file" is a note about an expected file, on every run of a command
 # whose whole job is to be read. Asserted in a subprocess because the note goes to
