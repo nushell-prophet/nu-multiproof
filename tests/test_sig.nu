@@ -2,18 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/_sig.nu [ sig-files-for signer-from-sig sig-path-for original-for-sig ]
-
-# Why a fixture, not rm at the end of test bodies: after-each runs even when
-# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
+use _fixtures.nu [ setup cleanup ]
 
 # Discovery must return both grammar forms — a caller that clears only the
 # named one leaves a stale bare `.sig` behind.

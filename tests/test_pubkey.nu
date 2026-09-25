@@ -7,6 +7,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/pubkey.nu
+use _fixtures.nu [ setup cleanup ]
 
 # Why a const: one test asks what the operator sees under a fixed umask, which
 # only a separate process can answer.
@@ -218,16 +219,6 @@ def "canonical rejects a truncated or padded blob" [] {
 # The check is one-sided, so it would also pass if `canonical` refused
 # everything. The real keys below are asserted accepted by both to keep it from
 # holding vacuously.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
-
 def ssh-keygen-accepts [dir: path line: string]: nothing -> bool {
     let file = $"($dir)/candidate.pub"
     $line | save --force $file

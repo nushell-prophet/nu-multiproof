@@ -4,26 +4,21 @@ use std/testing *
 use ../nu-multiproof/ots.nu
 use ../nu-multiproof/_ots-helpers.nu [ copy-path-for bundle-dir-for freeze-bundle write-frozen-copy check-block-header check-fetched-header ]
 use _ots-fixtures.nu [ build-pending-ots build-bitcoin-ots build-calendar-response OTS_HEADER ZERO_HASH ATT_BITCOIN_TAG ]
-
-# Why a fixture, not rm at the end of test bodies: after-each runs even when
-# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
+use _fixtures.nu [ setup cleanup ]
 
 # --- parse-ots / info tests ---
 
+# `ots info` over the given proof bytes, written into the test's own temp dir.
+def info-of [tmp_dir: path]: binary -> record {
+    let path = $"($tmp_dir)/proof.ots"
+    $in | save --raw $path
+    ots info $path
+}
+
 @test
 def "info pending without ops" [] {
-    let ots_bytes = build-pending-ots
-    $ots_bytes | save --raw --force /tmp/test_ots_pending.ots
-    let result = ots info "/tmp/test_ots_pending.ots"
+    let tmp_dir = $in.tmp_dir
+    let result = build-pending-ots | info-of $tmp_dir
     assert equal $result.attestation.type "pending"
     assert equal $result.attestation.url "https://a.pool.opentimestamps.org"
     assert equal ($result.hash | str lowercase) "0000000000000000000000000000000000000000000000000000000000000000"
@@ -31,9 +26,8 @@ def "info pending without ops" [] {
 
 @test
 def "info pending with ops" [] {
-    let ots_bytes = build-pending-ots --with-ops
-    $ots_bytes | save --raw --force /tmp/test_ots_ops.ots
-    let result = ots info "/tmp/test_ots_ops.ots"
+    let tmp_dir = $in.tmp_dir
+    let result = build-pending-ots --with-ops | info-of $tmp_dir
     assert equal ($result.ops | where type == "append" | get data.0 | str upcase) "DEADBEEF"
     assert ($result.ops | any {|o| $o.type == "sha256" })
     assert equal $result.attestation.type "pending"
@@ -41,9 +35,8 @@ def "info pending with ops" [] {
 
 @test
 def "info bitcoin attestation" [] {
-    let ots_bytes = build-bitcoin-ots
-    $ots_bytes | save --raw --force /tmp/test_ots_btc.ots
-    let result = ots info "/tmp/test_ots_btc.ots"
+    let tmp_dir = $in.tmp_dir
+    let result = build-bitcoin-ots | info-of $tmp_dir
     assert equal ($result.ops | where type == "prepend" | get data.0 | str upcase) "AABB"
     assert ($result.ops | any {|o| $o.type == "sha256" })
     assert equal $result.attestation.type "bitcoin"
@@ -52,10 +45,10 @@ def "info bitcoin attestation" [] {
 
 @test
 def "bad header rejected" [] {
+    let tmp_dir = $in.tmp_dir
     mut bad = 0x[ff ff ff ff 00]; for _ in 1..6 { $bad = $bad | bytes add --end $bad }
-    $bad | save --raw --force /tmp/test_ots_bad.ots
-    let result = try { ots info "/tmp/test_ots_bad.ots"; null } catch { $in }
-    assert ($result != null)
+    let result = try { $bad | info-of $tmp_dir; "accepted" } catch {|e| $e.msg }
+    assert str contains $result "bad header magic"
 }
 
 # A short all-ASCII .ots is read back by `open --raw` as a *string*, not binary.
@@ -73,15 +66,15 @@ def "ascii file rejected as bad header, not type mismatch" [] {
 
 @test
 def "fork produces error" [] {
+    let tmp_dir = $in.tmp_dir
     let forked = (
         $OTS_HEADER
         | bytes add --end 0x[01 08]
         | bytes add --end $ZERO_HASH
         | bytes add --end 0x[ff]
     )
-    $forked | save --raw --force /tmp/test_ots_fork.ots
-    let result = try { ots info "/tmp/test_ots_fork.ots"; null } catch { $in }
-    assert ($result != null)
+    let result = try { $forked | info-of $tmp_dir; "accepted" } catch {|e| $e.msg }
+    assert str contains $result "forked timestamps not supported"
 }
 
 # --- Upgrade offline tests (use --response-file to bypass calendar fetch) ---
@@ -265,11 +258,10 @@ def "verify reports content mismatch without touching the network" [] {
 
 @test
 def "verify rejects a pending proof" [] {
-    let ots_bytes = build-pending-ots
-    $ots_bytes | save --raw --force /tmp/test_ots_verify_pending.ots
-    let result = try { ots verify /tmp/test_ots_verify_pending.ots; null } catch { $in.msg }
-    assert ($result != null)
-    assert ($result | str contains "pending")
+    let ots_path = $"($in.tmp_dir)/pending.ots"
+    build-pending-ots | save --raw $ots_path
+    let result = try { ots verify $ots_path; "accepted" } catch {|e| $e.msg }
+    assert str contains $result "pending"
 }
 
 # --- format conformance: bytes a lenient parser reads past ---

@@ -5,6 +5,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/_allowed-signers.nu allowed-signers-body
+use _fixtures.nu [ setup cleanup ]
 
 const ED25519 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOi7LinplEQewM3/l8Ol9rE85+YwhvLPKf+ZUUf36Xuf"
 const RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDExnwUVhsIh66w1OIGHFyr0prionxHoHEmkSdgDvMo86vDarHwO88H5yQ4ZhRcUTBS4pLYMbGMeGQfHQBbJI4P8Xarsgys7TfMZ9oJq7/tvSnt85xfkXixhSSTMml3D80FAvhS4hPjnSbqaaVeBcW6d3uCDGpibXZ9eted9nY1PsVtsvET57ooJ8qGh4e3lqkwCXJaCKGAY4zqtTZKAEjsm0PcCueFDuN9zWTTzYy9XZucqcGaBDslrylix5AW81QwOzWlkE7nukWGCguSLUezms8yr1NU9Z2HBlwt3hVC5BLqPOrDWR55jhEQuGV8RVZBT6LaVfVdPqhNA1lJTn9j"
@@ -15,16 +16,6 @@ const RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDExnwUVhsIh66w1OIGHFyr0prionx
 # hex".
 const ED25519_FP = "b610a91de8fa99e224f6b2e7fb6bb8c9e8f0303f8d72d14e5a494ab8d1c68011"
 const RSA_FP = "4faa889e999e5fa3d43e47d90b487260526594804a5048c067be20748f16b88a"
-
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
 
 @test
 def "one line per key: the principal is the key fingerprint, not the file name" [] {

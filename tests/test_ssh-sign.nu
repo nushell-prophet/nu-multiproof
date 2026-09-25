@@ -2,35 +2,15 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/ssh-sign.nu
-use ../nu-multiproof/pubkey.nu
 # Tested here rather than in its own suite: `ssh-sign sign` is what the key
 # lifetime exists for, and signing an inline `key::` key needs an agent.
 use ../nu-multiproof/_key-helpers.nu with-signing-key
 use ../nu-multiproof/_sig.nu sig-files-for
+use _fixtures.nu [ setup cleanup principal-of ]
 
 # Why a const: the namespace test asks what the *command line* accepts, which
 # only a separate nu process can answer.
 const MODULE_DIR = path self ../nu-multiproof
-
-# The principal a key signs under: the fingerprint of its public half. Every
-# expectation about a `.sig` file name and about a reported signer goes through
-# this, because that is where a signer's identity comes from — not from what the
-# key's file, or its entry in pubkeys/, happens to be called.
-def principal-of [key: path]: nothing -> string {
-    open --raw $"($key).pub" | pubkey fingerprint
-}
-
-# Why a fixture, not rm at the end of test bodies: after-each runs even when
-# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
 
 # The registered file is called `alice.pub` and the private key `somekey`, and
 # neither name reaches the signature: the sig is named for the key's fingerprint.

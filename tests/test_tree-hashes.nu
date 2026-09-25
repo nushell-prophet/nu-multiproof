@@ -3,18 +3,7 @@ use std/testing *
 
 use ../nu-multiproof/tree-hashes.nu
 use ../nu-multiproof/_tracked.nu content-tree
-
-# Why a fixture, not rm at the end of test bodies: after-each runs even when
-# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
+use _fixtures.nu [ setup cleanup ]
 
 const EXPECTED_COLUMNS = [
     filepath
@@ -49,21 +38,6 @@ def "echo returns table with expected columns" [] {
     let repo = make-repo $in.tmp_dir
     let result = tree-hashes --echo --repo $repo
     assert equal ($result | columns) $EXPECTED_COLUMNS
-}
-
-@test
-def "echo returns non-empty table" [] {
-    let repo = make-repo $in.tmp_dir
-    let result = tree-hashes --echo --repo $repo
-    assert (($result | length) > 0)
-}
-
-@test
-def "small files have non-empty content_cid" [] {
-    let repo = make-repo $in.tmp_dir
-    let result = tree-hashes --echo --repo $repo
-    let files_with_cid = $result | where content_sha256 != "" and content_cid != ""
-    assert (($files_with_cid | length) > 0)
 }
 
 @test

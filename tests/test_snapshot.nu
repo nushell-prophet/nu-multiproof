@@ -5,16 +5,7 @@ use ../nu-multiproof/tree-hashes.nu
 use ../nu-multiproof/merkle.nu
 use ../nu-multiproof/_snapshot.nu [ parse-snapshot-statement snapshot-state ]
 use ../nu-multiproof/_layout.nu snapshot-path
-
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
+use _fixtures.nu [ setup cleanup ]
 
 # A committed repo with one file at the root and one in a subdirectory. Returns
 # the commit it made.
