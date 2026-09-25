@@ -7,55 +7,18 @@
 
 use _allowed-signers.nu registered-principals
 use _pubkey-helpers.nu fingerprint-file
+use _temp-helpers.nu with-temp-dir
 
-# Read user.signingKey and return {path, temp} — a key path usable with
-# `ssh-keygen -Y sign -f <key>`, plus who owns it. Handles both forms:
+# Run `action` with a key path usable with `ssh-keygen -Y sign -f <key>`,
+# read from user.signingKey unless --key names one. Returns whatever `action`
+# returns. Handles both config forms:
 #  - inline `key::ssh-ed25519 AAAA…` — materialized to a temp .pub file
-#    (ssh-keygen wants a file; the agent must hold the matching private key),
-#    `temp: true`: the caller must delete it when done
-#  - a file path — used as-is, falling back to its `.pub` sibling, `temp: false`
+#    (ssh-keygen wants a file; the agent must hold the matching private key)
+#  - a file path — used as-is, falling back to its `.pub` sibling
 #
-# Prefer `with-signing-key`, which owns that lifetime for you.
-#
-# --root: repo whose git config to read (default: current directory's repo).
-export def resolve-signing-key [--root: path]: nothing -> record<path: path, temp: bool> {
-    let git = if $root != null {
-        do { ^git -C $root config user.signingKey } | complete
-    } else {
-        do { ^git config user.signingKey } | complete
-    }
-    if $git.exit_code != 0 {
-        # Why not "or pass --key": seal has no such flag, and this is
-        # the only message its caller ever sees. `ssh-sign sign --key` short-
-        # circuits before reaching here, so naming the config serves both.
-        error make {msg: "no git signing key configured — set it with: git config user.signingKey <path-to-key>"}
-    }
-    let raw = $git.stdout | str trim
-    if ($raw | str starts-with "key::") {
-        let key_data = $raw | str replace "key::" ""
-        # Why uuid: a fixed temp name lets two concurrent signs clobber each
-        # other's key file mid-operation.
-        let tmp = $nu.temp-dir | path join $"nu-multiproof-signing-key-(random uuid).pub"
-        $key_data | save --raw --force $tmp
-        {path: $tmp temp: true}
-    } else {
-        let expanded = $raw | path expand
-        if ($expanded | path exists) {
-            {path: $expanded temp: false}
-        } else if ($"($expanded).pub" | path exists) {
-            {path: $"($expanded).pub" temp: false}
-        } else {
-            error make {msg: $"signing key not found: ($raw)"}
-        }
-    }
-}
-
-# Run `action` with a signing-key path, then delete anything resolution had to
-# materialize. Returns whatever `action` returns.
-#
-# Why a closure: the inline `key::` form has no file on disk, so resolution
-# writes one — and a command that only *returns* the path has no moment at
-# which it can delete it. That leaked one temp key per call, forever.
+# Why a closure: the inline form has no file on disk, so resolution writes one
+# — and a command that only *returns* the path has no moment at which it can
+# delete it. That leaked one temp key per call, forever.
 #
 # --key: caller-supplied key, used as-is (nothing to resolve or clean up).
 # --root: repo whose git config to read (default: current directory's repo).
@@ -64,18 +27,31 @@ export def with-signing-key [
     --key: path
     --root: path
 ]: nothing -> any {
-    let resolved = if $key != null {
-        {path: ($key | into string) temp: false}
-    } else {
-        resolve-signing-key --root $root
+    if $key != null { return (do $action ($key | into string)) }
+    let git = do { ^git -C ($root | default ".") config user.signingKey } | complete
+    if $git.exit_code != 0 {
+        # Why not "or pass --key": seal has no such flag, and this is
+        # the only message its caller ever sees. `ssh-sign sign --key` short-
+        # circuits before reaching here, so naming the config serves both.
+        error make {msg: "no git signing key configured — set it with: git config user.signingKey <path-to-key>"}
     }
-    # Why finally, not catch-and-rethrow: a failed signing ceremony must not
-    # skip the cleanup, and `error make {msg: $e.msg}` would drop the original
-    # error's span, labels, help and inner error on the way out.
-    try {
-        do $action $resolved.path
-    } finally {
-        if $resolved.temp { rm --force $resolved.path }
+    let raw = $git.stdout | str trim
+    if ($raw | str starts-with "key::") {
+        # Why a directory and not with-temp-file: the file must end in `.pub`,
+        # which signing-principal reads as "this is the public half".
+        return (with-temp-dir "signing-key" {|dir|
+            let pub = $dir | path join "key.pub"
+            $raw | str replace "key::" "" | save --raw $pub
+            do $action $pub
+        })
+    }
+    let expanded = $raw | path expand
+    if ($expanded | path exists) {
+        do $action $expanded
+    } else if ($"($expanded).pub" | path exists) {
+        do $action $"($expanded).pub"
+    } else {
+        error make {msg: $"signing key not found: ($raw)"}
     }
 }
 
