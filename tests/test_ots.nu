@@ -116,6 +116,24 @@ def "upgrade splices valid response and writes atomically" [] {
     assert equal $info.attestation.height 123456
 }
 
+# A calendar answering with a well-formed but still-pending attestation parses
+# cleanly, so only the attestation-type check stands between it and a pending
+# proof rewritten in place as if it had been upgraded.
+@test
+def "upgrade refuses a response that is still pending" [] {
+    let tmp_dir = $in.tmp_dir
+    let ots_path = $"($tmp_dir)/pending.ots"
+    build-pending-ots | save --raw --force $ots_path
+    let original = open --raw $ots_path
+
+    let response = $"($tmp_dir)/still-pending.bin"
+    build-calendar-response | save --raw --force $response
+
+    let outcome = try { ots upgrade $ots_path --response-file $response; "upgraded" } catch {|e| $e.msg }
+    assert ($outcome | str contains "upgraded attestation type is pending, expected bitcoin") $"got: ($outcome)"
+    assert equal (open --raw $ots_path) $original "original ots was modified despite the refusal"
+}
+
 @test
 def "upgrade rejects malformed response and leaves original intact" [] {
     let tmp_dir = $in.tmp_dir

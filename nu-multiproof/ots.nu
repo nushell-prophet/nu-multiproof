@@ -2,7 +2,7 @@
 # Handles linear proof chains only (single-path, no merkle tree forks).
 
 use _ots-helpers.nu [ bundle-dir-for copy-path-for check-frozen-copy write-frozen-copy check-block-header ]
-use _explorer.nu [ NETWORK_TIMEOUT DEFAULT_EXPLORERS check-min-sources block-hash-at fetch-header ]
+use _explorer.nu [ NETWORK_TIMEOUT DEFAULT_EXPLORERS check-min-sources block-hash-at fetch-header sources-line ]
 use _varint.nu encode-varint
 use _repo.nu repo-root
 use _layout.nu ots-dir
@@ -246,11 +246,7 @@ export def info [ots_file: path]: nothing -> record {
         hash: ($parsed.hash | encode hex | str lowercase)
         ops: (
             $parsed.ops | each {|op|
-                match $op.type {
-                    "append" => {type: "append" data: ($op.data | encode hex | str lowercase)}
-                    "prepend" => {type: "prepend" data: ($op.data | encode hex | str lowercase)}
-                    _ => {type: $op.type}
-                }
+                if $op.data? == null { $op } else { $op | update data { encode hex | str lowercase } }
             }
         )
         attestation: $parsed.attestation
@@ -405,19 +401,15 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     # the HTTP status lets a calendar answering 200 with `b"x"` produce a full
     # success record, exit 0, and an .ots that `info` rejects with "unknown op
     # tag: 60". `upgrade` validates before writing for the same reason.
-    let validation = try {
+    let refusal = try {
         let reparsed = $ots | parse-ots
         if $reparsed.hash != $file_hash {
-            {ok: false reason: "the assembled proof does not commit to this file's hash"}
+            "the assembled proof does not commit to this file's hash"
         } else if $reparsed.attestation.type == "unknown" {
-            {ok: false reason: $"unknown attestation type ($reparsed.attestation.tag)"}
-        } else {
-            {ok: true}
+            $"unknown attestation type ($reparsed.attestation.tag)"
         }
-    } catch {|e|
-        {ok: false reason: $e.msg}
-    }
-    if not $validation.ok {
+    } catch {|e| $e.msg }
+    if $refusal != null {
         # Why the rejected bytes are still written: the digest already reached
         # the calendar, and the nonce that binds it to this file exists only in
         # this run — dropping both is the same unrecoverable loss the guard
@@ -436,7 +428,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
         error make {
             msg: (
                 [
-                    $"calendar response does not make a readable proof: ($validation.reason)"
+                    $"calendar response does not make a readable proof: ($refusal)"
                     # Not "no bundle was written": a bundle may already be on
                     # disk when this prints, minted by `freeze-bundle` before
                     # any digest was posted (seal --no-content-anchor). What
@@ -706,18 +698,12 @@ export def upgrade [ots_file: path --response-file: path --calendar: string]: no
     # touching the file. A malformed calendar response would otherwise destroy
     # the pending bundle. Validate-then-atomic-rename keeps the original
     # intact on any failure.
-    let validation = try {
-        let reparsed = $upgraded | parse-ots
-        if $reparsed.attestation.type != "bitcoin" {
-            {ok: false reason: $"upgraded attestation type is ($reparsed.attestation.type), expected bitcoin"}
-        } else {
-            {ok: true}
-        }
-    } catch {|e|
-        {ok: false reason: $e.msg}
-    }
-    if not $validation.ok {
-        error make {msg: $"upgrade aborted, original untouched: ($validation.reason)"}
+    let refusal = try {
+        let type = ($upgraded | parse-ots).attestation.type
+        if $type != "bitcoin" { $"upgraded attestation type is ($type), expected bitcoin" }
+    } catch {|e| $e.msg }
+    if $refusal != null {
+        error make {msg: $"upgrade aborted, original untouched: ($refusal)"}
     }
 
     let tmp_out = $"($ots_file).new"
@@ -734,14 +720,7 @@ def emit-verify [result: record fail: bool]: nothing -> record {
         print $"  block hash:    ($result.block_hash)"
         print $"  block time:    ($result.block_time | format date '%Y-%m-%d %H:%M:%S UTC')"
         print $"  merkle root:   ($result.merkle_root)"
-        # Why the label branches: one responder means no cross-check happened —
-        # the height->hash mapping rests on that single explorer. Printing
-        # "cross-checked" there would claim agreement that was never tested.
-        if ($result.sources_confirmed | length) > 1 {
-            print $"  cross-checked: ($result.sources_confirmed | str join ', ')"
-        } else {
-            print $"  single source: ($result.sources_confirmed | str join ', ') \(no cross-check — only one explorer answered\)"
-        }
+        print (sources-line $result.sources_confirmed)
         if $result.content_verified == true { print "  content:       matches the proof commitment" }
     } else {
         print $"✗ verification failed: ($result.error)"
