@@ -67,6 +67,19 @@ def make-test-repo [tmp_dir: path]: nothing -> path {
     $repo
 }
 
+# make-test-repo with its root statement written and signed by a key it
+# registers under multiproofs/pubkeys. Returns the repo and the key's path.
+def make-signed-repo [tmp_dir: path]: nothing -> record<repo: path, key: path> {
+    let repo = make-test-repo $tmp_dir
+    let key = $"($tmp_dir)/sshkey"
+    ^ssh-keygen -t ed25519 -f $key -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root = merkle write-root --repo $repo
+    ssh-sign sign $root.path --key $key --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    {repo: $repo key: $key}
+}
+
 # --- spec cross-checks ---
 
 @test
@@ -480,15 +493,8 @@ def "an argument that is only slashes is refused by name, not as an empty key" [
 @test
 def "signed roundtrip: file and directory proofs verify as valid" [] {
     let tmp_dir = $in.tmp_dir
-    let repo = make-test-repo $tmp_dir
-
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-
-    let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let signed = make-signed-repo $tmp_dir
+    let repo = $signed.repo
 
     # File row: content on disk matches the proven sha256
     let proof = merkle prove README.md --repo $repo
@@ -520,13 +526,8 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
 @test
 def "a directory row does not verify against a directory that was rewritten" [] {
     let tmp_dir = $in.tmp_dir
-    let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let signed = make-signed-repo $tmp_dir
+    let repo = $signed.repo
     let dir_proof = merkle prove sub --repo $repo
     let root_proof = merkle prove "." --repo $repo
 
@@ -562,13 +563,8 @@ def "a directory row does not verify against a directory that was rewritten" [] 
 @test
 def "a proven directory swapped for a symlink is refused, not re-derived" [] {
     let tmp_dir = $in.tmp_dir
-    let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let signed = make-signed-repo $tmp_dir
+    let repo = $signed.repo
     let dir_proof = merkle prove sub --repo $repo
     let root_proof = merkle prove "." --repo $repo
 
@@ -596,13 +592,8 @@ def "a proven directory swapped for a symlink is refused, not re-derived" [] {
 @test
 def "a deleted tracked file gives every row a verdict, not a crash" [] {
     let tmp_dir = $in.tmp_dir
-    let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let signed = make-signed-repo $tmp_dir
+    let repo = $signed.repo
     let file_proof = merkle prove sub/inner.txt --repo $repo
     let dir_proof = merkle prove sub --repo $repo
 
@@ -627,13 +618,8 @@ def "a deleted tracked file gives every row a verdict, not a crash" [] {
 @test
 def "an untracked file under a proven directory is outside what the row commits to" [] {
     let tmp_dir = $in.tmp_dir
-    let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let signed = make-signed-repo $tmp_dir
+    let repo = $signed.repo
     let dir_proof = merkle prove sub --repo $repo
 
     "backdoor\n" | save --force $"($repo)/sub/backdoor.sh"
@@ -677,13 +663,9 @@ def "a leaf that commits to no content is not valid" [] {
 # "Verifying without the origin repo" pins. Every test below mutates exactly one
 # thing away from this, so what each one proves is the mutation and nothing else.
 def make-sealed-bundle [tmp_dir: path]: nothing -> record {
-    let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let signed = make-signed-repo $tmp_dir
+    let repo = $signed.repo
+    let key_path = $signed.key
 
     let bundle = $"($tmp_dir)/bundle"
     mkdir $"($bundle)/multiproofs/pubkeys" $"($bundle)/sub"
@@ -1288,13 +1270,9 @@ def "a bundle cannot file one key under the fingerprint of another" [] {
 @test
 def "pubkeys-dir flag supplies the verifier trust list from outside the bundle" [] {
     let tmp_dir = $in.tmp_dir
-    let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let signed = make-signed-repo $tmp_dir
+    let repo = $signed.repo
+    let key_path = $signed.key
     let proof = merkle prove README.md --repo $repo
 
     # Trust list held outside the artifact: same key, verifier's own copy
@@ -1319,13 +1297,9 @@ def "pubkeys-dir flag supplies the verifier trust list from outside the bundle" 
 @test
 def "portable bundle: proof verifies offline in a non-git directory" [] {
     let tmp_dir = $in.tmp_dir
-    let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
-    let root_result = merkle write-root --repo $repo
-    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let signed = make-signed-repo $tmp_dir
+    let repo = $signed.repo
+    let key_path = $signed.key
     let proof = merkle prove README.md --repo $repo
 
     # The consumer's full artifact set in the README bundle layout —
