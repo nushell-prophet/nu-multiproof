@@ -8,6 +8,7 @@ use _fixtures.nu [ setup cleanup ]
 # a hand-built record and pass a path that never exists — which is also what
 # keeps the line count in "the message body is real lines" at 11, since a path
 # that is not a git repo names no commit.
+
 # A repo with one commit. Returns its root and that commit.
 def committed-repo [tmp_dir: path]: nothing -> record {
     let repo = $tmp_dir | path join repo

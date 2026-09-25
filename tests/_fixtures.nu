@@ -18,10 +18,11 @@ export def cleanup [] {
     rm --recursive --force $in.tmp_dir
 }
 
-# The principal a key signs under: the fingerprint of its public half. Every
-# expectation about a `.sig` file name and about a reported signer goes through
-# this, because that is where a signer's identity comes from — never from what
-# the key's file, or its entry in pubkeys/, happens to be called.
+# The principal a key signs under, and the value `--signer` takes: the
+# fingerprint of its public half. Every expectation about a `.sig` file name and
+# about a reported signer goes through this, because that is where a signer's
+# identity comes from — never from what the key's file, or its entry in
+# pubkeys/, happens to be called.
 export def principal-of [key: path]: nothing -> string {
     open --raw $"($key).pub" | pubkey fingerprint
 }
