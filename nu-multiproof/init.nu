@@ -48,7 +48,7 @@ export def main [
 # private key, only that a verifier can read the entry.
 def resolve-key [root: path pubkey: any]: nothing -> any {
     if $pubkey != null {
-        return (canonical-file (resolve-pubkey-file $pubkey))
+        return (resolve-pubkey $pubkey)
     }
     let git_key = (do { ^git -C $root config user.signingKey } | complete)
     if $git_key.exit_code != 0 {
@@ -65,7 +65,7 @@ def resolve-key [root: path pubkey: any]: nothing -> any {
         # — a padded second encoding of a REAL key lost the canonical error
         # naming both encodings, and a missing ssh-keygen read as a
         # verdict about the key. Either way the operator went looking for the
-        # wrong problem — see resolve-pubkey-file below.
+        # wrong problem — see resolve-pubkey below.
         return (
             try { $key_data | pubkey canonical } catch {|e|
                 error make {msg: $"user.signingKey inline `key::` value: ($e.msg)"}
@@ -76,13 +76,13 @@ def resolve-key [root: path pubkey: any]: nothing -> any {
     # Why: keep soft-warning behavior for the git-config branch — a key
     # configured on another machine shouldn't hard-error init; --pubkey
     # can still recover. --pubkey itself has no such fallback (user
-    # explicitly named the path), so resolve-pubkey-file errors there.
+    # explicitly named the path), so resolve-pubkey errors there.
     if not (($expanded | path exists) or ($"($expanded).pub" | path exists)) {
         print $"Warning: git signing key path not found: ($raw)"
         print "Use --pubkey to specify a public key file"
         return null
     }
-    canonical-file (resolve-pubkey-file $expanded)
+    resolve-pubkey $expanded
 }
 
 # Store the key under its fingerprint, or say why nothing was stored.
@@ -150,16 +150,16 @@ def ssh-fingerprint [key: string]: nothing -> string {
     }
 }
 
-# Resolve an SSH key path to its public-key file.
+# Resolve an SSH key path to its public key, as a canonical line.
 # Why: --pubkey and the user.signingKey file-path branch must never copy a
 # private key into pubkeys/. Prefer the `.pub` sibling when present (forgiving
 # misconfig); otherwise run the whole file through `pubkey canonical`, which a
 # private key fails on its second line.
-def resolve-pubkey-file [key_path: path]: nothing -> path {
+def resolve-pubkey [key_path: path]: nothing -> string {
     let expanded = $key_path | path expand
     let pub_sibling = $"($expanded).pub"
     if ($pub_sibling | path exists) {
-        return ($pub_sibling | into string | path expand)
+        return (canonical-file $pub_sibling)
     }
     if not ($expanded | path exists) {
         error make {msg: $"pubkey file not found: ($key_path)"}
@@ -171,5 +171,4 @@ def resolve-pubkey-file [key_path: path]: nothing -> path {
     # problem. canonical-file raises the real reason with the file's name on it.
     # A private key fails here too: it is multi-line, which canonical refuses.
     canonical-file $expanded
-    $expanded
 }
