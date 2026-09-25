@@ -6,6 +6,7 @@ use ../nu-multiproof/_beacon-helpers.nu [ BEACON_NONE BEACON_TOKEN_PATTERN valid
 use ../nu-multiproof/_explorer.nu [ header-time check-min-sources ]
 use ../nu-multiproof/_ots-helpers.nu check-fetched-header
 use ../nu-multiproof/_merkle-helpers.nu root-statement
+use _fixtures.nu [ setup cleanup ]
 
 # The Bitcoin genesis block, as published in Bitcoin Core and reproduced in
 # every reference on the format. This is the outside vector this repo's rules
@@ -16,16 +17,6 @@ use ../nu-multiproof/_merkle-helpers.nu root-statement
 const GENESIS_HEADER = "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c"
 const GENESIS_HASH = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
 const GENESIS_TIME = 2009-01-03T18:15:05Z
-
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
 
 @test
 def "the genesis block header hashes and dates as Bitcoin says it does" [] {

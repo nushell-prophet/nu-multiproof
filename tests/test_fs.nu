@@ -2,16 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/_fs.nu [ list-files list-dirs copy-file ]
-
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
+use _fixtures.nu [ setup cleanup ]
 
 # Directory holding one dotfile, one plain file, one subdirectory with a file,
 # under a name full of glob metacharacters.

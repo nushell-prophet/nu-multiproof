@@ -17,6 +17,7 @@ use ../nu-multiproof/_fs.nu [list-files list-dirs]
 use _ots-fixtures.nu [build-calendar-response build-bitcoin-ots]
 use ../nu-multiproof/_commit-proposal.nu seal-commit-line
 use ../nu-multiproof/_layout.nu MULTIPROOFS_DIR
+use _fixtures.nu [ setup cleanup ]
 
 # A repo with one commit and one registered signer — the state every test here
 # starts from. Returns the paths the assertions need.
@@ -45,18 +46,6 @@ def make-sealable-repo [tmp_dir: path]: nothing -> record {
 # what every `.sig` file here is named for.
 def principal-of [key: path]: nothing -> string {
     open --raw $"($key).pub" | pubkey fingerprint
-}
-
-# Why a fixture, not rm at the end of test bodies: after-each runs even when
-# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
 }
 
 # seal happy path with --no-stamp: avoids the OTS calendar network call, but

@@ -2,16 +2,7 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/_temp-helpers.nu [ with-temp-dir with-temp-file ]
-
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
+use _fixtures.nu [ setup cleanup ]
 
 @test
 def "with-temp-dir gives an empty dir, returns the closure value, and removes it" [] {

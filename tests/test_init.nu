@@ -3,6 +3,7 @@ use std/testing *
 
 use ../nu-multiproof/init.nu
 use ../nu-multiproof/pubkey.nu
+use _fixtures.nu [ setup cleanup ]
 
 # Why a const: one test checks what init *prints*, which is only observable
 # from outside the process — it spawns `nu` and needs the module's real path.
@@ -28,18 +29,6 @@ def make-repo [tmp_dir: path]: nothing -> path {
     mkdir $repo
     ^git -C $repo init -q
     $repo
-}
-
-# Why a fixture, not rm at the end of test bodies: after-each runs even when
-# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
 }
 
 # Nothing derives a file name from a key comment: the name is the fingerprint,

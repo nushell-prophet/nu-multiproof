@@ -3,18 +3,7 @@ use std/testing *
 
 use ../nu-multiproof/tree-hashes.nu
 use ../nu-multiproof/_tracked.nu content-tree
-
-# Why a fixture, not rm at the end of test bodies: after-each runs even when
-# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
+use _fixtures.nu [ setup cleanup ]
 
 const EXPECTED_COLUMNS = [
     filepath

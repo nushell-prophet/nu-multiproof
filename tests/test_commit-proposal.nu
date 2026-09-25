@@ -2,21 +2,12 @@ use std/assert
 use std/testing *
 
 use ../nu-multiproof/_commit-proposal.nu [ seal-commit-line quote-arg ]
+use _fixtures.nu [ setup cleanup ]
 
 # Only the snapshot tests below need a repo on disk; the rest pin wording against
 # a hand-built record and pass a path that never exists — which is also what
 # keeps the line count in "the message body is real lines" at 11, since a path
 # that is not a git repo names no commit.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
-
 # A repo with one commit. Returns its root and that commit.
 def committed-repo [tmp_dir: path]: nothing -> record {
     let repo = $tmp_dir | path join repo

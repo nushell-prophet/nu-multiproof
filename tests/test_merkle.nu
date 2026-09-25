@@ -10,18 +10,7 @@ use ../nu-multiproof/_merkle-helpers.nu [
     root-statement parse-root-statement validate-leaf
 ]
 use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots]
-
-# Why a fixture, not rm at the end of test bodies: after-each runs even when
-# the test throws, so a failing test does not leak its /tmp/tmp.* dir.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
+use _fixtures.nu [ setup cleanup ]
 
 # Leaf inputs from the RFC 6962 / Certificate Transparency test suite,
 # hashed per spec: sha256(0x00 ++ input).
