@@ -108,6 +108,31 @@ export def copy-path-for [file: path bundle_dir: path]: nothing -> string {
     }
 }
 
+# A raw header's block hash: double-SHA256, byte-reversed into the display
+# order explorers and block heights use.
+export def block-hash-of [header: binary]: nothing -> string {
+    $header | hash sha256 | decode hex | hash sha256 | decode hex | bytes reverse | encode hex | str lowercase
+}
+
+# The `time` field of a raw 80-byte header (bytes 68..71, little-endian).
+#
+# Read what this is worth. A block's timestamp is chosen by the miner, and
+# consensus only requires it to exceed the median of the previous 11 blocks and
+# to sit no more than two hours ahead of network-adjusted time — so it is an
+# approximation, not a clock. The hard fact a beacon rests on is the block
+# HEIGHT: its hash could not be known before that block was mined. This time is
+# what makes the height readable to a human, and it is reported as the miner's
+# claim, never as the bound itself.
+export def header-time [header: binary]: nothing -> datetime {
+    if ($header | bytes length) != 80 {
+        error make {msg: $"expected an 80-byte header, got ($header | bytes length) bytes"}
+    }
+    # Those four bytes hold a Unix time in SECONDS. `into datetime` reads a bare
+    # integer as nanoseconds, so scale first, then move the result to UTC.
+    let unix_seconds = $header | bytes at 68..71 | into int --endian little
+    $unix_seconds * 1_000_000_000 | into datetime | date to-timezone UTC
+}
+
 # The explorer's answer to /block/<hash>/header, admitted only if it really is
 # that block's header. Everything here is about the source, not the proof: the
 # block hash was already cross-checked across explorers before the header was
@@ -126,7 +151,7 @@ export def check-fetched-header [
     if ($bytes | bytes length) != 80 {
         error make {msg: $"explorer ($src) answered with ($bytes | bytes length) bytes where a block header is 80 — cannot verify"}
     }
-    let hashes_to = $bytes | hash sha256 | decode hex | hash sha256 | decode hex | bytes reverse | encode hex | str lowercase
+    let hashes_to = block-hash-of $bytes
     if $hashes_to != ($block_hash | str lowercase) {
         error make {msg: $"explorer ($src) answered with a header that hashes to ($hashes_to), not the cross-checked ($block_hash) — cannot verify"}
     }
@@ -154,8 +179,7 @@ export def check-block-header [
     if ($header | bytes length) != 80 {
         error make {msg: $"expected an 80-byte header, got ($header | bytes length) bytes"}
     }
-    let h256d = $header | hash sha256 | decode hex | hash sha256 | decode hex
-    let block_hash = $h256d | bytes reverse | encode hex | str lowercase
+    let block_hash = block-hash-of $header
     if $block_hash != ($claimed_hash | str lowercase) {
         error make {msg: $"header hashes to ($block_hash), not the looked-up ($claimed_hash)"}
     }
@@ -163,12 +187,9 @@ export def check-block-header [
     if $header_root != $expected_root {
         error make {msg: $"merkle root mismatch: header commits to ($header_root | encode hex | str lowercase), proof replays to ($expected_root | encode hex | str lowercase)"}
     }
-    let bits = $header | bytes at 72..75 | into int --endian little
-    let time = $header | bytes at 68..71 | into int --endian little
     {
         block_hash: $block_hash
         merkle_root: ($header_root | encode hex | str lowercase)
-        time: ($time * 1_000_000_000 | into datetime | date to-timezone UTC)
-        bits: $bits
+        time: (header-time $header)
     }
 }
