@@ -5,8 +5,7 @@ use _layout.nu pubkeys-dir
 use _sig.nu [sig-files-for signer-from-sig sig-path-for original-for-sig]
 use _key-helpers.nu [with-signing-key signing-principal]
 use _temp-helpers.nu with-temp-file
-use _allowed-signers.nu [allowed-signers-body registered-principals NAMESPACE]
-use _pubkey-helpers.nu fingerprint-file
+use _allowed-signers.nu [allowed-signers-body NAMESPACE]
 use _fs.nu cwd-relative
 
 # Sign a file with an SSH key.
