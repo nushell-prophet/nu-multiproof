@@ -80,6 +80,18 @@ export def block-hash-at [
     {hash: ($distinct | first) sources_confirmed: ($ok_lookups | get source)}
 }
 
+# The summary line naming the explorers behind a height -> hash answer.
+# Why the label branches: one responder means no cross-check happened — the
+# mapping rests on that single explorer. Printing "cross-checked" there would
+# claim agreement that was never tested.
+export def sources-line [sources: list<string>]: nothing -> string {
+    if ($sources | length) > 1 {
+        $"  cross-checked: ($sources | str join ', ')"
+    } else {
+        $"  single source: ($sources | str join ', ') \(no cross-check — only one explorer answered\)"
+    }
+}
+
 # Fetch a block header from one explorer and hand back its 80 bytes.
 #
 # Why the answer is checked here (check-fetched-header) and not by the caller's
@@ -98,25 +110,6 @@ export def fetch-header [src: string block_hash: string]: nothing -> binary {
         error make {msg: $"could not fetch the header for block ($block_hash) from ($src)"}
     }
     check-fetched-header $src $block_hash $header_hex
-}
-
-# The `time` field of a raw 80-byte header (bytes 68..71, little-endian).
-#
-# Read what this is worth. A block's timestamp is chosen by the miner, and
-# consensus only requires it to exceed the median of the previous 11 blocks and
-# to sit no more than two hours ahead of network-adjusted time — so it is an
-# approximation, not a clock. The hard fact a beacon rests on is the block
-# HEIGHT: its hash could not be known before that block was mined. This time is
-# what makes the height readable to a human, and it is reported as the miner's
-# claim, never as the bound itself.
-export def header-time [header: binary]: nothing -> datetime {
-    if ($header | bytes length) != 80 {
-        error make {msg: $"expected an 80-byte header, got ($header | bytes length) bytes"}
-    }
-    # Those four bytes hold a Unix time in SECONDS. `into datetime` reads a bare
-    # integer as nanoseconds, so scale first, then move the result to UTC.
-    let unix_seconds = $header | bytes at 68..71 | into int --endian little
-    $unix_seconds * 1_000_000_000 | into datetime | date to-timezone UTC
 }
 
 # The height every explorer that answered has already reached, minus a reorg

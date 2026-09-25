@@ -25,9 +25,10 @@
 # work behind a header (README "Verifying a timestamp").
 
 use _explorer.nu [
-    DEFAULT_EXPLORERS check-min-sources block-hash-at fetch-header header-time tip-height
+    DEFAULT_EXPLORERS check-min-sources block-hash-at fetch-header tip-height sources-line
 ]
 use _beacon-helpers.nu [BEACON_NONE beacon-token parse-beacon]
+use _ots-helpers.nu header-time
 use _merkle-helpers.nu parse-root-statement
 
 # How deep below the chain tip a freshly minted beacon sits.
@@ -67,7 +68,7 @@ export def latest [
     let height = tip-height $sources $min_sources $depth
     let looked_up = block-hash-at $height $sources $min_sources
     # The header is fetched for its time alone, and the time is the miner's
-    # claim, not the bound — see _explorer.nu header-time. The height is the
+    # claim, not the bound — see _ots-helpers.nu header-time. The height is the
     # fact: its hash could not have been named before that block was mined.
     let header = fetch-header ($looked_up.sources_confirmed | first) $looked_up.hash
     {
@@ -86,11 +87,7 @@ def emit-verify [result: record fail: bool]: nothing -> record {
         print $"✓ beacon block ($result.height) confirmed independently"
         print $"  block hash:    ($result.block_hash)"
         print $"  not before:    ($result.block_time | format date '%Y-%m-%d %H:%M:%S UTC') \(the miner's timestamp; the height is the fact\)"
-        if ($result.sources_confirmed | length) > 1 {
-            print $"  cross-checked: ($result.sources_confirmed | str join ', ')"
-        } else {
-            print $"  single source: ($result.sources_confirmed | str join ', ') \(no cross-check — only one explorer answered\)"
-        }
+        print (sources-line $result.sources_confirmed)
     } else {
         print $"✗ beacon check failed: ($result.error)"
     }

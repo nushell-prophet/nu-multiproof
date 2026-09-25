@@ -3,8 +3,8 @@ use std/testing *
 
 use ../nu-multiproof/beacon.nu
 use ../nu-multiproof/_beacon-helpers.nu [ BEACON_NONE BEACON_TOKEN_PATTERN validate-beacon parse-beacon beacon-token ]
-use ../nu-multiproof/_explorer.nu [ header-time check-min-sources ]
-use ../nu-multiproof/_ots-helpers.nu check-fetched-header
+use ../nu-multiproof/_explorer.nu [ check-min-sources ]
+use ../nu-multiproof/_ots-helpers.nu [ check-fetched-header header-time ]
 use ../nu-multiproof/_merkle-helpers.nu root-statement
 
 # The Bitcoin genesis block, as published in Bitcoin Core and reproduced in
