@@ -4,13 +4,12 @@ use std/testing *
 use ../nu-multiproof/merkle.nu
 use ../nu-multiproof/tree-hashes.nu
 use ../nu-multiproof/ssh-sign.nu
-use ../nu-multiproof/pubkey.nu
 use ../nu-multiproof/_merkle-helpers.nu [
     mth audit-path fold-path leaf-hash load-leaves
     root-statement parse-root-statement validate-leaf
 ]
 use _ots-fixtures.nu [build-pending-ots build-bitcoin-ots]
-use _fixtures.nu [ setup cleanup ]
+use _fixtures.nu [ setup cleanup principal-of ]
 
 # Leaf inputs from the RFC 6962 / Certificate Transparency test suite,
 # hashed per spec: sha256(0x00 ++ input).
@@ -24,13 +23,6 @@ def vector-leaf-hashes []: nothing -> list<binary> {
 
 def as-hex []: binary -> string {
     encode hex | str lowercase
-}
-
-# The principal a key signs under, and the value `--signer` takes: the
-# fingerprint of the key's public half. Never a file name — that is the whole
-# point of it (see nu-multiproof/pubkey.nu fingerprint).
-def principal-of [key: path]: nothing -> string {
-    open --raw $"($key).pub" | pubkey fingerprint
 }
 
 # A 40-hex stand-in for a git SHA-1 object hash: nushell's `hash` offers no
