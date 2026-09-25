@@ -41,21 +41,6 @@ def "echo returns table with expected columns" [] {
 }
 
 @test
-def "echo returns non-empty table" [] {
-    let repo = make-repo $in.tmp_dir
-    let result = tree-hashes --echo --repo $repo
-    assert (($result | length) > 0)
-}
-
-@test
-def "small files have non-empty content_cid" [] {
-    let repo = make-repo $in.tmp_dir
-    let result = tree-hashes --echo --repo $repo
-    let files_with_cid = $result | where content_sha256 != "" and content_cid != ""
-    assert (($files_with_cid | length) > 0)
-}
-
-@test
 def "every row carries a CID, directories included" [] {
     let repo = make-repo $in.tmp_dir
     let result = tree-hashes --echo --repo $repo
