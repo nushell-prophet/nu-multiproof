@@ -27,6 +27,7 @@ const LEAF_COLUMNS = [filepath content_sha256 content_git_sha1 content_git_sha25
 # reject (never normalize) violations — uppercase hex included.
 export def validate-leaf [row: record]: nothing -> nothing {
     let cols = $row | columns
+
     if ($cols | sort) != ($LEAF_COLUMNS | sort) {
         error make {msg: $"leaf must have exactly columns ($LEAF_COLUMNS | str join ', ') — got ($cols | str join ', ')"}
     }
@@ -71,12 +72,14 @@ export def leaf-hash [row: record]: nothing -> binary {
     let leaf_bytes = [$row.filepath $row.content_sha256 $row.content_git_sha1 $row.content_git_sha256 $row.content_cid]
         | str join (char nl)
         | into binary
+
     0x[00] | bytes add --end $leaf_bytes | hash sha256 --binary
 }
 
 # Largest power of two strictly below n (n >= 2) — the RFC 6962 split point.
 export def largest-pow2-below [n: int]: nothing -> int {
     mut k = 1
+
     while $k * 2 < $n { $k = $k * 2 }
     $k
 }
@@ -94,6 +97,7 @@ export def mth [hashes: list<binary>]: nothing -> binary {
             let k = largest-pow2-below $n
             let left = mth ($hashes | first $k)
             let right = mth ($hashes | skip $k)
+
             0x[01] | bytes add --end $left | bytes add --end $right | hash sha256 --binary
         }
     }
@@ -103,11 +107,13 @@ export def mth [hashes: list<binary>]: nothing -> binary {
 # in leaf-to-root order. `side` names the SIBLING's position — see fold-path.
 export def audit-path [hashes: list<binary> index: int]: nothing -> list {
     let n = $hashes | length
+
     if $index < 0 or $index >= $n {
         error make {msg: $"leaf index ($index) out of range for ($n) leaves"}
     }
     if $n == 1 { return [] }
     let k = largest-pow2-below $n
+
     if $index < $k {
         (audit-path ($hashes | first $k) $index) ++ [{side: "right" hash: (mth ($hashes | skip $k))}]
     } else {
@@ -126,6 +132,7 @@ export def fold-path [leaf_hash: binary steps: list]: nothing -> binary {
             error make {msg: $"proof step hash must be 64 lowercase hex chars: ($step.hash)"}
         }
         let sibling = $step.hash | decode hex
+
         match $step.side {
             "right" => (0x[01] | bytes add --end $acc | bytes add --end $sibling | hash sha256 --binary)
             "left" => (0x[01] | bytes add --end $sibling | bytes add --end $acc | hash sha256 --binary)
@@ -146,6 +153,7 @@ export def load-leaves [manifest: path]: nothing -> table {
     # rather than trusting file order, so the root is order-independent.
     let rows = open --raw $manifest | from csv --no-infer | sort-by filepath
     let dupes = $rows | get filepath | uniq --repeated
+
     if ($dupes | is-not-empty) {
         error make {msg: $"duplicate filepaths in manifest \(equivocation risk\): ($dupes | str join ', ')"}
     }
@@ -222,11 +230,13 @@ export def parse-root-statement [file: path]: nothing -> record<root: string, se
         '\n\z'
     ] | str join
     let matched = $content | parse --regex $pattern
+
     if ($matched | is-empty) or $matched.schema.0 != $MERKLE_SCHEMA {
         error make {msg: $"malformed root statement ($file): expected '($MERKLE_SCHEMA) <64 lowercase hex> <seq> <prev root hex or genesis> <beacon token or none>' with exactly one trailing newline"}
     }
     let rec = $matched | first
     let seq = $rec.seq | into int
+
     # genesis and seq 0 are one claim — "nothing came before this". Half of it
     # describes a chain nobody can walk: seq 0 with a predecessor hash points at
     # a seal its own count says does not exist, and genesis at seq 5 hides four.

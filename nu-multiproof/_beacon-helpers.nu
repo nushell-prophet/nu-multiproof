@@ -42,6 +42,7 @@ export def parse-beacon [token: string]: nothing -> any {
     validate-beacon $token
     if $token == $BEACON_NONE { return null }
     let parts = $token | split column ":" chain height hash | first
+
     {height: ($parts.height | into int) hash: $parts.hash}
 }
 
@@ -50,6 +51,7 @@ export def parse-beacon [token: string]: nothing -> any {
 # be discovered by the next reader of a file that is already signed.
 export def beacon-token [height: int hash: string]: nothing -> string {
     let token = $"bitcoin:($height):($hash)"
+
     validate-beacon $token
     $token
 }

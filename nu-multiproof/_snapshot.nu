@@ -48,6 +48,7 @@ export def snapshot-statement [commit: string]: nothing -> string {
 export def parse-snapshot-statement [file: path]: nothing -> string {
     let content = open --raw $file | into string
     let matched = $content | parse --regex '\A(?<schema>\S+) (?<commit>[0-9a-f]{40}|[0-9a-f]{64})\n\z'
+
     if ($matched | is-empty) or $matched.schema.0 != $SNAPSHOT_SCHEMA {
         error make {msg: $"malformed snapshot record ($file): expected '($SNAPSHOT_SCHEMA) <40 or 64 lowercase hex>' with exactly one trailing newline"}
     }
@@ -84,12 +85,14 @@ export def parse-snapshot-statement [file: path]: nothing -> string {
 # unless the index is refreshed first, which `status` does as part of its job.
 export def snapshot-state [root: path]: nothing -> any {
     let head = do { ^git -C $root rev-parse HEAD } | complete
+
     if $head.exit_code != 0 { return null }
 
     let exclude_spec = ":(exclude)" + $MULTIPROOFS_DIR
     let status = do {
         ^git --no-optional-locks -C $root status --porcelain --untracked-files=no -- "." $exclude_spec
     } | complete
+
     # Not a third state — the same "nothing to record". And not removable: a
     # failed `status` returns empty stdout through `complete`, which the line
     # below would read as a clean tree and record a commit for a tree nobody

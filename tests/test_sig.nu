@@ -21,12 +21,14 @@ def cleanup [] {
 def "discovery finds the named and the bare form" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc.txt"
+
     "content" | save --force $file
     "sig" | save --force $"($file).sig"
     "sig" | save --force $"($file).alice.sig"
     "sig" | save --force $"($file).bob.sig"
 
-    let found = sig-files-for $file | each {|f| $f | path basename } | sort
+    let found = sig-files-for $file | path basename | sort
+
     assert equal $found ["doc.txt.alice.sig" "doc.txt.bob.sig" "doc.txt.sig"]
 }
 
@@ -36,12 +38,14 @@ def "discovery finds the named and the bare form" [] {
 def "discovery survives glob metacharacters in the filename" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/w[1]?x*y.txt"
+
     "content" | save --force $file
     "sig" | save --force $"($file).sig"
     "sig" | save --force $"($file).bob.sig"
 
     let found = sig-files-for $file
-    assert equal ($found | each {|f| $f | path basename } | sort) ["w[1]?x*y.txt.bob.sig" "w[1]?x*y.txt.sig"]
+
+    assert equal ($found | path basename | sort) ["w[1]?x*y.txt.bob.sig" "w[1]?x*y.txt.sig"]
     # The returned paths must be usable as-is, not just look right
     $found | each {|f| assert ($f | path exists) $"discovered path does not exist: ($f)" }
 }
@@ -52,13 +56,15 @@ def "discovery survives glob metacharacters in the filename" [] {
 def "discovery ignores sigs of a different file" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc.txt"
+
     "content" | save --force $file
     "sig" | save --force $"($file).alice.sig"
     "other" | save --force $"($tmp_dir)/doc.txt2"
     "sig" | save --force $"($tmp_dir)/doc.txt2.sig"
     "sig" | save --force $"($tmp_dir)/doc.txt2.bob.sig"
 
-    let found = sig-files-for $file | each {|f| $f | path basename }
+    let found = sig-files-for $file | path basename
+
     assert equal $found ["doc.txt.alice.sig"]
 }
 
@@ -68,11 +74,13 @@ def "discovery ignores sigs of a different file" [] {
 def "discovery finds sigs of a dotfile" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/.env"
+
     "content" | save --force $file
     "sig" | save --force $"($file).sig"
     "sig" | save --force $"($file).alice.sig"
 
-    let found = sig-files-for $file | each {|f| $f | path basename } | sort
+    let found = sig-files-for $file | path basename | sort
+
     assert equal $found [".env.alice.sig" ".env.sig"]
 }
 
@@ -82,9 +90,10 @@ def "discovery finds sigs of a dotfile" [] {
 # catalogue regenerated but unsigned. Symlinks are out for the other half of
 # the reason — verify would read through one to bytes its name does not name.
 @test
-def "discovery returns signatures only, not directories or links wearing the name" [] {
+def "discovery returns signatures only and never directories or links wearing the name" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc.txt"
+
     "content" | save --force $file
     "sig" | save --force $"($file).alice.sig"
     mkdir $"($file).bundle.sig"
@@ -93,7 +102,8 @@ def "discovery returns signatures only, not directories or links wearing the nam
     "elsewhere" | save --force $"($tmp_dir)/elsewhere"
     ^ln -s $"($tmp_dir)/elsewhere" $"($file).link.sig"
 
-    let found = sig-files-for $file | each {|f| $f | path basename }
+    let found = sig-files-for $file | path basename
+
     assert equal $found ["doc.txt.alice.sig"]
 }
 
@@ -105,20 +115,23 @@ def "discovery returns signatures only, not directories or links wearing the nam
 def "the bare signature of a sibling file is not ours" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc.txt"
+
     "content" | save --force $file
     "archive" | save --force $"($file).gz"
     "sig of the archive" | save --force $"($file).gz.sig"
     "sig" | save --force $"($file).alice.sig"
 
-    let found = sig-files-for $file | each {|f| $f | path basename }
+    let found = sig-files-for $file | path basename
+
     assert equal $found ["doc.txt.alice.sig"]
     # ...and the archive's own discovery still finds it
-    assert equal (sig-files-for $"($file).gz" | each {|f| $f | path basename }) ["doc.txt.gz.sig"]
+    assert equal (sig-files-for $"($file).gz" | path basename) ["doc.txt.gz.sig"]
 
     # With no such sibling on disk the same name is a named sig of doc.txt —
     # the grammar is unchanged, only the ambiguity is settled.
     rm $"($file).gz"
-    let now_named = sig-files-for $file | each {|f| $f | path basename } | sort
+    let now_named = sig-files-for $file | path basename | sort
+
     assert equal $now_named ["doc.txt.alice.sig" "doc.txt.gz.sig"]
 }
 
@@ -126,6 +139,7 @@ def "the bare signature of a sibling file is not ours" [] {
 def "discovery returns an empty list when nothing is signed" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc.txt"
+
     "content" | save --force $file
 
     assert equal (sig-files-for $file) []
@@ -136,6 +150,7 @@ def "discovery returns an empty list when nothing is signed" [] {
 @test
 def "discovery returns an empty list when the directory is absent" [] {
     let tmp_dir = $in.tmp_dir
+
     assert equal (sig-files-for $"($tmp_dir)/no-such-dir/doc.txt") []
 }
 
@@ -145,6 +160,7 @@ def "discovery returns an empty list when the directory is absent" [] {
 def "signer-from-sig agrees with discovery" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/w[1]?x*y.txt"
+
     "content" | save --force $file
     "sig" | save --force $"($file).sig"
     "sig" | save --force $"($file).maxim-uvarov2.sig"
@@ -152,6 +168,7 @@ def "signer-from-sig agrees with discovery" [] {
     let labelled = sig-files-for $file
         | each {|sig| {sig: ($sig | path basename) signer: (signer-from-sig $file $sig)} }
         | sort-by sig
+
     assert equal $labelled [
         {sig: "w[1]?x*y.txt.maxim-uvarov2.sig" signer: "maxim-uvarov2"}
         {sig: "w[1]?x*y.txt.sig" signer: null}
@@ -166,6 +183,7 @@ def "signer-from-sig agrees with discovery" [] {
 def "the file a sig covers is found for both forms" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc.txt"
+
     "content" | save --force $file
     "sig" | save --force $"($file).sig"
     "sig" | save --force $"($file).alice.sig"
@@ -180,6 +198,7 @@ def "the file a sig covers is found for both forms" [] {
 def "the named form wins only when the bare original is absent" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc"
+
     "content" | save --force $file
     "sig" | save --force $"($file).txt.sig"
 
@@ -187,8 +206,9 @@ def "the named form wins only when the bare original is absent" [] {
 }
 
 @test
-def "a sig covering nothing on disk is an error, not a guess" [] {
+def "a sig covering nothing on disk is an error rather than a guess" [] {
     let tmp_dir = $in.tmp_dir
+
     assert error {|| original-for-sig $"($tmp_dir)/gone.txt.sig" }
     assert error {|| original-for-sig $"($tmp_dir)/doc.txt" }
 }
@@ -198,9 +218,10 @@ def "a sig covering nothing on disk is an error, not a guess" [] {
 def "sig-path-for names what discovery finds" [] {
     let tmp_dir = $in.tmp_dir
     let file = $"($tmp_dir)/doc.txt"
+
     "content" | save --force $file
     "sig" | save --force (sig-path-for $file)
     "sig" | save --force (sig-path-for $file "alice")
 
-    assert equal (sig-files-for $file | each {|f| $f | path basename } | sort) ["doc.txt.alice.sig" "doc.txt.sig"]
+    assert equal (sig-files-for $file | path basename | sort) ["doc.txt.alice.sig" "doc.txt.sig"]
 }

@@ -41,8 +41,10 @@ export def allowed-signers-body [pubkeys_dir: path]: nothing -> string {
     # message naming the broken file buried in `$e.inner`. The operator has to
     # be told which file to fix.
     mut lines = []
+
     for file in (list-files $pubkeys_dir --suffix ".pub") {
         let key = canonical-file $file | str trim
+
         $lines = ($lines | append $"($key | pubkey fingerprint) namespaces=\"($NAMESPACE)\" ($key)")
     }
     $lines | str join "\n"
@@ -63,6 +65,7 @@ export def registered-principals [pubkeys_dir: path]: nothing -> list<string> {
 # being applied is this module's: a principal is a key's fingerprint.
 export def check-signer-known [signer: string pubkeys_dir: path]: nothing -> string {
     let known = registered-principals $pubkeys_dir
+
     if $signer not-in $known {
         error make {
             msg: $"no key with fingerprint ($signer) in ($pubkeys_dir)/ — this verifier cannot say whether that key signed anything without holding it. Registered: ($known | str join ', ')"

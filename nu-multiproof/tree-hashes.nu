@@ -46,14 +46,14 @@ def git-hashes [root: path tracked_files: list<string> format: string]: nothing 
                 # Why -z on all three: same core.quotePath issue as ls-files
                 # above — ls-tree C-quotes non-ASCII paths, so the lookup by raw
                 # path would silently miss them.
-                $tracked_files | str join (char -i 0) | ^git -C $root update-index --add -z --stdin
+                $tracked_files | str join (char --integer 0) | ^git -C $root update-index --add -z --stdin
                 let tree = ^git -C $root write-tree | str trim
                 ^git -C $root ls-tree -r -t -z $tree
             }
         }
     }
-    | split row (char -i 0)
-    | where { $in != "" }
+    | split row (char --integer 0)
+    | where $it != ""
     | parse "{mode} {type} {hash}\t{path}"
     | select path hash
     | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
@@ -128,6 +128,7 @@ export def root-cid [
     --repo: path # Target git repo root (default: git root of current directory)
 ]: nothing -> string {
     let root = repo-root $repo
+
     main --repo $repo
     open (manifest-path $root) | where filepath == "." | get content_cid.0
 }
@@ -148,6 +149,7 @@ export def main [
 ]: nothing -> any {
     let table = (build-tree --repo $repo)
     let target_root = repo-root $repo
+
     if $echo {
         # Nothing is written under --echo, the snapshot record included: it
         # describes a manifest on disk, and --echo puts none there.

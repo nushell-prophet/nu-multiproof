@@ -42,6 +42,7 @@ export const LINK_SIZE_CIDV0 = 34
 # Protobuf length-delimited field: <tag><length varint><bytes>
 export def pb-field [tag: binary]: binary -> binary {
     let value = $in
+
     $tag | bytes add --end (($value | bytes length) | encode-varint) | bytes add --end $value
 }
 
@@ -72,6 +73,7 @@ export def encode-base58 []: binary -> string {
         0..<$pair_count | each {|i|
             let s = $i * 2
             let hex_pair = $hex | str substring ($s)..<($s + 2)
+
             $"0x($hex_pair)" | into int
         }
     )
@@ -82,17 +84,21 @@ export def encode-base58 []: binary -> string {
     # to make — emitting a spurious '1' on top of the prefix.
     mut nums = ($byte_list | skip while { $in == 0 })
     mut digits = []
+
     while not ($nums | is-empty) {
         mut carry = 0
         mut quotient = []
+
         for b in $nums {
             let val = $carry * 256 + $b
+
             $quotient ++= [($val // $B58_GROUP_DIVISOR)]
             $carry = $val mod $B58_GROUP_DIVISOR
         }
         # The remainder is the next B58_GROUP digits, least significant first.
         mut group = []
         mut rest = $carry
+
         for _ in 0..<$B58_GROUP {
             $group = [($rest mod 58) ...$group]
             $rest = $rest // 58
@@ -107,12 +113,14 @@ export def encode-base58 []: binary -> string {
     # It cannot eat a real digit: a leading zero digit is not part of any
     # base58 value, and the input's leading zero BYTES left before the loop.
     let encoded = ($digits | skip while { $in == 0 } | each {|d| $chars | get $d } | str join)
+
     $"($ones)($encoded)"
 }
 
 # CID v0 of a node: base58btc of the sha2-256 multihash (0x12 0x20 || digest).
 export def node-cid []: record -> string {
     let node = $in
+
     0x[1220] | bytes add --end $node.digest | encode-base58
 }
 
@@ -125,6 +133,7 @@ export def link-bytes [name: string node: record]: nothing -> binary {
         | bytes add --end (($name | into binary) | pb-field 0x[12])
         | bytes add --end (0x[18] | bytes add --end ($node.dag_size | encode-varint))
     )
+
     $body | pb-field 0x[12]
 }
 
@@ -133,7 +142,7 @@ export def block-node [block: binary file_size: int children: list]: nothing -> 
         digest: ($block | hash sha256 | decode hex)
         # append 0: a leaf and an empty directory both link nothing, and
         # `math sum` refuses an empty list
-        dag_size: (($block | bytes length) + ($children | each {|c| $c.dag_size } | append 0 | math sum))
+        dag_size: (($block | bytes length) + ($children | get dag_size | append 0 | math sum))
         file_size: $file_size
     }
 }
@@ -146,6 +155,7 @@ export def leaf-node []: binary -> record {
     # An empty file omits the Data field entirely, it does not carry a zero-length one.
     let data_field = if $n > 0 { $chunk | pb-field 0x[12] } else { 0x[] }
     let unixfs = 0x[08 02] | bytes add --end $data_field | bytes add --end 0x[18] | bytes add --end $nv
+
     block-node ($unixfs | pb-field 0x[0a]) $n []
 }
 
@@ -155,6 +165,7 @@ export def branch-node [children: list]: nothing -> record {
     let links = $children | each {|c| link-bytes "" $c } | bytes collect
     let total = $children | get file_size | math sum
     mut unixfs = 0x[08 02] | bytes add --end 0x[18] | bytes add --end ($total | encode-varint)
+
     for c in $children {
         $unixfs = $unixfs | bytes add --end 0x[20] | bytes add --end ($c.file_size | encode-varint)
     }
@@ -174,12 +185,14 @@ export def dir-node [
     --path: string = "." # directory being built, for the sharding error only
 ]: nothing -> record {
     let estimate = $links | each {|l| ($l.name | into binary | bytes length) + $LINK_SIZE_CIDV0 } | append 0 | math sum
+
     if $estimate > $HAMT_THRESHOLD {
         error make {msg: $"directory ($path) holds ($links | length) entries \(estimated ($estimate) bytes\), over the ($HAMT_THRESHOLD)-byte threshold where IPFS switches to a HAMT-sharded directory. This builds basic directories only, so any CID it produced here would be one no IPFS client agrees with."}
     }
     let link_bytes = $links | each {|l| link-bytes $l.name $l.node } | bytes collect
-    let nodes = $links | each {|l| $l.node }
+    let nodes = $links | get node
     let block = $link_bytes | bytes add --end (0x[08 01] | pb-field 0x[0a])
+
     block-node $block 0 $nodes | reject file_size
 }
 
@@ -188,8 +201,8 @@ export def dir-node [
 # LINKS_PER_NODE until one node is left. Not the recursive fill the reference
 # implementation is written as, because: it fills every subtree to capacity
 # before starting the next, which is the same tree this bottom-up grouping
-# produces. Pinned by tests/test_cid-v0.nu "multi-chunk file: two full chunks
-# and a 1000-byte tail" (one level) and "two-level file: 175 chunks", both
+# produces. Pinned by tests/test_cid-v0.nu "multi-chunk file of two full chunks
+# and a 1000-byte tail" (one level) and "two-level file of 175 chunks", both
 # recorded from the client.
 export def file-node []: binary -> record {
     let content = $in
@@ -200,9 +213,11 @@ export def file-node []: binary -> record {
         0..<(($n + $CHUNK_SIZE - 1) // $CHUNK_SIZE) | each {|i|
             let start = $i * $CHUNK_SIZE
             let end = [(($i + 1) * $CHUNK_SIZE) $n] | math min
+
             $content | bytes at $start..<$end | leaf-node
         }
     }
+
     while ($level | length) > 1 {
         $level = ($level | chunks $LINKS_PER_NODE | each {|group| branch-node $group })
     }

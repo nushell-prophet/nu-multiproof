@@ -29,6 +29,7 @@ export def with-signing-key [
 ]: nothing -> any {
     if $key != null { return (do $action ($key | into string)) }
     let git = do { ^git -C ($root | default ".") config user.signingKey } | complete
+
     if $git.exit_code != 0 {
         # Why not "or pass --key": seal has no such flag, and this is
         # the only message its caller ever sees. `ssh-sign sign --key` short-
@@ -36,6 +37,7 @@ export def with-signing-key [
         error make {msg: "no git signing key configured — set it with: git config user.signingKey <path-to-key>"}
     }
     let raw = $git.stdout | str trim
+
     if ($raw | str starts-with "key::") {
         # Why a directory and not with-temp-file: the file must end in `.pub`,
         # which signing-principal reads as "this is the public half".
@@ -46,6 +48,7 @@ export def with-signing-key [
         })
     }
     let expanded = $raw | path expand
+
     if ($expanded | path exists) {
         do $action $expanded
     } else if ($"($expanded).pub" | path exists) {
@@ -64,12 +67,14 @@ export def with-signing-key [
 export def signing-principal [key: path pubkeys_dir: path]: nothing -> string {
     let pub_path = if ($key | str ends-with ".pub") { $key } else {
         let candidate = $"($key).pub"
+
         if not ($candidate | path exists) {
             error make {msg: $"public key file not found: ($candidate)"}
         }
         $candidate
     }
     let principal = fingerprint-file $pub_path
+
     if $principal not-in (registered-principals $pubkeys_dir) {
         error make {msg: $"the signing key \(($principal)\) is not registered in ($pubkeys_dir)/ — register it with `init --pubkey ($pub_path)`, or nothing reading this artifact can check the signature"}
     }

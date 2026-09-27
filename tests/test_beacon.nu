@@ -33,6 +33,7 @@ def "the genesis block header hashes and dates as Bitcoin says it does" [] {
     # published header through it exercises the same double-SHA256 and the same
     # display-order reversal a live beacon check rests on.
     let bytes = check-fetched-header "fixture" $GENESIS_HASH $GENESIS_HEADER
+
     assert equal ($bytes | bytes length) 80
     assert equal (header-time $bytes) $GENESIS_TIME
 }
@@ -49,6 +50,7 @@ def "a header of any length but eighty is refused a time" [] {
 @test
 def "the beacon token round-trips through its own grammar" [] {
     let token = beacon-token 964771 $GENESIS_HASH
+
     assert equal $token $"bitcoin:964771:($GENESIS_HASH)"
     assert equal (parse-beacon $token) {height: 964771 hash: $GENESIS_HASH}
     assert equal (parse-beacon $BEACON_NONE) null
@@ -85,10 +87,12 @@ def "minting a token validates what it is about to write" [] {
 @test
 def "a statement carrying no beacon has no bound to check" [] {
     let file = $"($in.tmp_dir)/tree-root.txt"
+
     root-statement ("root" | hash sha256) 0 "genesis" $BEACON_NONE | save --raw --force $file
     # Throws rather than answering `valid: false`: an offline seal made no claim,
     # and "no claim" is not a false one.
     let err = try { beacon verify $file --min-sources 1; null } catch {|e| $e.msg }
+
     assert ($err | str contains "no beacon") $"got: ($err)"
 }
 

@@ -39,6 +39,7 @@ export def check-min-sources [min_sources: int]: nothing -> nothing {
 # non-200 / transport error (so a single flaky mirror doesn't abort the run).
 export def esplora-get [url: string]: nothing -> any {
     let r = try { http get --full --allow-errors --max-time $NETWORK_TIMEOUT $url } catch { return null }
+
     if $r.status != 200 { return null }
     $r.body | into string | str trim
 }
@@ -61,6 +62,7 @@ export def block-hash-at [
             {source: $src hash: (esplora-get $"($src)/block-height/($height)")}
         }
     let ok_lookups = $lookups | where hash != null
+
     if ($ok_lookups | is-empty) {
         error make {msg: $"no explorer returned block ($height) — cannot continue"}
     }
@@ -74,6 +76,7 @@ export def block-hash-at [
     # different case are agreeing, and the fold is also what makes the returned
     # value canonical for the callers that write it into a signed statement.
     let distinct = $ok_lookups | get hash | str lowercase | uniq
+
     if ($distinct | length) > 1 {
         error make {msg: $"explorers disagree on block ($height): ($distinct | str join ', ')"}
     }
@@ -106,6 +109,7 @@ export def sources-line [sources: list<string>]: nothing -> string {
 # does not hash to it can only be this explorer's fault.
 export def fetch-header [src: string block_hash: string]: nothing -> binary {
     let header_hex = esplora-get $"($src)/block/($block_hash)/header"
+
     if $header_hex == null {
         error make {msg: $"could not fetch the header for block ($block_hash) from ($src)"}
     }
@@ -134,7 +138,8 @@ export def tip-height [
         | where $it != null
         # An explorer answering something that is not a height is not answering.
         | where $it =~ '^(0|[1-9][0-9]*)$'
-        | each { into int }
+        | into int
+
     if ($tips | length) < $min_sources {
         error make {
             msg: $"only ($tips | length) of ($sources | length) explorers reported a chain tip, below --min-sources ($min_sources) — cannot continue"
@@ -142,6 +147,7 @@ export def tip-height [
         }
     }
     let height = ($tips | math min) - $depth
+
     if $height < 0 {
         error make {msg: $"chain tip ($tips | math min) is shallower than --depth ($depth) — no block at that depth exists"}
     }

@@ -16,5 +16,5 @@ use _cid-helpers.nu [ file-node node-cid ]
 @example "CID v0 of in-memory bytes" { "hello" | into binary | nu-multiproof cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
 @example "same bytes arriving as a string, as `open --raw` returns them" { "hello" | nu-multiproof cid-v0 } --result "QmWfVY9y3xjsixTgbd9AorQxH7VtMpzfx2HaWtsoUYecaX"
 export def main []: [binary -> string string -> string] {
-    $in | into binary | file-node | node-cid
+    into binary | file-node | node-cid
 }

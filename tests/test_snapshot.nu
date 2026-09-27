@@ -43,9 +43,11 @@ def "the recorded commit rebuilds to the same merkle root in a fresh checkout" [
     let root = merkle write-root --repo $repo | get root
 
     let recorded = parse-snapshot-statement (snapshot-path $repo)
+
     assert equal $recorded $head "the record does not name the commit that was HEAD"
 
     let clone = $tmp_dir | path join clone
+
     ^git clone --quiet -- $repo $clone
     # No `--` before the commit: for checkout that separator introduces PATHS,
     # so it would ask for a file by this name instead of a revision.
@@ -61,6 +63,7 @@ def "the recorded commit rebuilds to the same merkle root in a fresh checkout" [
 def "a dirty tree removes the record an earlier clean run wrote" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $tmp_dir | path join repo
+
     make-repo $repo
 
     tree-hashes --repo $repo | ignore
@@ -76,6 +79,7 @@ def "a dirty tree removes the record an earlier clean run wrote" [] {
 def "a change staged but not committed counts as dirty" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $tmp_dir | path join repo
+
     make-repo $repo
 
     # The manifest enumerates the INDEX (git ls-files), so a staged file is in it
@@ -129,6 +133,7 @@ def "a change outside the sealed subtree leaves the record standing" [] {
 def "a repo before its first commit gets no record" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $tmp_dir | path join repo
+
     mkdir $repo
     ^git -C $repo init -q
     "alpha\n" | save --force ($repo | path join a.txt)
@@ -146,6 +151,7 @@ def "a repo before its first commit gets no record" [] {
 def "echo writes no record" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $tmp_dir | path join repo
+
     make-repo $repo
 
     tree-hashes --echo --repo $repo | ignore
@@ -159,6 +165,7 @@ const SHA256_HEX = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab
 @test
 def "both git object formats are read by hex length" [] {
     let file = $in.tmp_dir | path join snapshot.txt
+
     for commit in [$SHA1_HEX $SHA256_HEX] {
         $"multiproof-snapshot-v1 ($commit)\n" | save --raw --force $file
         assert equal (parse-snapshot-statement $file) $commit
@@ -179,9 +186,11 @@ def "a malformed record is refused rather than read" [] {
         $"multiproof-snapshot-v1 ($SHA1_HEX) extra\n" # a field nobody defined
         $"($SHA1_HEX)\n" # a bare hash, no schema token
     ]
+
     for bad in $hostile {
         $bad | save --raw --force $file
         let err = try { parse-snapshot-statement $file; null } catch {|e| $e.msg }
+
         assert ($err != null) $"a malformed record was accepted: ($bad | to json)"
     }
 }

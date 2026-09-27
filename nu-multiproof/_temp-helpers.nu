@@ -20,6 +20,7 @@
 # from a killed process says which command made it.
 export def with-temp-dir [label: string action: closure]: nothing -> any {
     let dir = $nu.temp-dir | path join $"nu-multiproof-($label)-(random uuid)"
+
     mkdir $dir
     try { do $action $dir | collect } finally { rm --recursive --force $dir }
 }
@@ -29,5 +30,6 @@ export def with-temp-dir [label: string action: closure]: nothing -> any {
 # external command, GIT_INDEX_FILE), so removal is `--force`.
 export def with-temp-file [label: string action: closure]: nothing -> any {
     let file = $nu.temp-dir | path join $"nu-multiproof-($label)-(random uuid)"
+
     try { do $action $file | collect } finally { rm --force $file }
 }

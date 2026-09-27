@@ -14,13 +14,14 @@ def cleanup [] {
 }
 
 @test
-def "with-temp-dir gives an empty dir, returns the closure value, and removes it" [] {
+def "with-temp-dir gives an empty dir then returns the closure value and removes the dir" [] {
     let path = with-temp-dir "unit" {|dir|
         assert ($dir | path exists) "the directory must exist inside the closure"
         assert equal (ls --all $dir | length) 0
         "hi" | save --force ($dir | path join "written")
         $dir
     }
+
     assert not ($path | path exists) $"directory survived the happy path: ($path)"
 }
 
@@ -29,6 +30,7 @@ def "with-temp-dir gives an empty dir, returns the closure value, and removes it
 @test
 def "with-temp-dir removes the dir when the closure throws" [] {
     let receipt = $"($in.tmp_dir)/dir-path"
+
     try {
         with-temp-dir "unit" {|dir|
             $dir | save --force $receipt
@@ -37,6 +39,7 @@ def "with-temp-dir removes the dir when the closure throws" [] {
         assert false "the closure error must propagate"
     } catch { }
     let path = open --raw $receipt | str trim
+
     assert not ($path | path exists) $"directory leaked on the error path: ($path)"
 }
 
@@ -46,9 +49,11 @@ def "with-temp-file removes the file on both paths" [] {
         "content" | save --force $file
         $file
     }
+
     assert not ($path | path exists) $"file survived the happy path: ($path)"
 
     let receipt = $"($in.tmp_dir)/file-path"
+
     try {
         with-temp-file "unit" {|file|
             $file | save --force $receipt
@@ -58,6 +63,7 @@ def "with-temp-file removes the file on both paths" [] {
         assert false "the closure error must propagate"
     } catch { }
     let thrown_path = open --raw $receipt | str trim
+
     assert not ($thrown_path | path exists) $"file leaked on the error path: ($thrown_path)"
 }
 
@@ -73,9 +79,11 @@ def "with-temp-file returns more than 256 KiB of external output" [] {
     # The suite runs from the repo root (as tests calling `tree-hashes` with no
     # --repo already assume); assert it rather than fail as "module not found"
     let helpers = $env.PWD | path join "nu-multiproof" "_temp-helpers.nu"
+
     assert ($helpers | path exists) $"expected the suite to run from the repo root, got ($env.PWD)"
     let script = $"use ($helpers) with-temp-file; with-temp-file 'probe' {|f| ^head -c 400000 /dev/zero | ^tr '\\0' 'x' } | str length | print"
     let run = do { ^timeout 60 nu --no-config-file -c $script } | complete
+
     assert equal $run.exit_code 0 $"helper did not return \(124 = deadlock\): ($run.stderr)"
     assert equal ($run.stdout | str trim) "400000"
 }
@@ -85,7 +93,7 @@ def "with-temp-file returns more than 256 KiB of external output" [] {
 # bare message with no span, no help and no error code — this pins that the
 # helper's `finally` keeps the original error intact.
 @test
-def "with-temp-dir propagates the original error, not a flattened copy" [] {
+def "with-temp-dir propagates the original error rather than a flattened copy" [] {
     let err = try {
         with-temp-dir "unit" {|dir|
             open --raw ($dir | path join "does-not-exist")

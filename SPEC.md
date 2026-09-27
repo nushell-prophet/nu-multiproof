@@ -59,7 +59,7 @@ and a deletion appears in no result field,
 so a proposal naming only written files would commit a folder git still holds a cleared signature for.
 And `Signed by` is the principal `seal` resolved from key material before signing,
 never a name read back off `<file>.<fingerprint>.sig`
-— the filename-as-identity shape this repo removed (pinned by "the signer is the principal passed in, not anything read off a filename").
+— the filename-as-identity shape this repo removed (pinned by "the signer is the principal passed in rather than anything read off a filename").
 
 Everything interpolated into the block is escaped with `to nuon`
 — nuon *is* Nushell's own string-literal syntax,
@@ -230,7 +230,7 @@ so it cannot make its key answer for yours (pinned by the test "a bundle cannot 
 What a bundle *can* do is not carry the key at all,
 and a `--signer` the trust list holds no key for is an error, not `valid: false`:
 "alice did not sign this" is a claim,
-and without alice's key the verifier cannot make it (pinned by "signer with no matching key in the trusted dir is an error, not invalid").
+and without alice's key the verifier cannot make it (pinned by "signer with no matching key in the trusted dir is an error and not invalid").
 Which fingerprints count is still a statement only the verifier can make
 — the same verifier-side policy described under [Verifying commit signatures](README.md#verifying-commit-signatures).
 
@@ -296,7 +296,7 @@ while `--repo` keeps naming the live content.
 The signed statement, its signatures and the manifest leg are read from the named directory;
 the trust list default and the OTS stamp discovery stay with `--repo`
 — a snapshot freezes statement and signatures, never keys, and the stamp archive is cross-seal with discovery by content hash.
-(Pinned by "a proof of an older seal verifies against that snapshot of the seal", "the manifest cross-check follows the multiproofs dir, not the repo", "a planted signature over another statement does not endorse the snapshot" and "an anchor in the live archive dates an older seal verified via its snapshot".)
+(Pinned by "a proof of an older seal verifies against that snapshot of the seal", "the manifest cross-check follows the multiproofs dir and not the repo", "a planted signature over another statement does not endorse the snapshot" and "an anchor in the live archive dates an older seal verified via its snapshot".)
 
 ## Tree specification
 
@@ -401,7 +401,7 @@ Read each anchor separately
 — a proof commits to the hash of one file and nothing else,
 so the snapshot's anchor dates C while a signature's anchor dates that endorsement.
 One seal moment is one bundle:
-`seal` stamps the root statement and every signature over it *into the same directory* (pinned by "seal puts the root statement, its signature and both anchors in one bundle"),
+`seal` stamps the root statement and every signature over it *into the same directory* (pinned by "seal puts the root statement and its signature and both anchors in one bundle"),
 so the two claims sit side by side instead of in two directories neither of which could make both.
 Under `--no-content-anchor` the same directory is minted from the same name and carries the same frozen copy, with no `<stem>.ots` in it (pinned by "seal --no-content-anchor dates every signature and leaves the content undated")
 — one bundle either way, so nothing that reads this tree needs a second layout.
@@ -424,7 +424,7 @@ Under `--no-content-anchor` the same directory is minted from the same name and 
   Every signature sitting beside the stamped file is copied, the bare `<stem>.<ext>.sig` form included,
   so a bundle carries one per signer rather than one (pinned by the test "stamp snapshots every signature beside the file it stamps").
   `seal` signs before it stamps,
-  so its own bundles always carry at least its own (pinned by "seal puts the root statement, its signature and both anchors in one bundle")
+  so its own bundles always carry at least its own (pinned by "seal puts the root statement and its signature and both anchors in one bundle")
 - `<stem>.<ext>.<fingerprint>.ots`
   — the timestamp over *that signature's* hash,
   so the bundle dates the endorsement and not only the content.
@@ -436,7 +436,7 @@ Under `--no-content-anchor` the same directory is minted from the same name and 
   — a typo would otherwise create a directory outside this grammar (pinned by "stamp refuses an --into bundle that does not exist"),
   and a regular file or a symlink to a directory both lose the proof after the digest is already posted (pinned by "stamp refuses an --into that exists but is not a real directory").
   It also refuses to take a `<stem>.ots` name when that proof covers a *different file still in the bundle*,
-  since two files can share a stem and only one can own the name (pinned by "stamp --into refuses to take the .ots name that another file proof holds"),
+  since two files can share a stem and only one can own the name (pinned by "stamp --into refuses to take the ots name that another file proof holds"),
   or when the incumbent proof cannot be read at all,
   since an unplaceable proof cannot be shown safe to archive (pinned by "stamp --into refuses when the incumbent proof cannot be read").
   What it does *not* refuse is a superseded proof of the same name:
@@ -466,7 +466,7 @@ One more form is written **outside** any bundle, directly under `multiproofs/ots
   The reference `ots` CLI reads constructs this parser refuses (forks, for one),
   so recovery may still be possible from them (pinned by the test "rejected stamps in the same second each keep their nonce").
   Under `--into` they go to the bundle's *parent*, for the same reason:
-  a bundle is the one place bytes that are not a proof must not be mistaken for one (pinned by "a rejected response under --into lands outside the bundle", and for a relative `--into` by "a rejected response under a relative --into is still parked, not lost")
+  a bundle is the one place bytes that are not a proof must not be mistaken for one (pinned by "a rejected response under --into lands outside the bundle", and for a relative `--into` by "a rejected response under a relative --into is still parked and not lost")
 
 `seal` produces this layout automatically.
 The next `seal` regenerates `multiproofs/tree-hashes.csv` and re-signs `tree-root.txt` when its bytes changed
@@ -546,7 +546,7 @@ Two seals can share a block, as rows 8 and 9 do:
 a calendar aggregates every digest it receives into one merkle tree per transaction.
 
 Bundles are found by the proofs they hold rather than by a name pattern, across the whole `multiproofs/` tree
-— so archival subtrees like `origin-proofs/` appear too, which the operational scan `merkle verify` uses does not cover (pinned by "seal status reports a bundle in an archival subtree, not just ots-timestamps").
+— so archival subtrees like `origin-proofs/` appear too, which the operational scan `merkle verify` uses does not cover (pinned by "seal status reports a bundle in an archival subtree and not just ots-timestamps").
 Real directories only,
 so a bundle behind a symlink is not listed (pinned by "seal status does not list a bundle behind a symlinked directory"),
 and a parked rejected calendar answer is skipped rather than reported as a broken proof (pinned by "seal status says nothing about a parked rejected calendar answer").
@@ -647,7 +647,7 @@ What the readers then say:
 `merkle verify` reports `ots: absent`,
 and `seal status` reports the bundle as `file: null`, `content: absent`, `signers: 1` with a dated `endorsed` (pinned by "seal status reports a --no-content-anchor seal as an undated-content endorsement").
 `--no-stamp` and `--no-content-anchor` are refused together
-— one skips step 5, the other runs it over the signatures only (pinned by "seal refuses --no-stamp together with --no-content-anchor, before touching anything").
+— one skips step 5, the other runs it over the signatures only (pinned by "seal refuses --no-stamp together with --no-content-anchor before touching anything").
 
 Worth having when a signature must outlive its key:
 after a compromise and revocation at time R, only a signature datable before R still means anything,

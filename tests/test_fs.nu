@@ -17,6 +17,7 @@ def cleanup [] {
 # under a name full of glob metacharacters.
 def make-tree [tmp_dir: path]: nothing -> path {
     let dir = $"($tmp_dir)/re[po] v*1?"
+
     mkdir $"($dir)/sub"
     "x" | save --force $"($dir)/alice.pub"
     "x" | save --force $"($dir)/.hidden.pub"
@@ -35,6 +36,7 @@ def basenames []: list<path> -> list<string> {
 @test
 def "listing works when the directory name holds glob metacharacters" [] {
     let dir = make-tree $in.tmp_dir
+
     assert equal (list-files $dir | basenames) [".hidden.pub" "alice.pub" "notes.txt"]
     assert equal (list-dirs $dir | basenames) ["sub"]
     # The returned paths must be usable as-is, not merely look right
@@ -42,8 +44,9 @@ def "listing works when the directory name holds glob metacharacters" [] {
 }
 
 @test
-def "suffix filters by literal name, recursive walks subdirectories" [] {
+def "suffix filters by literal name and recursive walks subdirectories" [] {
     let dir = make-tree $in.tmp_dir
+
     assert equal (list-files $dir --suffix ".pub" | basenames) [".hidden.pub" "alice.pub"]
     assert equal (list-files $dir --recursive --suffix ".pub" | basenames) [".hidden.pub" "alice.pub" "bob.pub"]
     assert equal (list-files $dir --recursive | length) 4
@@ -62,12 +65,15 @@ def "suffix filters by literal name, recursive walks subdirectories" [] {
 def "a copy that cannot be written raises instead of returning" [] {
     let tmp_dir = $in.tmp_dir
     let src = $"($tmp_dir)/src.bin"
+
     "payload" | save --force $src
     let locked = $"($tmp_dir)/locked"
+
     mkdir $locked
     ^chmod 500 $locked
 
     let failed = try { copy-file $src $"($locked)/dest.bin"; false } catch { true }
+
     ^chmod 700 $locked
 
     assert $failed "copy-file returned although the destination could not be written"
@@ -83,6 +89,7 @@ def "copying a file onto a hard link of itself keeps the bytes" [] {
     let tmp_dir = $in.tmp_dir
     let src = $"($tmp_dir)/src.bin"
     let alias = $"($tmp_dir)/alias.bin"
+
     (0..2000 | each { "payload" } | str join) | save --force $src
     ^ln $src $alias
 
@@ -94,8 +101,9 @@ def "copying a file onto a hard link of itself keeps the bytes" [] {
 }
 
 @test
-def "an absent directory lists as empty, not an error" [] {
+def "an absent directory lists as empty rather than an error" [] {
     let missing = $"($in.tmp_dir)/nope"
+
     assert equal (list-files $missing) []
     assert equal (list-files $missing --recursive --suffix ".pub") []
     assert equal (list-dirs $missing) []

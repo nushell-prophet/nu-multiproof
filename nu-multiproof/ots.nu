@@ -40,6 +40,7 @@ def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
     mut value = 0
     mut shift = 1
     mut pos = $offset
+
     loop {
         # Why: an out-of-range `bytes at` yields empty and `into int` reads it
         # as 0, so a truncated file would silently misparse. Fail with a clear
@@ -48,6 +49,7 @@ def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
             error make {msg: "truncated OTS file: varint runs past end of buffer"}
         }
         let b = $buf | bytes at $pos..($pos) | into int
+
         $value = $value + ($b mod 128) * $shift
         $pos = $pos + 1
         if ($b | bits and 0x80) == 0 { break }
@@ -60,9 +62,11 @@ def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
 def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
     let buf = $in
     let len = $buf | parse-varuint $offset
+
     if $len.value == 0 { return {bytes: 0x[] offset: $len.offset} }
     let start = $len.offset
     let end = $start + $len.value - 1
+
     if $end >= ($buf | bytes length) {
         error make {msg: "truncated OTS file: length-prefixed field runs past end of buffer"}
     }
@@ -89,7 +93,8 @@ def check-uri [raw: binary]: nothing -> string {
         error make {msg: "malformed OTS file: pending attestation URI exceeds 1000 bytes"}
     }
     let uri = $raw | decode utf-8
-    if not ($uri =~ '^[A-Za-z0-9\-._/:]*$') {
+
+    if $uri !~ '^[A-Za-z0-9\-._/:]*$' {
         error make {msg: "malformed OTS file: pending attestation URI holds characters the format does not allow"}
     }
     $uri
@@ -98,15 +103,18 @@ def check-uri [raw: binary]: nothing -> string {
 # Parse one operation given the tag byte already read
 def parse-op [tag: int offset: int]: binary -> record<op: record, offset: int> {
     let buf = $in
+
     match $tag {
         0x08 => { {op: {type: "sha256"} offset: $offset} }
         0x03 => { error make {msg: "RIPEMD-160 replay not supported"} }
         0xf0 => {
             let vb = $buf | parse-varbytes $offset
+
             {op: {type: "append" data: $vb.bytes} offset: $vb.offset}
         }
         0xf1 => {
             let vb = $buf | parse-varbytes $offset
+
             {op: {type: "prepend" data: $vb.bytes} offset: $vb.offset}
         }
         _ => { error make {msg: $"unknown op tag: ($tag)"} }
@@ -128,6 +136,7 @@ def parse-timestamp [offset: int]: binary -> any {
             error make {msg: "truncated OTS file: expected an op or attestation tag"}
         }
         let tag = $buf | bytes at $pos..($pos) | into int
+
         $pos = $pos + 1
 
         if $tag == $TAG_FORK {
@@ -135,8 +144,10 @@ def parse-timestamp [offset: int]: binary -> any {
         } else if $tag == $TAG_ATTESTATION {
             let att_start = $pos - 1
             let att_tag = $buf | bytes at $pos..($pos + 7)
+
             $pos = $pos + 8
             let vb = $buf | parse-varbytes $pos
+
             $pos = $vb.offset
 
             # Why the payload must be fully consumed: the reference
@@ -150,12 +161,14 @@ def parse-timestamp [offset: int]: binary -> any {
             let payload_len = $vb.bytes | bytes length
             let attestation = if $att_tag == $ATT_PENDING {
                 let inner = $vb.bytes | parse-varbytes 0
+
                 if $inner.offset != $payload_len {
                     error make {msg: "malformed OTS file: trailing bytes inside the pending attestation payload"}
                 }
                 {type: "pending" url: (check-uri $inner.bytes)}
             } else if $att_tag == $ATT_BITCOIN {
                 let height = $vb.bytes | parse-varuint 0
+
                 if $height.offset != $payload_len {
                     error make {msg: "malformed OTS file: trailing bytes inside the bitcoin attestation payload"}
                 }
@@ -167,6 +180,7 @@ def parse-timestamp [offset: int]: binary -> any {
             return {ops: $ops attestation: $attestation att_offset: $att_start offset: $pos}
         } else {
             let parsed = $buf | parse-op $tag $pos
+
             $ops = $ops ++ [$parsed.op]
             $pos = $parsed.offset
         }
@@ -178,16 +192,19 @@ def parse-ots []: binary -> record {
     let buf = $in
 
     let header = $buf | bytes at 0..30
+
     if $header != $HEADER_MAGIC {
         error make {msg: "not a valid OTS file: bad header magic"}
     }
 
     let ver = $buf | parse-varuint 31
+
     if $ver.value != 1 {
         error make {msg: $"unsupported OTS version: ($ver.value)"}
     }
 
     let hash_op_byte = $buf | bytes at ($ver.offset)..($ver.offset) | into int
+
     if $hash_op_byte != 0x08 {
         error make {msg: $"unsupported file hash algorithm: ($hash_op_byte)"}
     }
@@ -221,6 +238,7 @@ def parse-ots []: binary -> record {
 # Replay operations on binary hash input
 def replay-ops [ops: list]: binary -> binary {
     mut hash = $in
+
     for op in $ops {
         $hash = match $op.type {
             "sha256" => { $hash | hash sha256 | decode hex }
@@ -239,6 +257,7 @@ def replay-ops [ops: list]: binary -> binary {
 @example "read the attestation from a proof" { nu-multiproof ots info proof.ots | get attestation }
 export def info [ots_file: path]: nothing -> record {
     let parsed = open --raw $ots_file | into binary | parse-ots
+
     {
         # Why str lowercase: `encode hex` emits uppercase, but every persisted
         # hash in this project (tree-hashes.csv, proof files) is lowercase —
@@ -310,6 +329,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     # guard below exists to prevent. Expanding also settles a trailing slash and
     # `.`, which `path dirname` reads as one component too many.
     let into = if $into != null { $into | path expand --no-symlink } else { null }
+
     # Why the bundle must already exist AND be a real directory: --into means
     # "join this bundle", and a typo would otherwise create one — a directory
     # outside the `<stem>.<HASH8>` grammar, holding a proof no name-based reader
@@ -359,6 +379,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             $"($DEFAULT_CALENDAR)/digest"
             $merkle_tip
         )
+
         if $response.status != 200 {
             error make {msg: $"calendar returned status ($response.status)"}
         }
@@ -403,12 +424,14 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     # tag: 60". `upgrade` validates before writing for the same reason.
     let refusal = try {
         let reparsed = $ots | parse-ots
+
         if $reparsed.hash != $file_hash {
             "the assembled proof does not commit to this file's hash"
         } else if $reparsed.attestation.type == "unknown" {
             $"unknown attestation type ($reparsed.attestation.tag)"
         }
     } catch {|e| $e.msg }
+
     if $refusal != null {
         # Why the rejected bytes are still written: the digest already reached
         # the calendar, and the nonce that binds it to this file exists only in
@@ -424,6 +447,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
         # second each keep their nonce".
         mkdir $out_dir
         let rejected = $"($out_dir)/($stem).($hash_prefix).rejected-(date now | format date '%Y%m%d-%H%M%S')-($ots | hash sha256 | str substring 0..<8).ots"
+
         $ots | save --raw $rejected
         error make {
             msg: (
@@ -442,6 +466,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     }
 
     let bundle_dir = if $into != null { $into } else { bundle-dir-for $file $hash_prefix $out_dir }
+
     mkdir $bundle_dir
     let copy_path = (copy-path-for $file $bundle_dir)
     let ots_path = $"($bundle_dir)/($stem).ots"
@@ -505,8 +530,10 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     # in the bundle is what the incumbent proves separates the two: a superseded
     # proof of this same name matches nothing on disk and is archived as before.
     let now = date now | format date "%Y%m%d-%H%M%S"
+
     if ($ots_path | path exists) {
         let incumbent = try { open --raw $ots_path | into binary | parse-ots | get hash } catch { null }
+
         # An unreadable incumbent under --into cannot be placed, so it cannot be
         # shown to be safe to rename either. Refuse rather than file it under a
         # name that asserts it proves this content. Under derived naming the
@@ -524,6 +551,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             | where not ($it | path basename | str ends-with ".ots")
             | where (open --raw $it | hash sha256 | decode hex) == $incumbent
         }
+
         if ($orphans | is-not-empty) {
             error make {
                 msg: $"($ots_path) is the proof of ($orphans | first | path basename), which this stamp would take the name of"
@@ -532,6 +560,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
         }
         let previous_tag = open --raw $ots_path | into binary | hash sha256 | str substring 0..<8
         let archived = $"($bundle_dir)/($stem).($now)-($previous_tag).ots"
+
         mv $ots_path $archived
         print $"Archived previous: ($archived)"
     }
@@ -550,6 +579,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
         $ots | save --raw $ots_path
     } catch {|e|
         let parked = $"($bundle_dir)/($stem).($now)-($ots | hash sha256 | str substring 0..<8).ots"
+
         $ots | save --raw --force $parked
         error make {
             msg: (
@@ -601,6 +631,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     let bundled_sigs = $sigs | each {|sig|
             let sig_name = $sig | path basename
             let dest = $"($bundle_dir)/($sig_name)"
+
             # --force because refreshing this snapshot is the point (above).
             # The sig can already BE the snapshot: stamping a file that lives in
             # the bundle — `seal` dating an endorsement it filed here earlier —
@@ -635,6 +666,7 @@ def check-calendar-url [url: string]: nothing -> nothing {
         and $u.port == "" and $u.username == "" and $u.password == ""
         and $u.path in ["" "/"] and $u.query == "" and $u.fragment == ""
     )
+
     if not $allowed {
         error make {
             msg: $"refusing to contact the calendar named in the proof: ($url)"
@@ -679,6 +711,7 @@ export def upgrade [ots_file: path --response-file: path --calendar: string]: no
             --headers {Accept: "application/vnd.opentimestamps.v1"}
             $url
         )
+
         if $response.status == 404 {
             error make {msg: "timestamp not yet confirmed by Bitcoin — try again later"}
         }
@@ -700,13 +733,16 @@ export def upgrade [ots_file: path --response-file: path --calendar: string]: no
     # intact on any failure.
     let refusal = try {
         let type = ($upgraded | parse-ots).attestation.type
+
         if $type != "bitcoin" { $"upgraded attestation type is ($type), expected bitcoin" }
     } catch {|e| $e.msg }
+
     if $refusal != null {
         error make {msg: $"upgrade aborted, original untouched: ($refusal)"}
     }
 
     let tmp_out = $"($ots_file).new"
+
     $upgraded | save --raw --force $tmp_out
     mv $tmp_out $ots_file
     {status: "upgraded" path: ($ots_file | cwd-relative)}
@@ -792,6 +828,7 @@ export def verify [
     let content_verified = if $file != null {
         (open --raw $file | hash sha256 | decode hex) == $parsed.hash
     } else { null }
+
     if $content_verified == false {
         return (emit-verify ($base | merge {content_verified: false error: $"content mismatch: ($file) is not what the proof commits to"}) $fail)
     }
@@ -813,6 +850,7 @@ export def verify [
     # inside this try it would read as "invalid proof". Only the merkle-root
     # binding is left to fail here, and that mismatch is about the proof.
     let checked = try { check-block-header $header_bytes $expected_root $block_hash } catch {|e| {error: $e.msg} }
+
     if ($checked.error? != null) {
         return (emit-verify ($base | merge {block_hash: $block_hash sources_confirmed: $confirmed error: $checked.error}) $fail)
     }

@@ -11,7 +11,7 @@ const RSA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDExnwUVhsIh66w1OIGHFyr0prionx
 # The principal each of those keys renders under: sha256 of its key blob.
 # Spelled out rather than computed here — a test that asks the module for its own
 # expectation checks nothing. The values are pinned against `ssh-keygen -lf` in
-# tests/test_pubkey.nu "fingerprint is the digest ssh-keygen prints, written as
+# tests/test_pubkey.nu "fingerprint is the digest ssh-keygen prints written as
 # hex".
 const ED25519_FP = "b610a91de8fa99e224f6b2e7fb6bb8c9e8f0303f8d72d14e5a494ab8d1c68011"
 const RSA_FP = "4faa889e999e5fa3d43e47d90b487260526594804a5048c067be20748f16b88a"
@@ -27,12 +27,14 @@ def cleanup [] {
 }
 
 @test
-def "one line per key: the principal is the key fingerprint, not the file name" [] {
+def "one line per key with the key fingerprint as the principal rather than the file name" [] {
     let dir = $in.tmp_dir
+
     $"($ED25519) alice@laptop\n" | save --force $"($dir)/alice.pub"
     $"($RSA) bob@desktop\n" | save --force $"($dir)/bob.pub"
 
     let body = allowed-signers-body $dir
+
     assert equal ($body | lines | sort) [
         $"($RSA_FP) namespaces=\"file\" ($RSA)"
         $"($ED25519_FP) namespaces=\"file\" ($ED25519)"
@@ -63,10 +65,13 @@ def "a hostile pubkey file name writes nothing of itself into the trust list" []
         "ali\u{200b}ce"
         "ali\u{202e}ce"
     ]
+
     for stem in $stems {
         let dir = mktemp --directory
+
         $"($ED25519)\n" | save --force $"($dir)/($stem).pub"
         let body = try { allowed-signers-body $dir } catch {|e| $"threw: ($e.msg)" }
+
         rm --recursive --force $dir
         assert equal ($body | lines) [
             $"($ED25519_FP) namespaces=\"file\" ($ED25519)"
@@ -88,11 +93,13 @@ def "a hostile pubkey file name writes nothing of itself into the trust list" []
 @test
 def "a file name holding a control byte fails loudly rather than dropping a line" [] {
     let dir = $in.tmp_dir
+
     # No slash in the injected text: it has to survive as one file name.
     $"($ED25519)\n" | save --force $"($dir)/alice\nmallory namespaces=\"file\" ssh-ed25519 AAAA\n#.pub"
     $"($RSA)\n" | save --force $"($dir)/bob.pub"
 
     let outcome = try { allowed-signers-body $dir; "rendered" } catch {|e| $e.msg }
+
     assert ($outcome != "rendered") $"a name `ls` cannot round-trip was silently skipped: ($outcome)"
     assert ($outcome | str contains "mallory") $"the error must name the file to fix, got: ($outcome)"
 }
@@ -102,18 +109,21 @@ def "a file name holding a control byte fails loudly rather than dropping a line
 # pubkeys/ and the affected signer just reads as unrecognized. Fail where the
 # broken file is, naming it.
 @test
-def "a malformed key in the directory is an error, not a skipped line" [] {
+def "a malformed key in the directory is an error rather than a skipped line" [] {
     let dir = $in.tmp_dir
+
     $"($ED25519)\n" | save --force $"($dir)/alice.pub"
     $"($ED25519)\n($RSA)\n" | save --force $"($dir)/two-lines.pub"
 
     let outcome = try { allowed-signers-body $dir; "rendered" } catch {|e| $e.msg }
+
     assert ($outcome | str contains "two-lines.pub") $"error should name the broken file, got: ($outcome)"
 }
 
 @test
 def "a key that is not a key is an error too" [] {
     let dir = $in.tmp_dir
+
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITAMPERED tampered\n" | save --force $"($dir)/mallory.pub"
     assert error {|| allowed-signers-body $dir }
 }
@@ -146,6 +156,7 @@ def "ssh-keygen skips a malformed entry rather than failing" [] {
         [$bad $good] | str join "\n" | save --force $signers_file
 
         let fp = (do { ^ssh-keygen -Y find-principals -s $"($doc).sig" -f $signers_file } | complete)
+
         assert equal $fp.exit_code 0 $"a bad line took the whole file down: ($bad | str substring 0..40)"
         assert equal ($fp.stdout | lines | last) "alice"
         # the only notice of the broken entry, and `complete` is where it dies
@@ -156,6 +167,7 @@ def "ssh-keygen skips a malformed entry rather than failing" [] {
                 open --raw $doc | ^ssh-keygen -Y verify -f $signers_file -I alice -n file -s $"($doc).sig"
             } | complete
         )
+
         assert equal $verified.exit_code 0
     }
 }

@@ -124,8 +124,10 @@ def blank-strings [--prose]: string -> string {
     mut depth = 0 # paren nesting inside an interpolated string's body
     mut escaped = false
     mut prev = ""
+
     for c in ($in | split chars) {
         let in_code = $interp and ((not $prose) or $depth > 0)
+
         if $delim == "" {
             # Backticks are a string delimiter too — the apostrophe rule below
             # has to write both other quotes, so its own patterns use them.
@@ -171,6 +173,7 @@ def violations [text: string]: nothing -> list<record> {
         # ~99% of lines; the verdict is still decided on the blanked text —
         # `let x = "--all"` must not excuse the bare `ls` beside it.
         let candidates = $RULES | where $line.text =~ $it.pattern
+
         if ($candidates | is-empty) { [] } else {
             let code = $line.text | blank-strings
             # Excuses and the trailing-comment split are decided on the copy
@@ -180,12 +183,18 @@ def violations [text: string]: nothing -> list<record> {
             # from every rule — and keeping the interpolation's prose lets
             # `$"using --all"` excuse a bare `ls` beside it.
             let excuse = $line.text | blank-strings --prose
-            let cut = $excuse | split row " #" | first | split chars | length
+            let cut = $excuse
+                | split row " #"
+                | first
+                | split chars
+                | length
             let clip = {|s| $s | split chars | take $cut | str join }
+
             $candidates | each {|rule|
                 let subject = do $clip (if $rule.raw { $line.text } else { $code })
                 let hit = $subject =~ $rule.pattern
                 let excused = $rule.unless != null and (do $clip $excuse | str contains $rule.unless)
+
                 if $hit and not $excused {
                     {line: $line.no rule: $rule.name text: ($line.text | str trim)}
                 }
@@ -216,19 +225,22 @@ def "known defect classes are absent from the sources and tests" [] {
     let files = [$REPO_ROOT] ++ ($SCAN_DIRS | each {|d| $REPO_ROOT | path join $d })
         | each {|d|
             let here = scanned-files $d
+
             assert ($here | is-not-empty) $"no .nu files found under ($d) — is it still there?"
             $here
         }
         | flatten
+
     assert (($files | length) >= 35) $"only ($files | length) .nu files found under ($REPO_ROOT)"
 
-    let found = $files | each {|f|
-            violations (open --raw $f) | each {|v| $v | insert file ($f | path basename) }
-        } | flatten
+    let found = $files
+        | each {|f| violations (open --raw $f) | insert file ($f | path basename) }
+        | flatten
 
     let report = $found
         | each {|v| $"  ($v.file):($v.line) [($v.rule)] ($v.text)" }
         | str join (char newline)
+
     assert equal $found [] $"lint violations:(char newline)($report)"
 }
 
@@ -239,9 +251,11 @@ def "known defect classes are absent from the sources and tests" [] {
 def "every rule matches its offender and clears its allowed form" [] {
     for rule in $RULES {
         let on_offender = violations $rule.offender | where rule == $rule.name
+
         assert ($on_offender | is-not-empty) $"rule '($rule.name)' does not match its own offender sample"
 
         let on_allowed = violations $rule.allowed | where rule == $rule.name
+
         assert ($on_allowed | is-empty) $"rule '($rule.name)' rejects its own allowed sample"
 
         # The excuse token planted inside a `$"…"` on the same line: prose, so
@@ -250,6 +264,7 @@ def "every rule matches its offender and clears its allowed form" [] {
         # find this one.
         if $rule.unless != null {
             let on_interp = violations $rule.interp_excused | where rule == $rule.name
+
             assert ($on_interp | is-not-empty) $"rule '($rule.name)': its unless token inside an interpolated string excused the offender"
         }
     }

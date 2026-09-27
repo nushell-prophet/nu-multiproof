@@ -66,7 +66,7 @@ use ots.nu
 # — could not tell "the tracked files are the sealed ones" from "everything the
 # sender shipped folds to the sealed CID". The flag lets a verifier choose; the
 # field lets it check what it got.
-def dir-enumeration [target: path, bundle: bool]: nothing -> string {
+def dir-enumeration [target: path bundle: bool]: nothing -> string {
     if $bundle { return "walk" }
     # Why --show-toplevel compared against the target, and not
     # --is-inside-work-tree: that answers yes for any directory *under* a work
@@ -84,6 +84,7 @@ def dir-enumeration [target: path, bundle: bool]: nothing -> string {
         $toplevel.exit_code == 0
         and ($toplevel.stdout | str trim | path expand) == ($target | path expand)
     )
+
     if $at_repo_root { "git-index" } else { "walk" }
 }
 
@@ -109,7 +110,7 @@ def dir-enumeration [target: path, bundle: bool]: nothing -> string {
 # null there restores the exact hole this closes, and an attacker can ship a
 # hand-built manifest as easily as a repo. Nothing is enumerated for it, so it
 # reports no enumeration either.
-def derive-dir-cid [target: path, leaf: record, bundle: bool]: nothing -> record {
+def derive-dir-cid [target: path leaf: record bundle: bool]: nothing -> record {
     if $leaf.content_cid == "" { return {verdict: "unverifiable" enumeration: null} }
     let enumeration = dir-enumeration $target $bundle
     # A directory CID is a function of the whole subtree, so this reads every
@@ -129,8 +130,10 @@ def derive-dir-cid [target: path, leaf: record, bundle: bool]: nothing -> record
     # unreadable file anywhere under the target report an untouched proof as
     # tampered — the very thing the paragraph above calls a defect.
     let tree = content-tree $target --lenient --walk=($enumeration == "walk") --under $leaf.filepath
+
     if ($tree.problems | is-not-empty) { return {verdict: $tree.problems.0.status enumeration: $enumeration} }
     let node = $tree.nodes | get --optional $leaf.filepath
+
     if $node == null { return {verdict: "missing" enumeration: $enumeration} }
     {verdict: (($node | node-cid) == $leaf.content_cid) enumeration: $enumeration}
 }
@@ -154,6 +157,7 @@ export def write-root [
     let target = repo-root $repo
     let manifest = manifest-path $target
     let leaves = load-leaves $manifest
+
     # Why refuse a no-file manifest here, at the one place a root is minted:
     # the root of a tree with no tracked files is the same 64 hex for every
     # empty repo — sha256 of nothing for zero rows, and a constant
@@ -203,6 +207,7 @@ export def write-root [
     } else {
         {seq: ($superseded.seq + 1) prev: $superseded.root beacon: $beacon}
     }
+
     root-statement $root_hex $counter.seq $counter.prev $counter.beacon | save --raw --force $out
     {root: $root_hex seq: $counter.seq prev: $counter.prev beacon: $counter.beacon path: ($out | cwd-relative) leaves: ($leaves | length)}
 }
@@ -243,6 +248,7 @@ export def prove [
     # reject-never-normalize rule: the leaf written into the proof below still
     # comes from the matched row, never from this argument.
     let key = $filepath | str trim --right --char "/"
+
     # `/` and `//` trim to nothing, and the not-in-the-manifest throw below would
     # then name nothing either — a message that reads as if the argument were
     # missing rather than absolute. The repo root is the "." row, never "/".
@@ -251,6 +257,7 @@ export def prove [
     }
     let leaves = load-leaves (manifest-path $target)
     let hit = $leaves | enumerate | where item.filepath == $key
+
     if ($hit | is-empty) {
         error make {msg: $"($key) is not in the manifest — see `tree-hashes --echo` for listed paths"}
     }
@@ -281,6 +288,7 @@ export def prove [
     # $key, not $filepath: a trailing slash here would write the hidden
     # inclusion-proofs/sub/.multiproof.json instead of sub.multiproof.json.
     let out = inclusion-proofs-dir $target | path join $"($key).multiproof.json"
+
     mkdir ($out | path dirname)
     $proof | to json --indent 2 | save --raw --force $out
     $out | cwd-relative
@@ -384,13 +392,16 @@ export def verify [
     # the repo the content lives in, and the trust list is the verifier's
     # anchor, not the seal's property.
     let trusted_dir = $pubkeys_dir | default (pubkeys-dir $target)
+
     if $signer != null { check-signer-known $signer $trusted_dir }
 
     let proof = open --raw $proof_file | from json
+
     if not ($proof | describe | str starts-with "record") {
         error make {msg: $"not a multiproof: ($proof_file) holds ($proof | describe) JSON, not a record"}
     }
     let schema = $proof | get --optional schema | default "missing"
+
     if $schema != $MERKLE_SCHEMA {
         error make {msg: $"unsupported proof schema: ($schema) — expected ($MERKLE_SCHEMA)"}
     }
@@ -409,6 +420,7 @@ export def verify [
     # "a proof of an older seal verifies against that snapshot of the seal".
     let seal_dir = $multiproofs_dir | default (multiproofs-dir $target)
     let root_file = $seal_dir | path join $MERKLE_ROOT_FILE
+
     if not ($root_file | path exists) {
         error make {msg: (if $multiproofs_dir == null {
             $"root statement not found: ($root_file) — run `merkle write-root` or `seal`"
@@ -425,6 +437,7 @@ export def verify [
     # token from a checked one would read a green verify as a dated claim.
     # `beacon verify` is the checker. Same rule `seal status` follows for names.
     let beacon_report = if $signed_statement.beacon == $BEACON_NONE { "absent" } else { $signed_statement.beacon }
+
     if $proof.root != $signed_root {
         error make {msg: $"proof is for a different seal: proof commits to ($proof.root), signed root is ($signed_root)"}
     }
@@ -482,6 +495,7 @@ export def verify [
         # catalogue — folded into null they would yield `valid: true`, misleading
         # consumers keying only on .valid.
         let resolved = resolve-leaf-file $target $proof.leaf.filepath
+
         if $resolved != "ok" {
             $resolved
         } else {
@@ -530,6 +544,7 @@ export def verify [
         # cwd it was made in — and this reads the bytes behind it. The expand
         # resolves against that same cwd, so it is the inverse, not a guess.
         let sig_hash = open --raw ($s.sig | path expand) | hash sha256
+
         pick-stamp ($stamps | where hash == $sig_hash) | insert signer $s.signer
     }
 
@@ -575,6 +590,7 @@ export def verify [
     print $"structure: (if $structure_valid { 'ok' } else { 'FAIL' }) \(($proof.path | length)-step path\)"
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
     let enumerated_by = if $content_enumeration == null { "" } else { $" \(via ($content_enumeration)\)" }
+
     print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (the row commits to no content)' })($enumerated_by)"
     print $"ots:       ($ots_status.status)"
     print $"beacon:    ($beacon_report) \(as stated — `beacon verify` checks it against Bitcoin\)"

@@ -17,6 +17,7 @@ const GENESIS_TIME = 2009-01-03T18:15:05Z
 
 def statement-with [dir: path beacon: string]: nothing -> path {
     let file = $"($dir)/tree-root.txt"
+
     root-statement ("beacon test" | hash sha256) 0 "genesis" $beacon | save --raw --force $file
     $file
 }

@@ -49,14 +49,17 @@ const KEY_TYPES = [
 # and on a key whose bytes are not the ones OpenSSH writes for it.
 export def canonical []: string -> string {
     let line = $in | str trim
+
     if ($line | lines | length) > 1 {
         error make {msg: "not a single-line SSH public key"}
     }
     let parts = $line | split row --regex '\s+'
+
     if ($parts | length) < 2 {
         error make {msg: "does not look like an SSH public key (`<type> <base64> [comment]`)"}
     }
     let key_type = $parts.0
+
     if $key_type not-in $KEY_TYPES {
         error make {msg: $"not a known SSH public key type: ($key_type)"}
     }
@@ -67,6 +70,7 @@ export def canonical []: string -> string {
     # that will actually have to load it.
     let candidate = $"($key_type) ($parts.1)"
     let reserialized = openssh-reserialize $candidate
+
     if $reserialized != $candidate {
         error make {
             msg: (
@@ -98,7 +102,7 @@ export def canonical []: string -> string {
 # filename, in an allowed_signers line and on a command line beats two forms to
 # keep in sync — and hex is what every other digest in this project is written
 # as. `ssh-keygen -lf` prints the same bytes; the two are pinned against each
-# other by tests/test_pubkey.nu "fingerprint is the digest ssh-keygen prints,
+# other by tests/test_pubkey.nu "fingerprint is the digest ssh-keygen prints
 # written as hex".
 #
 # Why `canonical` first, rather than hashing whatever arrives: the digest is
@@ -110,7 +114,12 @@ export def canonical []: string -> string {
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOi7LinplEQewM3/l8Ol9rE85+YwhvLPKf+ZUUf36Xuf" | nu-multiproof pubkey fingerprint
 } --result "b610a91de8fa99e224f6b2e7fb6bb8c9e8f0303f8d72d14e5a494ab8d1c68011"
 export def fingerprint []: string -> string {
-    $in | canonical | str trim | split row " " | get 1 | decode base64 | hash sha256
+    canonical
+    | str trim
+    | split row " "
+    | get 1
+    | decode base64
+    | hash sha256
 }
 
 # The key line as OpenSSH itself would write it, or an error naming why it

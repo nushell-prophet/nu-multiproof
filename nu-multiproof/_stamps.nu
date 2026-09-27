@@ -30,6 +30,7 @@ export def scan-stamps [ots_dir: path --recursive]: nothing -> list<record> {
     } else {
         list-dirs $ots_dir | each {|d| list-files $d --suffix ".ots" } | flatten
     }
+
     # Rejected calendar answers are skipped rather than parsed: they are the one
     # `.ots` this repo writes that is deliberately NOT a proof (README,
     # "rejected"), so parsing each one only to print "skipping unparsable" is a
@@ -41,6 +42,7 @@ export def scan-stamps [ots_dir: path --recursive]: nothing -> list<record> {
             print $"note: skipping unparsable OTS file ($f): ($e.msg)"
             null
         }
+
         # height: the Bitcoin block the attestation binds to, null while pending.
         # It is the only time this proof carries — a block's wall-clock time lives
         # in its header, which no .ots holds, so a date needs `ots verify` and the
@@ -72,6 +74,7 @@ export def pick-stamp [stamps: list]: nothing -> record<status: string, ots: any
     } else {
         $stamps | first
     }
+
     {
         status: (if $pick.type == "bitcoin" { "anchored" } else { "pending" })
         ots: $pick.file

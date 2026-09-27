@@ -23,5 +23,6 @@ export def 'main test' [--network --no-fail --threads: int = 1] {
     use ../nutest/nutest
 
     let path = if $network { "tests-network/" } else { "tests/" }
+
     nutest run-tests --path $path --strategy {threads: $threads} --fail=(not $no_fail)
 }

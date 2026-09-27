@@ -31,6 +31,7 @@ export def freeze-bundle [file: path out_dir: path]: nothing -> path {
     # is what emits it that way.
     let dir = bundle-dir-for $file ($file_hash | encode hex | str substring 0..<8) $out_dir
     let copy = copy-path-for $file $dir
+
     check-frozen-copy $copy $file_hash "the frozen copy there is different content that shares the 8-hex prefix"
     mkdir $dir
     write-frozen-copy $file $file_hash $copy
@@ -101,6 +102,7 @@ export def check-frozen-copy [
 # because `($stem).($ext)` collapsed to "README." when `$ext` was empty.
 export def copy-path-for [file: path bundle_dir: path]: nothing -> string {
     let parsed = $file | path parse
+
     if ($parsed.extension | is-empty) {
         $"($bundle_dir)/($parsed.stem)"
     } else {
@@ -111,7 +113,14 @@ export def copy-path-for [file: path bundle_dir: path]: nothing -> string {
 # A raw header's block hash: double-SHA256, byte-reversed into the display
 # order explorers and block heights use.
 export def block-hash-of [header: binary]: nothing -> string {
-    $header | hash sha256 | decode hex | hash sha256 | decode hex | bytes reverse | encode hex | str lowercase
+    $header
+    | hash sha256
+    | decode hex
+    | hash sha256
+    | decode hex
+    | bytes reverse
+    | encode hex
+    | str lowercase
 }
 
 # The `time` field of a raw 80-byte header (bytes 68..71, little-endian).
@@ -130,6 +139,7 @@ export def header-time [header: binary]: nothing -> datetime {
     # Those four bytes hold a Unix time in SECONDS. `into datetime` reads a bare
     # integer as nanoseconds, so scale first, then move the result to UTC.
     let unix_seconds = $header | bytes at 68..71 | into int --endian little
+
     $unix_seconds * 1_000_000_000 | into datetime | date to-timezone UTC
 }
 
@@ -139,7 +149,7 @@ export def header-time [header: binary]: nothing -> datetime {
 # fetched, so an answer that is not hex, not 80 bytes, or hashes to something
 # else can only be this explorer's fault. Each check throws naming the
 # explorer — none is a verdict about the proof. Pinned by tests/test_ots.nu
-# "a corrupted header blames the explorer, not the proof".
+# "a corrupted header blames the explorer and not the proof".
 export def check-fetched-header [
     src: string # explorer base URL, named in every refusal
     block_hash: string # cross-checked block hash (display hex)
@@ -148,10 +158,12 @@ export def check-fetched-header [
     let bytes = try { $header_hex | decode hex } catch {
         error make {msg: $"explorer ($src) answered with a block header that is not hex — cannot verify"}
     }
+
     if ($bytes | bytes length) != 80 {
         error make {msg: $"explorer ($src) answered with ($bytes | bytes length) bytes where a block header is 80 — cannot verify"}
     }
     let hashes_to = block-hash-of $bytes
+
     if $hashes_to != ($block_hash | str lowercase) {
         error make {msg: $"explorer ($src) answered with a header that hashes to ($hashes_to), not the cross-checked ($block_hash) — cannot verify"}
     }
@@ -180,10 +192,12 @@ export def check-block-header [
         error make {msg: $"expected an 80-byte header, got ($header | bytes length) bytes"}
     }
     let block_hash = block-hash-of $header
+
     if $block_hash != ($claimed_hash | str lowercase) {
         error make {msg: $"header hashes to ($block_hash), not the looked-up ($claimed_hash)"}
     }
     let header_root = $header | bytes at 36..67
+
     if $header_root != $expected_root {
         error make {msg: $"merkle root mismatch: header commits to ($header_root | encode hex | str lowercase), proof replays to ($expected_root | encode hex | str lowercase)"}
     }

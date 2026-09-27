@@ -71,6 +71,7 @@ export def latest [
     # claim, not the bound — see _ots-helpers.nu header-time. The height is the
     # fact: its hash could not have been named before that block was mined.
     let header = fetch-header ($looked_up.sources_confirmed | first) $looked_up.hash
+
     {
         token: (beacon-token $height $looked_up.hash)
         height: $height
@@ -119,6 +120,7 @@ export def verify [
     check-min-sources $min_sources
     let parsed = parse-root-statement $statement
     let beacon = parse-beacon $parsed.beacon
+
     if $beacon == null {
         error make {
             msg: $"($statement) carries no beacon \(($BEACON_NONE)\) — there is no lower bound to check"
@@ -145,9 +147,11 @@ export def verify [
         # fetch-header) throws if the explorer's bytes are not that block's
         # header — an outage, not a verdict.
         let header = fetch-header ($looked_up.sources_confirmed | first) $looked_up.hash
+
         {valid: true block_time: (header-time $header)}
     } else {
         {error: $"the statement's beacon names block ($beacon.height) as ($beacon.hash), but the explorers agree it is ($looked_up.hash) — a reorged or fabricated bound either way"}
     }
+
     emit-verify ($stated | merge $verdict) $fail
 }

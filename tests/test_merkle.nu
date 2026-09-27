@@ -29,6 +29,7 @@ def vector-leaf-hashes []: nothing -> list<binary> {
     ["" "00" "10" "2021" "3031" "40414243" "5051525354555657" "606162636465666768696a6b6c6d6e6f"]
     | each {|h|
         let input = if $h == "" { 0x[] } else { $h | decode hex }
+
         0x[00] | bytes add --end $input | hash sha256 --binary
     }
 }
@@ -68,6 +69,7 @@ const GOLDEN_MINI_ROOT = "fffe0c09f1f3a7d030f6246c4b3bbdb07727cfc26e1b0433f57c07
 # Git repo whose manifest has rows README.md, sub, sub/inner.txt (n=3).
 def make-test-repo [tmp_dir: path]: nothing -> path {
     let repo = $"($tmp_dir)/repo"
+
     mkdir $"($repo)/sub"
     ^git -C $repo init -q
     "hello\n" | save --force $"($repo)/README.md"
@@ -83,6 +85,7 @@ def make-test-repo [tmp_dir: path]: nothing -> path {
 @test
 def "mth reproduces the RFC 6962 known-answer vectors" [] {
     let leaves = vector-leaf-hashes
+
     # Published constants from the CT reference test data (MTH over the first
     # n leaf inputs). Matching them means an independent RFC 6962
     # implementation reproduces our roots.
@@ -97,10 +100,12 @@ def "mth reproduces the RFC 6962 known-answer vectors" [] {
 def "audit path folds to the root for every leaf of a 7-leaf tree" [] {
     let leaves = vector-leaf-hashes | first 7
     let root = mth $leaves | as-hex
+
     for index in 0..6 {
         let steps = audit-path $leaves $index
-            | each {|step| {side: $step.side hash: ($step.hash | as-hex)} }
+            | update hash { as-hex }
         let folded = fold-path ($leaves | get $index) $steps | as-hex
+
         assert equal $folded $root $"leaf ($index) did not fold to the root"
     }
 }
@@ -130,13 +135,15 @@ const CT_PATH_5_D8 = [
 ]
 
 @test
-def "CT reference audit paths for 8 leaves, sides included" [] {
+def "CT reference audit paths for 8 leaves including the sides" [] {
     let leaves = vector-leaf-hashes
+
     assert equal (mth $leaves | as-hex) $CT_ROOT_D8
 
     # Builder side: our path must equal the published one, step for step
-    let path_0 = audit-path $leaves 0 | each {|s| {side: $s.side hash: ($s.hash | as-hex)} }
-    let path_5 = audit-path $leaves 5 | each {|s| {side: $s.side hash: ($s.hash | as-hex)} }
+    let path_0 = audit-path $leaves 0 | update hash { as-hex }
+    let path_5 = audit-path $leaves 5 | update hash { as-hex }
+
     assert equal $path_0 $CT_PATH_0_D8
     assert equal $path_5 $CT_PATH_5_D8
 
@@ -147,8 +154,9 @@ def "CT reference audit paths for 8 leaves, sides included" [] {
 }
 
 @test
-def "single-leaf tree: empty path, root is the leaf hash" [] {
+def "a single-leaf tree has an empty path and the leaf hash as its root" [] {
     let leaves = vector-leaf-hashes | first 1
+
     assert equal (audit-path $leaves 0) []
     assert equal (fold-path ($leaves | first) [] | as-hex) (mth $leaves | as-hex)
 }
@@ -156,15 +164,18 @@ def "single-leaf tree: empty path, root is the leaf hash" [] {
 # --- builder over the manifest ---
 
 @test
-def "golden root for the fixed mini-manifest, statement byte-exact" [] {
+def "golden root for the fixed mini-manifest with a byte-exact statement" [] {
     let tmp_dir = $in.tmp_dir
+
     write-mini-manifest $tmp_dir
 
     let result = merkle write-root --repo $tmp_dir
+
     assert equal $result.root $GOLDEN_MINI_ROOT
     assert equal $result.leaves 4
     # Signature and OTS cover exact bytes: one statement line, one "\n"
     let statement = open --raw $"($tmp_dir)/multiproofs/tree-root.txt" | into string
+
     assert equal $statement $"multiproof-merkle-v4 ($GOLDEN_MINI_ROOT) 0 genesis none\n"
     assert equal (parse-root-statement $"($tmp_dir)/multiproofs/tree-root.txt") {root: $GOLDEN_MINI_ROOT seq: 0 prev: "genesis" beacon: "none"}
 }
@@ -183,6 +194,7 @@ def "the root-CID row is a covered leaf" [] {
         {filepath: "." content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: $cid}
         {filepath: "z.txt" content_sha256: ("one" | hash sha256) content_git_sha1: (fake-sha1 "two") content_git_sha256: ("two" | hash sha256) content_cid: ""}
     ]
+
     mkdir $"($tmp_dir)/multiproofs"
     $rows | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
     let with_cid = merkle write-root --repo $tmp_dir
@@ -190,23 +202,30 @@ def "the root-CID row is a covered leaf" [] {
     assert equal $with_cid.leaves 2
     # "." is a provable row like any other
     let proof = open (merkle prove "." --repo $tmp_dir)
+
     assert equal $proof.leaf.content_cid $cid
 
     # Swap only the root CID: a different root means the signature over the old
     # root no longer covers this manifest.
-    $rows | update 0 {|r| $r | update content_cid $other_cid } | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
+    $rows
+    | update 0 { update content_cid $other_cid }
+    | to csv
+    | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
     let swapped = merkle write-root --repo $tmp_dir
+
     assert not ($swapped.root == $with_cid.root) "changing the root-CID row left the merkle root unchanged"
 }
 
 @test
 def "an empty manifest is refused - the empty root is constant and replayable" [] {
     let tmp_dir = $in.tmp_dir
+
     mkdir $"($tmp_dir)/multiproofs"
     "filepath,content_sha256,content_git_sha1,content_git_sha256,content_cid\n"
-        | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
+    | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
     let err = try { merkle write-root --repo $tmp_dir; null } catch {|e| $e.msg }
+
     assert ($err != null) "an empty manifest minted a root"
     assert ($err | str contains "lists no files")
     # Nothing written: a signature over e3b0c442… would carry no repo in it
@@ -221,11 +240,13 @@ def "an empty manifest is refused - the empty root is constant and replayable" [
 def "an empty git repo cannot mint a root - its one-row manifest is constant too" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/empty"
+
     mkdir $repo
     ^git -C $repo init -q
     tree-hashes --repo $repo
 
     let err = try { merkle write-root --repo $repo; null } catch {|e| $e.msg }
+
     assert ($err != null) "an empty repo minted a root"
     assert ($err | str contains "lists no files")
     assert not ($"($repo)/multiproofs/tree-root.txt" | path exists)
@@ -234,13 +255,16 @@ def "an empty git repo cannot mint a root - its one-row manifest is constant too
 @test
 def "duplicate filepaths are a hard error - equivocation guard" [] {
     let tmp_dir = $in.tmp_dir
+
     mkdir $"($tmp_dir)/multiproofs"
     let row = {filepath: "a.txt" content_sha256: ("one" | hash sha256) content_git_sha1: "" content_git_sha256: "" content_cid: ""}
+
     [$row $row] | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
     # Not bare `assert error` because: it stays green on ANY error (e.g.
     # manifest-not-found) — pin the equivocation message
     let err = try { merkle write-root --repo $tmp_dir; null } catch {|e| $e.msg }
+
     assert ($err != null) "duplicate filepaths were accepted"
     assert ($err | str contains "duplicate filepaths")
 }
@@ -248,15 +272,18 @@ def "duplicate filepaths are a hard error - equivocation guard" [] {
 @test
 def "newline in filepath is rejected - leaf forgery guard" [] {
     let tmp_dir = $in.tmp_dir
+
     mkdir $"($tmp_dir)/multiproofs"
     # A tracked file named like a serialized record would otherwise inject
     # attacker-chosen hash fields into the leaf bytes
     let evil = $"evil\n(('x' | hash sha256))\n((fake-sha1 'y'))\n(('z' | hash sha256))\n"
+
     [{filepath: $evil content_sha256: ("one" | hash sha256) content_git_sha1: "" content_git_sha256: "" content_cid: ""}]
-        | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
+    | to csv | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
 
     # Pin the validate-leaf message so an unrelated error can't keep this green
     let err = try { merkle write-root --repo $tmp_dir; null } catch {|e| $e.msg }
+
     assert ($err != null) "forged filepath was accepted"
     assert ($err | str contains "control bytes")
 }
@@ -271,6 +298,7 @@ def "a filepath escaping the repo is rejected - containment guard" [] {
             validate-leaf {filepath: $bad content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: ""}
             null
         } catch {|e| $e.msg }
+
         assert ($err != null) $"escaping filepath was accepted: ($bad)"
         assert ($err | str contains "must stay inside the repo")
     }
@@ -281,7 +309,7 @@ def "a filepath escaping the repo is rejected - containment guard" [] {
 }
 
 @test
-def "uppercase hex in a leaf is rejected, not normalized" [] {
+def "uppercase hex in a leaf is rejected and never normalized" [] {
     assert error {||
         validate-leaf {
             filepath: "a.txt"
@@ -300,6 +328,7 @@ def "malformed root statements are rejected" [] {
     let prev = "zero" | hash sha256
 
     let beacon = $"bitcoin:964771:($root)"
+
     for bad in [
         $"multiproof-merkle-v4 ($root) 1 ($prev) none\n\n" # extra trailing newline
         $"multiproof-merkle-v4 ($root) 1 ($prev) none" # missing newline
@@ -333,12 +362,14 @@ def "read-root returns the statement as data" [] {
     let written = merkle write-root --repo $repo
 
     let snapshot = $"($tmp_dir)/snap-tree-root.txt"
+
     cp $"($repo)/multiproofs/tree-root.txt" $snapshot
     assert equal (merkle read-root $snapshot) {root: $written.root seq: 0 prev: "genesis" beacon: "none"}
 
     # The one place a missing statement is reported, so the consumer walking
     # seals/ never needs a check of its own.
     let err = try { merkle read-root $"($tmp_dir)/absent.txt"; null } catch {|e| $e.msg }
+
     assert str contains $err "root statement not found"
 }
 
@@ -348,6 +379,7 @@ def "the first root statement is genesis at sequence 0" [] {
     let repo = make-test-repo $tmp_dir
 
     let first = merkle write-root --repo $repo
+
     assert equal $first.seq 0
     assert equal $first.prev "genesis"
 }
@@ -364,10 +396,12 @@ def "re-deriving an unchanged tree keeps the beacon it was sealed under" [] {
     let first_beacon = "bitcoin:0:000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
 
     let first = merkle write-root --repo $repo --beacon $first_beacon
+
     assert equal $first.beacon $first_beacon
     let bytes = open --raw $statement
 
     let again = merkle write-root --repo $repo --beacon "bitcoin:800000:00000000000000000002a7c4c1e48d76c5a37902165a270156b7a8d72728a054"
+
     assert equal $again.beacon $first_beacon
     assert equal (open --raw $statement) $bytes "an unchanged tree rewrote its statement"
 }
@@ -376,6 +410,7 @@ def "re-deriving an unchanged tree keeps the beacon it was sealed under" [] {
 def "a new root carries the beacon it was minted with" [] {
     let repo = make-test-repo $in.tmp_dir
     let later_beacon = "bitcoin:800000:00000000000000000002a7c4c1e48d76c5a37902165a270156b7a8d72728a054"
+
     merkle write-root --repo $repo --beacon "bitcoin:0:000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
 
     "later\n" | save --force $"($repo)/new.txt"
@@ -392,6 +427,7 @@ def "a new root carries the beacon it was minted with" [] {
 def "a malformed beacon is refused before the statement is touched" [] {
     let repo = make-test-repo $in.tmp_dir
     let statement = $"($repo)/multiproofs/tree-root.txt"
+
     merkle write-root --repo $repo
     let bytes = open --raw $statement
 
@@ -404,6 +440,7 @@ def "a malformed beacon is refused before the statement is touched" [] {
 @test
 def "a derivation with no beacon says so" [] {
     let repo = make-test-repo $in.tmp_dir
+
     assert equal (merkle write-root --repo $repo).beacon "none"
 }
 
@@ -427,12 +464,15 @@ def "each seal raises the sequence by one and names the root it supersedes" [] {
 }
 
 @test
-def "a proof file holding a JSON scalar is refused, not a crash" [] {
+def "a proof file holding a JSON scalar is refused instead of crashing" [] {
     let tmp_dir = $in.tmp_dir
+
     for bad in ['"hello"' '42' '[1, 2]'] {
         let proof_file = $"($tmp_dir)/proof.json"
+
         $bad | save --raw --force $proof_file
         let err = try { merkle verify $proof_file --repo $tmp_dir; null } catch {|e| $e.msg }
+
         assert ($err != null) $"accepted: ($bad)"
         assert ($err | str contains "not a multiproof") $"opaque error for ($bad): ($err)"
     }
@@ -466,6 +506,7 @@ def "a trailing slash on a file row is refused rather than quietly dropped" [] {
     let repo = make-test-repo $in.tmp_dir
 
     let err = try { merkle prove "README.md/" --repo $repo; null } catch {|e| $e.msg }
+
     assert ($err != null) "a file row answered a proof request for a directory"
     assert ($err | str contains "lists README.md as a file")
     assert not ($repo | path join multiproofs inclusion-proofs README.md.multiproof.json | path exists)
@@ -475,11 +516,12 @@ def "a trailing slash on a file row is refused rather than quietly dropped" [] {
 # not-in-the-manifest throw named nothing either — a message reading as if the
 # argument were missing rather than absolute. The repo root is the "." row.
 @test
-def "an argument that is only slashes is refused by name, not as an empty key" [] {
+def "an argument that is only slashes is refused by name and not as an empty key" [] {
     let repo = make-test-repo $in.tmp_dir
 
     for arg in ["/" "//"] {
         let err = try { merkle prove $arg --repo $repo; null } catch {|e| $e.msg }
+
         assert ($err != null) $"($arg) was accepted as a manifest row"
         assert ($err | str starts-with $"($arg) names no manifest row") $"the error does not name the argument: ($err)"
         assert ($err | str contains '"." row') "the error does not point at the row that is the repo root"
@@ -489,22 +531,26 @@ def "an argument that is only slashes is refused by name, not as an empty key" [
 # --- prove/verify end-to-end ---
 
 @test
-def "signed roundtrip: file and directory proofs verify as valid" [] {
+def "signed roundtrip where file and directory proofs verify as valid" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
 
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
 
     # File row: content on disk matches the proven sha256
     let proof = merkle prove README.md --repo $repo
+
     assert equal $proof $"($repo)/multiproofs/inclusion-proofs/README.md.multiproof.json"
     let result = merkle verify $proof --repo $repo
+
     assert $result.valid
     assert $result.structure_valid
     assert equal $result.content_verified true
@@ -514,11 +560,13 @@ def "signed roundtrip: file and directory proofs verify as valid" [] {
     # Directory row: attests only a content_cid, which verify re-derives from
     # the tracked files under it.
     let dir_result = merkle verify (merkle prove sub --repo $repo) --repo $repo
+
     assert $dir_result.valid
     assert equal $dir_result.content_verified true
 
     # The "." row is the same shape over the whole repo.
     let root_row = merkle verify (merkle prove "." --repo $repo) --repo $repo
+
     assert $root_row.valid
     assert equal $root_row.content_verified true
 }
@@ -533,10 +581,12 @@ def "a directory row does not verify against a directory that was rewritten" [] 
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let dir_proof = merkle prove sub --repo $repo
     let root_proof = merkle prove "." --repo $repo
@@ -552,12 +602,14 @@ def "a directory row does not verify against a directory that was rewritten" [] 
     ^git -C $repo add sub/backdoor.sh
 
     let tampered = merkle verify $dir_proof --repo $repo
+
     assert not $tampered.valid "an added file left the directory row verifying"
     assert equal $tampered.content_verified false
     assert ($tampered.error | str contains "content_cid")
 
     # "." covers it too — the added file is inside the repo root.
     let tampered_root = merkle verify $root_proof --repo $repo
+
     assert not $tampered_root.valid
     assert equal $tampered_root.content_verified false
 }
@@ -571,19 +623,22 @@ def "a directory row does not verify against a directory that was rewritten" [] 
 # contain — and a MISMATCH on other bytes makes it a confirmation oracle about
 # the verifier's own files. The only non-oracle answer is a refusal.
 @test
-def "a proven directory swapped for a symlink is refused, not re-derived" [] {
+def "a proven directory swapped for a symlink is refused and not re-derived" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let dir_proof = merkle prove sub --repo $repo
     let root_proof = merkle prove "." --repo $repo
 
     let outside = $"($tmp_dir)/outside-dir"
+
     mkdir $outside
     "world\n" | save --force $"($outside)/inner.txt" # the sealed bytes, byte for byte
     rm --recursive $"($repo)/sub"
@@ -592,12 +647,14 @@ def "a proven directory swapped for a symlink is refused, not re-derived" [] {
     # "outside", not true (the bytes match) and not false (false would be the
     # oracle's other half): the check refuses before reading anything.
     let swapped = merkle verify $dir_proof --repo $repo
+
     assert equal $swapped.content_verified "outside"
     assert not $swapped.valid "a symlinked-away directory verified against outside content"
     assert ($swapped.error | str contains "sub")
 
     # "." commits to the same subtree, so it must refuse identically.
     let root_row = merkle verify $root_proof --repo $repo
+
     assert equal $root_row.content_verified "outside"
     assert not $root_row.valid
 }
@@ -605,14 +662,16 @@ def "a proven directory swapped for a symlink is refused, not re-derived" [] {
 # A tracked file deleted from the worktree is the ordinary mid-edit state, not
 # an attack. Both row shapes must yield a verdict.
 @test
-def "a deleted tracked file gives every row a verdict, not a crash" [] {
+def "a deleted tracked file gives every row a verdict instead of a crash" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let file_proof = merkle prove sub/inner.txt --repo $repo
     let dir_proof = merkle prove sub --repo $repo
@@ -620,10 +679,12 @@ def "a deleted tracked file gives every row a verdict, not a crash" [] {
     rm $"($repo)/sub/inner.txt"
 
     let file_row = merkle verify $file_proof --repo $repo
+
     assert equal $file_row.content_verified "missing"
     assert not $file_row.valid
 
     let dir_row = merkle verify $dir_proof --repo $repo
+
     assert equal $dir_row.content_verified "missing"
     assert not $dir_row.valid "a directory row verified over a deleted member"
     assert ($dir_row.error | str contains "sub")
@@ -640,15 +701,18 @@ def "an untracked file under a proven directory is outside what the row commits 
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let dir_proof = merkle prove sub --repo $repo
 
     "backdoor\n" | save --force $"($repo)/sub/backdoor.sh"
     let untracked = merkle verify $dir_proof --repo $repo
+
     assert $untracked.valid "an untracked file is not part of the tracked tree the CID commits to"
     assert equal $untracked.content_verified true
 
@@ -666,14 +730,17 @@ def "an untracked file under a proven directory is outside what the row commits 
 def "a leaf that commits to no content is not valid" [] {
     let tmp_dir = $in.tmp_dir
     let key = $"($tmp_dir)/attacker"
+
     ^ssh-keygen -t ed25519 -f $key -N "" -q
     let dir = $"($tmp_dir)/ghostly"
+
     mkdir $dir
     let proof = forge-bundle $dir {
         filepath: "ghost" content_sha256: "" content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
 
     let result = merkle verify $proof --repo $dir
+
     assert $result.structure_valid "the path still folds — the forgery is in what the row omits"
     assert not $result.valid "a row committing to nothing was reported valid"
     assert equal $result.content_verified "unverifiable"
@@ -690,13 +757,16 @@ def "a leaf that commits to no content is not valid" [] {
 def make-sealed-bundle [tmp_dir: path]: nothing -> record {
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
 
     let bundle = $"($tmp_dir)/bundle"
+
     mkdir $"($bundle)/multiproofs/pubkeys" $"($bundle)/sub"
     cp $"($repo)/README.md" $"($bundle)/"
     cp $"($repo)/sub/inner.txt" $"($bundle)/sub/"
@@ -718,6 +788,7 @@ def "a non-git bundle carrying the sealed subtree verifies a directory row" [] {
     let fx = make-sealed-bundle $in.tmp_dir
 
     let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+
     assert equal $result.content_verified true "the sealed subtree did not re-derive its own CID"
     assert $result.valid "a genuine portable directory proof was refused"
 }
@@ -731,6 +802,7 @@ def "a bundle proving the root row excludes its own proof directory from the wal
     let fx = make-sealed-bundle $in.tmp_dir
 
     let result = merkle verify $fx.root_proof --repo $fx.bundle --bundle
+
     assert equal $result.content_verified true "the bundle's own multiproofs/ was folded into the root CID"
     assert $result.valid "a genuine portable proof of the whole repo was refused"
 }
@@ -743,11 +815,13 @@ def "a bundle proving the root row excludes its own proof directory from the wal
 @test
 def "the root row of a bundle distributed as a git repo still verifies" [] {
     let fx = make-sealed-bundle $in.tmp_dir
+
     ^git -C $fx.bundle init -q
     ^git -C $fx.bundle add README.md sub/inner.txt o+e>| ignore
     ^git -C $fx.bundle -c user.email=t@t -c user.name=t commit -q -m seed
 
     let result = merkle verify $fx.root_proof --repo $fx.bundle --bundle
+
     assert equal $result.content_verified true "the bundle's own .git was folded into the root CID"
     assert $result.valid "a genuine bundle shipped as a git repo was reported as tampered"
 }
@@ -765,11 +839,13 @@ def "a genuine bundle unpacked inside another git repo still verifies" [] {
     let fx = make-sealed-bundle $tmp_dir
 
     let outer = $"($tmp_dir)/consumer"
+
     mkdir $outer
     ^git -C $outer init -q
     cp --recursive $fx.bundle $"($outer)/bundle"
 
     let nested = merkle verify $fx.dir_proof --repo $"($outer)/bundle" --bundle
+
     assert $nested.valid "a bundle inside a git repo was judged against that repo's index"
 }
 
@@ -782,9 +858,11 @@ def "a genuine bundle unpacked inside another git repo still verifies" [] {
 @test
 def "a non-git bundle carrying the wrong bytes under a proven directory is refused" [] {
     let fx = make-sealed-bundle $in.tmp_dir
+
     "anything at all\n" | save --force $"($fx.bundle)/sub/inner.txt"
 
     let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+
     assert $result.structure_valid "structure is genuine — this is alice's real proof"
     assert not $result.valid "a bundle carrying the wrong bytes under a proven directory verified"
     assert equal $result.content_verified false
@@ -797,9 +875,11 @@ def "a non-git bundle carrying the wrong bytes under a proven directory is refus
 @test
 def "a bundle that drops a file from a proven directory is refused" [] {
     let fx = make-sealed-bundle $in.tmp_dir
+
     rm $"($fx.bundle)/sub/inner.txt"
 
     let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+
     assert not $result.valid "a bundle missing a sealed file under the proven directory verified"
     assert equal $result.content_verified "missing" "an empty subtree read as a content mismatch, not as absent"
 }
@@ -807,9 +887,11 @@ def "a bundle that drops a file from a proven directory is refused" [] {
 @test
 def "a bundle that adds a file under a proven directory is refused" [] {
     let fx = make-sealed-bundle $in.tmp_dir
+
     "payload\n" | save --force $"($fx.bundle)/sub/extra.txt"
 
     let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+
     assert not $result.valid "a bundle with an added file under the proven directory verified"
     assert equal $result.content_verified false
 }
@@ -822,12 +904,14 @@ def "a bundle that adds a file under a proven directory is refused" [] {
 @test
 def "a bundle cannot hand itself the git arm by shipping its own index" [] {
     let fx = make-sealed-bundle $in.tmp_dir
+
     "payload\n" | save --force $"($fx.bundle)/sub/extra.txt"
     ^git -C $fx.bundle init -q
     ^git -C $fx.bundle add sub/inner.txt o+e>| ignore
     ^git -C $fx.bundle -c user.email=m@m -c user.name=m commit -q -m seed
 
     let guarded = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+
     assert not $guarded.valid "the sender's own index decided the file set under --bundle"
     assert equal $guarded.content_verified false
     assert equal $guarded.content_enumeration "walk"
@@ -842,6 +926,7 @@ def "a bundle cannot hand itself the git arm by shipping its own index" [] {
     # readings of content_verified: true are different claims, and a consumer
     # keying on .valid has nothing else to tell them apart by.
     let unguarded = merkle verify $fx.dir_proof --repo $fx.bundle
+
     assert equal $unguarded.content_verified true "the git arm stopped honouring the target's index"
     assert equal $unguarded.content_enumeration "git-index" "a verdict reached through the target's own index did not say so"
 }
@@ -855,6 +940,7 @@ def "a file row reports no enumeration at all" [] {
     let file_proof = merkle prove README.md --repo $fx.repo
 
     let file_row = merkle verify $file_proof --repo $fx.bundle --bundle
+
     assert equal $file_row.content_verified true
     assert equal $file_row.content_enumeration null "a file row claimed a directory enumeration"
 }
@@ -867,9 +953,11 @@ def "a file row reports no enumeration at all" [] {
 @test
 def "a symlink outside the proven subtree does not touch the verdict" [] {
     let fx = make-sealed-bundle $in.tmp_dir
+
     ^ln -s /etc/hosts $"($fx.bundle)/notes.lnk"
 
     let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+
     assert equal $result.content_verified true "a link beside the proven directory decided its verdict"
     assert $result.valid
 }
@@ -881,12 +969,14 @@ def "a symlink outside the proven subtree does not touch the verdict" [] {
 # of its own because resolve-leaf-file catches them one layer up — this is the
 # hostile artifact that feeds the walk arm and checks that argument.
 @test
-def "a symlink inside a proven subtree is refused by the walk, not followed" [] {
+def "a symlink inside a proven subtree is refused by the walk and not followed" [] {
     let fx = make-sealed-bundle $in.tmp_dir
+
     rm $"($fx.bundle)/sub/inner.txt"
     ^ln -s /etc/hosts $"($fx.bundle)/sub/inner.txt"
 
     let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+
     assert not $result.valid "a symlinked member of a proven directory was verified"
     assert equal $result.content_verified "symlink"
 }
@@ -898,13 +988,15 @@ def "a symlink inside a proven subtree is refused by the walk, not followed" [] 
 # through, and the test above cannot see it — escaping to a parent fails
 # either way.
 @test
-def "a leaf resolving into a sibling directory is outside, not inside" [] {
+def "a leaf resolving into a sibling directory is outside and not inside" [] {
     let tmp_dir = $in.tmp_dir
     let key = $"($tmp_dir)/attacker"
+
     ^ssh-keygen -t ed25519 -f $key -N "" -q
 
     let repo = $"($tmp_dir)/repo"
     let sibling = $"($tmp_dir)/repo-evil"
+
     mkdir $repo $sibling
     "secret\n" | save --force $"($sibling)/x.txt"
     ^ln -s $sibling $"($repo)/out"
@@ -914,6 +1006,7 @@ def "a leaf resolving into a sibling directory is outside, not inside" [] {
         content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let result = merkle verify $proof --repo $repo
+
     assert equal $result.content_verified "outside"
     assert not $result.valid
 }
@@ -922,11 +1015,13 @@ def "a leaf resolving into a sibling directory is outside, not inside" [] {
 # died with a bare "I/O error" naming neither the path nor the leaf — a hostile
 # artifact crashing the verifier instead of getting a verdict.
 @test
-def "a file row landing on a directory gets a verdict, not an I/O error" [] {
+def "a file row landing on a directory gets a verdict instead of an IO error" [] {
     let tmp_dir = $in.tmp_dir
     let key = $"($tmp_dir)/attacker"
+
     ^ssh-keygen -t ed25519 -f $key -N "" -q
     let dir = $"($tmp_dir)/dirrow"
+
     mkdir $"($dir)/notafile"
 
     let proof = forge-bundle $dir {
@@ -934,6 +1029,7 @@ def "a file row landing on a directory gets a verdict, not an I/O error" [] {
         content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let result = merkle verify $proof --repo $dir
+
     assert equal $result.content_verified "directory"
     assert not $result.valid
     assert ($result.error | str contains "it is a directory")
@@ -948,6 +1044,7 @@ def "a file row landing on a directory gets a verdict, not an I/O error" [] {
 def "signed roundtrip works when the repo path holds glob metacharacters" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/re[po] v*1?"
+
     mkdir $repo
     ^git -C $repo init -q
     "hello\n" | save --force $"($repo)/README.md"
@@ -956,30 +1053,35 @@ def "signed roundtrip works when the repo path holds glob metacharacters" [] {
     tree-hashes --repo $repo
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
 
     let root_result = merkle write-root --repo $repo
+
     # Signing reads pubkeys/ to check the key is registered: one of the
     # discovery steps above.
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
 
     let result = merkle verify (merkle prove README.md --repo $repo) --repo $repo
+
     assert $result.valid "a repo path with glob metacharacters broke the roundtrip"
     assert equal ($result.signatures | where valid | length) 1
     assert equal $result.signatures.0.signer (principal-of $key_path)
 }
 
 @test
-def "tampered leaf, changed content, and unsigned root are each caught" [] {
+def "a tampered leaf and changed content and an unsigned root are each caught" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
+
     merkle write-root --repo $repo
     let proof = merkle prove README.md --repo $repo
 
     # Unsigned root: structure holds, valid stays false, --fail throws
     let unsigned = merkle verify $proof --repo $repo
+
     assert $unsigned.structure_valid
     assert not $unsigned.valid
     assert error {|| merkle verify $proof --repo $repo --fail }
@@ -987,6 +1089,7 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
     # Content drift after sealing: the row was catalogued, the file changed
     "changed\n" | save --force $"($repo)/README.md"
     let drifted = merkle verify $proof --repo $repo
+
     assert $drifted.structure_valid
     assert equal $drifted.content_verified false
     assert not $drifted.valid
@@ -995,6 +1098,7 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
     # catalogue, not "nothing to check"
     rm $"($repo)/README.md"
     let missing = merkle verify $proof --repo $repo
+
     assert $missing.structure_valid
     assert equal $missing.content_verified "missing"
     assert not $missing.valid
@@ -1002,16 +1106,18 @@ def "tampered leaf, changed content, and unsigned root are each caught" [] {
     # Tampered leaf (well-formed hex, wrong value): fold no longer reaches
     # the signed root
     let tampered_file = $"($tmp_dir)/tampered.json"
+
     open $proof
-        | update leaf.content_sha256 ("tampered" | hash sha256)
-        | to json | save --force $tampered_file
+    | update leaf.content_sha256 ("tampered" | hash sha256)
+    | to json | save --force $tampered_file
     let tampered = merkle verify $tampered_file --repo $repo
+
     assert not $tampered.structure_valid
     assert not $tampered.valid
 }
 
 @test
-def "signer flag pins the principal, not just any registered key" [] {
+def "signer flag pins the principal and not just any registered key" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
 
@@ -1019,14 +1125,17 @@ def "signer flag pins the principal, not just any registered key" [] {
     # attacker's key is in the bundle's own trust list
     let alice = $"($tmp_dir)/alice"
     let mallory = $"($tmp_dir)/mallory"
+
     ^ssh-keygen -t ed25519 -f $alice -N "" -q
     ^ssh-keygen -t ed25519 -f $mallory -N "" -q
     let pubkeys = $"($repo)/multiproofs/pubkeys"
+
     mkdir $pubkeys
     cp $"($alice).pub" $"($pubkeys)/alice.pub"
     cp $"($mallory).pub" $"($pubkeys)/mallory.pub"
 
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $mallory --pubkeys-dir $pubkeys
     let proof = merkle prove README.md --repo $repo
 
@@ -1036,12 +1145,14 @@ def "signer flag pins the principal, not just any registered key" [] {
 
     # The verifier's own copy of the list, holding the same two keys.
     let trusted = $"($tmp_dir)/trusted"
+
     mkdir $trusted
     cp $"($alice).pub" $"($trusted)/alice.pub"
     cp $"($mallory).pub" $"($trusted)/mallory.pub"
 
     # Signature is cryptographically valid, but it is not alice's
     let wrong = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $alice)
+
     assert $wrong.structure_valid "structure must still verify"
     assert not $wrong.valid "a signature from another principal was accepted"
     assert ($wrong.error | str contains (principal-of $alice))
@@ -1056,35 +1167,43 @@ def "signer flag pins the principal, not just any registered key" [] {
 # flag read as evidence against the artifact — structure_valid true, valid
 # false, "no valid signature from signer alice".
 @test
-def "signer with no matching key in the trusted dir is an error, not invalid" [] {
+def "signer with no matching key in the trusted dir is an error and not invalid" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
 
     let mallory = $"($tmp_dir)/mallory"
+
     ^ssh-keygen -t ed25519 -f $mallory -N "" -q
     let pubkeys = $"($repo)/multiproofs/pubkeys"
+
     mkdir $pubkeys
     cp $"($mallory).pub" $"($pubkeys)/mallory.pub"
 
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $mallory --pubkeys-dir $pubkeys
     let proof = merkle prove README.md --repo $repo
 
     # The verifier's own list: it holds bob, and was never given alice's key.
     let bob = $"($tmp_dir)/bob"
+
     ^ssh-keygen -t ed25519 -f $bob -N "" -q
     let trusted = $"($tmp_dir)/trusted"
+
     mkdir $trusted
     cp $"($bob).pub" $"($trusted)/bob.pub"
 
     let alice = $"($tmp_dir)/alice"
+
     ^ssh-keygen -t ed25519 -f $alice -N "" -q
     let err = try { merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $alice); null } catch {|e| $e.msg }
+
     assert ($err != null) "a signer the trust list cannot answer for got a verdict"
     assert ($err | str contains $"no key with fingerprint (principal-of $alice)")
 
     # Same list, a principal it does hold: answered, not refused.
     let answered = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $bob)
+
     assert not $answered.valid "bob's key did not sign this root"
     assert $answered.structure_valid
 }
@@ -1101,9 +1220,11 @@ def forge-bundle [dir: path leaf: record key: path]: nothing -> path {
     let leaf_bytes = [$leaf.filepath $leaf.content_sha256 $leaf.content_git_sha1 $leaf.content_git_sha256 $leaf.content_cid]
         | str join "\n" | into binary
     let root = 0x[00] | bytes add --end $leaf_bytes | hash sha256
+
     $"multiproof-merkle-v4 ($root) 0 genesis none\n" | save --force $"($dir)/multiproofs/tree-root.txt"
     ssh-sign sign $"($dir)/multiproofs/tree-root.txt" --key $key --pubkeys-dir $"($dir)/multiproofs/pubkeys"
     let proof_file = $"($dir)/proof.json"
+
     {schema: "multiproof-merkle-v4" leaf: $leaf path: [] root: $root} | to json | save --force $proof_file
     $proof_file
 }
@@ -1112,12 +1233,14 @@ def forge-bundle [dir: path leaf: record key: path]: nothing -> path {
 def "verify refuses a forged proof whose leaf points outside the bundle" [] {
     let tmp_dir = $in.tmp_dir
     let key = $"($tmp_dir)/attacker"
+
     ^ssh-keygen -t ed25519 -f $key -N "" -q
     "secret\n" | save --force $"($tmp_dir)/outside.txt"
 
     # Control: the same hand-built shape with a contained leaf verifies. So
     # the refusal below is the leaf guard, not a malformed bundle.
     let honest_dir = $"($tmp_dir)/honest"
+
     mkdir $honest_dir
     "inside\n" | save --force $"($honest_dir)/inside.txt"
     let honest = forge-bundle $honest_dir {
@@ -1125,6 +1248,7 @@ def "verify refuses a forged proof whose leaf points outside the bundle" [] {
         content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let ok = merkle verify $honest --repo $honest_dir
+
     assert $ok.valid "the hand-built bundle must otherwise verify"
     assert equal $ok.content_verified true
 
@@ -1132,12 +1256,14 @@ def "verify refuses a forged proof whose leaf points outside the bundle" [] {
     # filepath onto the target dir and hashes what it lands on, so this reads
     # the verifier's own file and reports whether it has the attested hash.
     let evil_dir = $"($tmp_dir)/evil"
+
     mkdir $evil_dir
     let evil = forge-bundle $evil_dir {
         filepath: "../outside.txt" content_sha256: ("secret\n" | hash sha256)
         content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let err = try { merkle verify $evil --repo $evil_dir; null } catch {|e| $e.msg }
+
     assert ($err != null) "a proof for a file outside the bundle was verified"
     assert ($err | str contains "must stay inside the repo")
 }
@@ -1148,14 +1274,16 @@ def "verify refuses a forged proof whose leaf points outside the bundle" [] {
 # it. The bundle then "proves" it carries a file it does not carry, and any
 # verifier can be asked whether their own file has a guessed hash.
 @test
-def "a leaf that is a symlink, or reaches out through one, is not content-verified" [] {
+def "a leaf that is a symlink or reaches out through one is not content-verified" [] {
     let tmp_dir = $in.tmp_dir
     let key = $"($tmp_dir)/attacker"
+
     ^ssh-keygen -t ed25519 -f $key -N "" -q
     "secret\n" | save --force $"($tmp_dir)/outside.txt"
 
     # 1. the leaf itself is a link to the verifier's file
     let link_dir = $"($tmp_dir)/link"
+
     mkdir $link_dir
     ^ln -s $"($tmp_dir)/outside.txt" $"($link_dir)/leaked.txt"
     let link_proof = forge-bundle $link_dir {
@@ -1163,6 +1291,7 @@ def "a leaf that is a symlink, or reaches out through one, is not content-verifi
         content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let linked = merkle verify $link_proof --repo $link_dir
+
     assert equal $linked.content_verified "symlink"
     assert not $linked.valid "a symlink was followed and reported as verified content"
     assert ($linked.error | str contains "symlink")
@@ -1170,18 +1299,21 @@ def "a leaf that is a symlink, or reaches out through one, is not content-verifi
     # 2. a broken link — checked before existence, so it does not degrade into
     #    the vaguer "missing"
     let broken_dir = $"($tmp_dir)/broken"
+
     mkdir $broken_dir
     ^ln -s $"($tmp_dir)/no-such-file" $"($broken_dir)/leaked.txt"
     let broken_proof = forge-bundle $broken_dir {
         filepath: "leaked.txt" content_sha256: ("secret\n" | hash sha256)
         content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
+
     assert equal (merkle verify $broken_proof --repo $broken_dir).content_verified "symlink"
 
     # 3. the leaf is a regular file, but a parent component is a link out. The
     #    path text has no ".." and the final component is not a link, so only
     #    resolving the whole chain catches it.
     let parent_dir = $"($tmp_dir)/parent"
+
     mkdir $parent_dir
     ^ln -s $tmp_dir $"($parent_dir)/up"
     let parent_proof = forge-bundle $parent_dir {
@@ -1189,6 +1321,7 @@ def "a leaf that is a symlink, or reaches out through one, is not content-verifi
         content_git_sha1: "" content_git_sha256: "" content_cid: ""
     } $key
     let escaped = merkle verify $parent_proof --repo $parent_dir
+
     assert equal $escaped.content_verified "outside"
     assert not $escaped.valid "a leaf resolving out of the repo was content-verified"
 }
@@ -1201,8 +1334,10 @@ def "a leaf that is a symlink, or reaches out through one, is not content-verifi
 def "a manifest that no longer yields the signed root is caught" [] {
     let tmp_dir = $in.tmp_dir
     let key = $"($tmp_dir)/signer"
+
     ^ssh-keygen -t ed25519 -f $key -N "" -q
     let dir = $"($tmp_dir)/bundle"
+
     mkdir $dir
     "inside\n" | save --force $"($dir)/inside.txt"
     let leaf = {
@@ -1215,6 +1350,7 @@ def "a manifest that no longer yields the signed root is caught" [] {
     # Control: a one-row catalogue whose tree IS the signed root
     [$leaf] | to csv | save --force $manifest
     let ok = merkle verify $proof --repo $dir
+
     assert $ok.valid "a manifest matching the signed root must verify"
     assert equal $ok.manifest_root $ok.root
 
@@ -1226,6 +1362,7 @@ def "a manifest that no longer yields the signed root is caught" [] {
         {filepath: "later.txt" content_sha256: ("later\n" | hash sha256) content_git_sha1: "" content_git_sha256: "" content_cid: ""}
     ] | to csv | save --force $manifest
     let desynced = merkle verify $proof --repo $dir
+
     assert $desynced.structure_valid "the proof itself still folds to the signed root"
     assert not $desynced.valid "a manifest/root desync was reported valid"
     assert not ($desynced.manifest_root == $desynced.root) "the rebuilt root must differ"
@@ -1235,12 +1372,14 @@ def "a manifest that no longer yields the signed root is caught" [] {
     # A manifest that cannot be read at all is not a verdict about the proof
     [$leaf $leaf] | to csv | save --force $manifest
     let err = try { merkle verify $proof --repo $dir; null } catch {|e| $e.msg }
+
     assert ($err != null) "an equivocating manifest got a verdict"
     assert ($err | str contains "duplicate filepaths")
 
     # No manifest is not a desync — the portable bundle layout carries none
     rm $manifest
     let portable = merkle verify $proof --repo $dir
+
     assert $portable.valid "a bundle without a manifest must still verify"
     assert equal $portable.manifest_root null
 }
@@ -1260,9 +1399,11 @@ def "a bundle cannot file one key under the fingerprint of another" [] {
 
     let mallory = $"($tmp_dir)/mallory"
     let alice = $"($tmp_dir)/alice"
+
     ^ssh-keygen -t ed25519 -f $mallory -N "" -q -C "mallory@evil"
     ^ssh-keygen -t ed25519 -f $alice -N "" -q
     let pubkeys = $"($repo)/multiproofs/pubkeys"
+
     mkdir $pubkeys
     # Mallory's key, filed under alice's name AND under alice's fingerprint:
     # neither one buys anything, because the rendered principal comes from the
@@ -1271,6 +1412,7 @@ def "a bundle cannot file one key under the fingerprint of another" [] {
     cp $"($mallory).pub" $"($pubkeys)/(principal-of $alice).pub"
 
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $mallory --pubkeys-dir $pubkeys
     let proof = merkle prove README.md --repo $repo
 
@@ -1278,19 +1420,23 @@ def "a bundle cannot file one key under the fingerprint of another" [] {
     # alice's, whatever its files are called, so this cannot be answered — and
     # "alice did not sign it" is not the answer either.
     let err = try { merkle verify $proof --repo $repo --signer (principal-of $alice); null } catch {|e| $e.msg }
+
     assert ($err != null) "the bundle answered for a key it does not hold"
     assert ($err | str contains "no key with fingerprint")
 
     # Asking for the key that really signed: answered, and named for what it is.
     let honest = merkle verify $proof --repo $repo --signer (principal-of $mallory)
+
     assert $honest.valid "the key that signed the root was not recognized"
     assert equal ($honest.signatures | where valid | get signer) [(principal-of $mallory)]
 
     # And against alice's real key, held outside the artifact: not endorsed.
     let trusted = $"($tmp_dir)/trusted"
+
     mkdir $trusted
     cp $"($alice).pub" $"($trusted)/alice.pub"
     let result = merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $alice)
+
     assert $result.structure_valid "structure must still verify"
     assert not $result.valid "mallory's key passed as alice"
     assert equal ($result.signatures | get error) [unrecognized_signer]
@@ -1301,15 +1447,18 @@ def "pubkeys-dir flag supplies the verifier trust list from outside the bundle" 
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let proof = merkle prove README.md --repo $repo
 
     # Trust list held outside the artifact: same key, verifier's own copy
     let trusted = $"($tmp_dir)/trusted"
+
     mkdir $trusted
     cp $"($key_path).pub" $"($trusted)/sshkey.pub"
     assert (merkle verify $proof --repo $repo --pubkeys-dir $trusted).valid
@@ -1317,25 +1466,30 @@ def "pubkeys-dir flag supplies the verifier trust list from outside the bundle" 
     # A trust list without the signer's key: the sig verifies cryptographically,
     # but nobody the verifier trusts endorsed this root
     let stranger_key = $"($tmp_dir)/stranger"
+
     ^ssh-keygen -t ed25519 -f $stranger_key -N "" -q
     let stranger_dir = $"($tmp_dir)/stranger-trust"
+
     mkdir $stranger_dir
     cp $"($stranger_key).pub" $"($stranger_dir)/stranger.pub"
     let result = merkle verify $proof --repo $repo --pubkeys-dir $stranger_dir
+
     assert $result.structure_valid
     assert not $result.valid
     assert equal ($result.signatures | get error) [unrecognized_signer]
 }
 
 @test
-def "portable bundle: proof verifies offline in a non-git directory" [] {
+def "a portable bundle proof verifies offline in a non-git directory" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     let root_result = merkle write-root --repo $repo
+
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let proof = merkle prove README.md --repo $repo
 
@@ -1343,6 +1497,7 @@ def "portable bundle: proof verifies offline in a non-git directory" [] {
     # deliberately NOT a git repo. This pins the contract that an explicit
     # --repo needs no .git, only the relative layout (see repo-root).
     let bundle = $"($tmp_dir)/bundle"
+
     mkdir $"($bundle)/multiproofs/pubkeys"
     cp $"($repo)/README.md" $"($bundle)/README.md"
     cp $"($repo)/multiproofs/tree-root.txt" $"($bundle)/multiproofs/"
@@ -1350,10 +1505,12 @@ def "portable bundle: proof verifies offline in a non-git directory" [] {
     cp $"($repo)/multiproofs/pubkeys/sshkey.pub" $"($bundle)/multiproofs/pubkeys/"
     let root_hash = open --raw $"($repo)/multiproofs/tree-root.txt" | hash sha256 | decode hex
     let ots_bundle = $"($bundle)/multiproofs/ots-timestamps/tree-root.cafe0000"
+
     mkdir $ots_bundle
     build-pending-ots --hash $root_hash | save --raw --force $"($ots_bundle)/tree-root.ots"
 
     let result = merkle verify $proof --repo $bundle
+
     assert $result.valid
     assert equal $result.content_verified true
     assert equal ($result.signatures | where valid | length) 1
@@ -1361,9 +1518,10 @@ def "portable bundle: proof verifies offline in a non-git directory" [] {
 }
 
 @test
-def "ots status: discovery by content commitment, pending and anchored pinned" [] {
+def "ots status finds the stamp by content commitment with pending and anchored pinned" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
+
     merkle write-root --repo $repo
     let proof = merkle prove README.md --repo $repo
 
@@ -1372,6 +1530,7 @@ def "ots status: discovery by content commitment, pending and anchored pinned" [
     # discovery (always "absent") would keep the suite green.
     let root_hash = open --raw $"($repo)/multiproofs/tree-root.txt" | hash sha256 | decode hex
     let bundle = $"($repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
+
     mkdir $bundle
 
     # A stamp committing to a different hash is archival — stays absent
@@ -1380,6 +1539,7 @@ def "ots status: discovery by content commitment, pending and anchored pinned" [
 
     build-pending-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.ots"
     let pending = merkle verify $proof --repo $repo
+
     assert equal $pending.ots.status "pending"
     assert equal $pending.ots.ots $"($bundle)/tree-root.ots"
 
@@ -1388,13 +1548,15 @@ def "ots status: discovery by content commitment, pending and anchored pinned" [
 }
 
 @test
-def "ots discovery: corrupt archival stamps skipped, anchored preferred" [] {
+def "ots discovery skips corrupt archival stamps and prefers anchored" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
+
     merkle write-root --repo $repo
     let proof = merkle prove README.md --repo $repo
     let root_hash = open --raw $"($repo)/multiproofs/tree-root.txt" | hash sha256 | decode hex
     let bundle = $"($repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
+
     mkdir $bundle
 
     # A truncated archival .ots is an artifact of a past seal — it must not
@@ -1408,6 +1570,7 @@ def "ots discovery: corrupt archival stamps skipped, anchored preferred" [] {
     build-pending-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.20260102-000000.ots"
     build-bitcoin-ots --hash $root_hash | save --raw --force $"($bundle)/tree-root.ots"
     let result = merkle verify $proof --repo $repo
+
     assert equal $result.ots.status "anchored"
     assert equal $result.ots.ots $"($bundle)/tree-root.ots"
 }
@@ -1423,6 +1586,7 @@ def make-cosigned-repo [tmp_dir: path]: nothing -> record {
     let alice = $"($tmp_dir)/alice"
     let bob = $"($tmp_dir)/bob"
     let pubkeys = $"($repo)/multiproofs/pubkeys"
+
     ^ssh-keygen -t ed25519 -f $alice -N "" -q
     ^ssh-keygen -t ed25519 -f $bob -N "" -q
     mkdir $pubkeys
@@ -1433,6 +1597,7 @@ def make-cosigned-repo [tmp_dir: path]: nothing -> record {
     let alice_sig = ssh-sign sign $root_result.path --key $alice --pubkeys-dir $pubkeys
     let bob_sig = ssh-sign sign $root_result.path --key $bob --pubkeys-dir $pubkeys
     let bundle = $"($repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
+
     mkdir $bundle
 
     {
@@ -1457,20 +1622,25 @@ def "each signature gets its own dated endorsement" [] {
 
     # Nothing stamped yet: both endorsements are real but undated.
     let bare = merkle verify $fx.proof --repo $fx.repo
+
     assert equal ($bare.endorsements | get status | uniq) ["absent"]
     assert equal ($bare.endorsements | get signer | sort) ([$fx.alice $fx.bob] | sort)
 
     # Alice's signature stamped, bob's not.
     let alice_hash = open --raw $fx.alice_sig | hash sha256 | decode hex
+
     build-bitcoin-ots --hash $alice_hash | save --raw --force $"($fx.bundle)/alice.ots"
     let one = merkle verify $fx.proof --repo $fx.repo
+
     assert equal ($one.endorsements | where signer == $fx.alice | get status) ["anchored"]
     assert equal ($one.endorsements | where signer == $fx.bob | get status) ["absent"]
 
     # Bob's too, still pending — the two are independent.
     let bob_hash = open --raw $fx.bob_sig | hash sha256 | decode hex
+
     build-pending-ots --hash $bob_hash | save --raw --force $"($fx.bundle)/bob.ots"
     let both = merkle verify $fx.proof --repo $fx.repo
+
     assert equal ($both.endorsements | where signer == $fx.alice | get status) ["anchored"]
     assert equal ($both.endorsements | where signer == $fx.bob | get status) ["pending"]
 }
@@ -1487,13 +1657,19 @@ def "a dated signature by an unregistered key is not an endorsement" [] {
     let tmp_dir = $in.tmp_dir
     let fx = make-cosigned-repo $tmp_dir
     let mallory = $"($tmp_dir)/mallory"
+
     ^ssh-keygen -t ed25519 -f $mallory -N "" -q
     let mallory_sig = $"($fx.root_file).mallory.sig"
-    open --raw $fx.root_file | into binary | ^ssh-keygen -Y sign -q -f $mallory -n file | save --raw --force $mallory_sig
+
+    open --raw $fx.root_file
+    | into binary
+    | ^ssh-keygen -Y sign -q -f $mallory -n file
+    | save --raw --force $mallory_sig
     build-bitcoin-ots --hash (open --raw $mallory_sig | hash sha256 | decode hex)
     | save --raw --force $"($fx.bundle)/mallory.ots"
 
     let result = merkle verify $fx.proof --repo $fx.repo
+
     assert equal ($result.endorsements | get signer | sort) ([$fx.alice $fx.bob] | sort)
     assert equal ($result.endorsements | where status != "absent" | length) 0
 }
@@ -1504,10 +1680,12 @@ def "a dated signature by an unregistered key is not an endorsement" [] {
 @test
 def "a stamp over unrelated bytes dates no endorsement" [] {
     let fx = make-cosigned-repo $in.tmp_dir
+
     build-bitcoin-ots --hash ("some other file" | hash sha256 | decode hex)
     | save --raw --force $"($fx.bundle)/unrelated.ots"
 
     let result = merkle verify $fx.proof --repo $fx.repo
+
     assert equal ($result.endorsements | get status | uniq) ["absent"]
 }
 
@@ -1522,14 +1700,17 @@ def "a stamped signature over other content adds no endorsement" [] {
     let tmp_dir = $in.tmp_dir
     let fx = make-cosigned-repo $tmp_dir
     let decoy = $"($tmp_dir)/decoy.txt"
+
     "not the root statement" | save --force $decoy
     let decoy_sig = ssh-sign sign $decoy --key $"($tmp_dir)/alice" --pubkeys-dir $"($fx.repo)/multiproofs/pubkeys"
     let planted = $"($fx.root_file).planted.sig"
+
     cp $decoy_sig $planted
     build-bitcoin-ots --hash (open --raw $planted | hash sha256 | decode hex)
     | save --raw --force $"($fx.bundle)/planted.ots"
 
     let result = merkle verify $fx.proof --repo $fx.repo
+
     # alice appears once, from her real signature, and it is undated
     assert equal ($result.endorsements | where signer == $fx.alice | get status) ["absent"]
     assert equal ($result.endorsements | where status != "absent" | length) 0
@@ -1539,6 +1720,7 @@ def "a stamped signature over other content adds no endorsement" [] {
 def "proof against a different seal root throws loudly" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
+
     merkle write-root --repo $repo
     let proof = merkle prove README.md --repo $repo
 
@@ -1557,6 +1739,7 @@ def "proof against a different seal root throws loudly" [] {
 def make-older-seal [tmp_dir: path]: nothing -> record {
     let repo = make-test-repo $tmp_dir
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     mkdir $"($repo)/multiproofs/pubkeys"
     cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
@@ -1566,10 +1749,12 @@ def make-older-seal [tmp_dir: path]: nothing -> record {
     let old_root = (parse-root-statement $"($repo)/multiproofs/tree-root.txt").root
 
     let snap = $"($tmp_dir)/snap"
+
     mkdir $snap
     cp $"($repo)/multiproofs/tree-root.txt" $snap
     cp $old_sig $snap
     let old_csv = $"($tmp_dir)/old-tree-hashes.csv"
+
     cp $"($repo)/multiproofs/tree-hashes.csv" $old_csv
 
     "later\n" | save --force $"($repo)/new.txt"
@@ -1577,6 +1762,7 @@ def make-older-seal [tmp_dir: path]: nothing -> record {
     tree-hashes --repo $repo
     merkle write-root --repo $repo
     let new_sig = ssh-sign sign $"($repo)/multiproofs/tree-root.txt" --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+
     {repo: $repo snap: $snap proof: $proof old_root: $old_root old_csv: $old_csv new_sig: $new_sig}
 }
 
@@ -1593,9 +1779,11 @@ def "a proof of an older seal verifies against that snapshot of the seal" [] {
     # Against the live artifacts it is a proof of a DIFFERENT seal — the loud
     # throw, unchanged.
     let live = try { merkle verify $fx.proof --repo $fx.repo; "no throw" } catch {|e| $e.msg }
+
     assert ($live | str contains "different seal")
 
     let result = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $fx.snap
+
     assert $result.valid
     assert equal $result.root $fx.old_root
     # No CSV in the snapshot: "not here to check" — the portable-bundle shape
@@ -1608,8 +1796,10 @@ def "a proof of an older seal verifies against that snapshot of the seal" [] {
     # A directory with no statement is named by the refusal, not read as an
     # unsealed repo that should run write-root
     let empty = $"($tmp_dir)/empty"
+
     mkdir $empty
     let missing = try { merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $empty; "no throw" } catch {|e| $e.msg }
+
     assert ($missing | str contains "--multiproofs-dir")
 }
 
@@ -1619,16 +1809,18 @@ def "a proof of an older seal verifies against that snapshot of the seal" [] {
 # verify that read no CSV at all would pass; without the second, one still
 # reading the repo's CSV would fail every older-seal check.
 @test
-def "the manifest cross-check follows the multiproofs dir, not the repo" [] {
+def "the manifest cross-check follows the multiproofs dir and not the repo" [] {
     let fx = make-older-seal $in.tmp_dir
 
     cp $fx.old_csv $"($fx.snap)/tree-hashes.csv"
     let matched = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $fx.snap
+
     assert $matched.valid
     assert equal $matched.manifest_root $fx.old_root
 
     cp $"($fx.repo)/multiproofs/tree-hashes.csv" $"($fx.snap)/tree-hashes.csv"
     let desync = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $fx.snap
+
     assert not $desync.valid
     assert ($desync.error | str contains "different seals")
 }
@@ -1642,11 +1834,13 @@ def "a planted signature over another statement does not endorse the snapshot" [
     let tmp_dir = $in.tmp_dir
     let fx = make-older-seal $tmp_dir
     let forged = $"($tmp_dir)/forged-snap"
+
     mkdir $forged
     cp $"($fx.snap)/tree-root.txt" $forged
     cp $fx.new_sig $forged
 
     let result = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $forged
+
     assert not $result.valid
     assert equal ($result.signatures | where valid | length) 0
     assert ($result.error | str contains "no valid signature")
@@ -1662,11 +1856,13 @@ def "an anchor in the live archive dates an older seal verified via its snapshot
     let tmp_dir = $in.tmp_dir
     let fx = make-older-seal $tmp_dir
     let bundle = $"($fx.repo)/multiproofs/ots-timestamps/tree-root.cafe0000"
+
     mkdir $bundle
     build-bitcoin-ots --hash (open --raw $"($fx.snap)/tree-root.txt" | hash sha256 | decode hex)
     | save --raw --force $"($bundle)/tree-root.ots"
 
     let result = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $fx.snap
+
     assert $result.valid
     assert equal $result.ots.status "anchored"
 }

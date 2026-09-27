@@ -174,6 +174,7 @@ export def main [
     # untouched tree rewrites the same bytes and leaves every co-signer signature
     # standing (merkle.nu write-root).
     let merkle_result = merkle write-root --repo $root --beacon $beacon_token
+
     $result = ($result | insert merkle_root $merkle_result.root | insert beacon $merkle_result.beacon)
 
     # Why: a sig from a previous seal signs the previous bytes — stale exactly
@@ -214,6 +215,7 @@ export def main [
     let root_sig = with-signing-key --root $root {|signing_key|
         ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
     }
+
     $result = ($result | insert root_sig $root_sig)
 
     # 5. OTS timestamps — two of them, because an OTS proof commits to the hash
@@ -292,6 +294,7 @@ export def main [
         } else {
             $root_stamp.dir
         }
+
         $result = ($result | insert bundle $bundle_dir)
         if $root_stamp != null {
             $result = ($result | insert root_ots $root_stamp.ots)
@@ -315,6 +318,7 @@ export def main [
         let sig_stamps = sig-files-for $root_statement_path | each {|sig|
                 ots stamp $sig --into $bundle_dir --response-file $response_file | get ots
             }
+
         $result = ($result | insert sig_ots $sig_stamps)
     }
 
@@ -399,7 +403,12 @@ export def status [
     # Bundles are the directories those proofs live in, discovered from the
     # proofs rather than from a name pattern — the same reason verify matches by
     # content commitment. A directory holding no proof is not a bundle.
-    $stamps | get file | each {|f| $f | path dirname } | uniq | sort | each {|dir|
+    $stamps
+    | get file
+    | path dirname
+    | uniq
+    | sort
+    | each {|dir|
         # --regular: every path below is opened and its bytes read as that name's
         # own content, and a symlink's are not. Without it a link to a directory
         # (nushell types it `symlink`, not `dir`) or a dangling one reached `open`
@@ -432,10 +441,15 @@ export def status [
         # filter can only shrink the set, and an empty result falls back to the
         # old reading, so a bundle whose name carries no `.<8 hex>` — a hand-made
         # one — behaves exactly as before instead of taking a second code path.
-        let prefix = $dir | path basename | parse --regex '\.(?<p>[0-9A-Fa-f]{8})$' | get p?.0? | default ""
+        let prefix = $dir
+            | path basename
+            | parse --regex '\.(?<p>[0-9A-Fa-f]{8})$'
+            | get p?.0?
+            | default ""
         let keyed = $candidates
             | where $prefix != "" and ($it.hash | str starts-with ($prefix | str lowercase))
         let snapshot = ($keyed | get 0?) | default ($candidates | get 0?)
+
         {
             bundle: ($dir | path relative-to $root)
             file: (if $snapshot == null { null } else { $snapshot.file | path basename })
@@ -446,6 +460,7 @@ export def status [
             current: (
                 if $snapshot == null { null } else {
                     let live = $mp | path join ($snapshot.file | path basename)
+
                     if not ($live | path exists) { null } else {
                         (open --raw $live | hash sha256) == $snapshot.hash
                     }

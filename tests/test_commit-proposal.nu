@@ -20,6 +20,7 @@ def cleanup [] {
 # A repo with one commit. Returns its root and that commit.
 def committed-repo [tmp_dir: path]: nothing -> record {
     let repo = $tmp_dir | path join repo
+
     mkdir $repo
     ^git -C $repo init -q
     "alpha\n" | save --force ($repo | path join a.txt)
@@ -64,8 +65,8 @@ def "a stamped seal names its bundle and reports both anchors pending" [] {
 }
 
 @test
-def "two signatures are counted, and read as plural" [] {
-    let two = stamped-result | update sig_ots {|r| $r.sig_ots | append "/repo/x.ots" }
+def "two signatures are counted and read as plural" [] {
+    let two = stamped-result | update sig_ots { append "/repo/x.ots" }
 
     let line = seal-commit-line $two "/repo" "abc123"
 
@@ -94,7 +95,7 @@ def "a seal that anchored only its signatures says so and still names its bundle
 }
 
 @test
-def "the signer is the principal passed in, not anything read off a filename" [] {
+def "the signer is the principal passed in rather than anything read off a filename" [] {
     let fpr = "ed2386359d82cbeba2214f993392a15db8c99627173532f32f01934957799dc2"
 
     # The result's own .sig paths say "abc" — the proposal must ignore them.
@@ -110,7 +111,7 @@ def "git is aimed at the sealed repo rather than the current directory" [] {
     # pathspec `multiproofs` resolves against the CWD — so a proposal without
     # -C fails from any subdirectory.
     let elsewhere = stamped-result
-        | update bundle {|r| $r.bundle | str replace "/repo/" "/elsewhere/repo/" }
+        | update bundle { str replace "/repo/" "/elsewhere/repo/" }
 
     let line = seal-commit-line $elsewhere "/elsewhere/repo" "abc123"
 
@@ -123,7 +124,7 @@ def "git is aimed at the sealed repo rather than the current directory" [] {
 }
 
 @test
-def "the message body is real lines, not escapes" [] {
+def "the message body is real lines rather than escapes" [] {
     let line = seal-commit-line (stamped-result) "/repo" "abc123"
 
     # The user is meant to edit this before running it, and a body escaped into
@@ -150,8 +151,9 @@ def "a clean tree names the commit the seal was taken from" [] {
 }
 
 @test
-def "an uncommitted change is stated here, the one channel that may carry it" [] {
+def "an uncommitted change is stated here in the one channel that may carry it" [] {
     let repo = committed-repo $in.tmp_dir
+
     "edited\n" | save --force ($repo.root | path join a.txt)
 
     let line = seal-commit-line (stamped-result | reject bundle root_ots sig_ots) $repo.root "abc123"
@@ -175,6 +177,7 @@ def "a repo path holding a quote still parses as one command" [] {
     # Parsed back by Nushell itself rather than compared to an expected
     # spelling: what matters is that the parser returns the original bytes.
     let round_tripped = ^nu --commands $"print --raw ($quoted)" | str trim --right --char "\n"
+
     assert equal $round_tripped $nasty
 }
 
@@ -188,6 +191,7 @@ def "multiline mode keeps newlines but still escapes a quote" [] {
 
     assert equal ($quoted | lines | length) 3
     let round_tripped = ^nu --commands $"print --raw ($quoted)" | str trim --right --char "\n"
+
     assert equal $round_tripped $body
 }
 
@@ -199,5 +203,6 @@ def "a newline in a path cannot break out of the quoted argument" [] {
 
     assert equal ($quoted | lines | length) 1
     let round_tripped = ^nu --commands $"print --raw ($quoted)" | str trim --right --char "\n"
+
     assert equal $round_tripped $nasty
 }

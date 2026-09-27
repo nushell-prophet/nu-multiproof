@@ -13,12 +13,14 @@ export def repo-root [repo?: path]: nothing -> path {
         # here would break that offline-import path. Existence IS checked:
         # unchecked, a typo surfaces later as a confusing downstream error.
         let expanded = $repo | path expand
+
         if not ($expanded | path exists) {
             error make {msg: $"repo path does not exist: ($expanded)"}
         }
         return $expanded
     }
     let result = ^git rev-parse --show-toplevel | complete
+
     if $result.exit_code != 0 {
         error make {msg: "not inside a git repository — pass --repo to target one explicitly"}
     }

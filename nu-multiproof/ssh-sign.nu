@@ -121,6 +121,7 @@ export def verify [
         pubkeys-dir (repo-root)
     }
     let signers = (allowed-signers-body $pubkeys_dir)
+
     if ($signers | str trim | is-empty) {
         error make {msg: $"no public keys found in ($pubkeys_dir)/"}
     }
@@ -186,6 +187,7 @@ export def verify [
 
     if $fail {
         let bad = $results | where not valid
+
         if not ($bad | is-empty) {
             error make {msg: $"($bad | length) invalid signature\(s\) for ($path)"}
         }

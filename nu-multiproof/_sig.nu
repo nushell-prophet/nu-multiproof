@@ -20,6 +20,7 @@ export def sig-files-for [path: path]: nothing -> list<path> {
     let base = $path | path basename
     let dir = $path | path dirname
     let dir = if ($dir | is-empty) { "." } else { $dir }
+
     # No directory, no signatures — the same answer the previous glob-based
     # discovery gave. Callers clear sigs before the dir is created.
     if not ($dir | path exists) { return [] }
@@ -34,6 +35,7 @@ export def sig-files-for [path: path]: nothing -> list<path> {
     let named = $entries | where {|f|
             let f_base = $f | path basename
             let named_form = ($f_base | str starts-with $"($base).") and ($f_base | str ends-with ".sig") and $f_base != $bare_base
+
             # ...unless the name also reads as some *other* file's bare signature,
             # and that file is on disk. `tree-hashes.csv.gz.sig` beside an existing
             # `tree-hashes.csv.gz` is the archive's signature, not a "gz"-named
@@ -47,6 +49,7 @@ export def sig-files-for [path: path]: nothing -> list<path> {
             # signature files found" instead of destroying one.
             $named_form and not (($f | str replace --regex '\.sig$' '') | path exists)
         }
+
     $named ++ ($entries | where ($it | path basename) == $bare_base)
 }
 
@@ -65,8 +68,10 @@ export def original-for-sig [sig_path: path]: nothing -> path {
         error make {msg: $"not a signature file name: ($sig_path)"}
     }
     let bare = $sig_path | str replace --regex '\.sig$' ''
+
     if ($bare | path exists) { return $bare }
     let named = $bare | str replace --regex '\.[^./]+$' ''
+
     if $named == $bare or not ($named | path exists) {
         error make {msg: $"cannot find the file ($sig_path) signs — tried ($bare) and ($named)"}
     }
@@ -80,6 +85,7 @@ export def original-for-sig [sig_path: path]: nothing -> path {
 export def signer-from-sig [file: path sig_path: path]: nothing -> any {
     let base = $file | path basename
     let sig_base = $sig_path | path basename
+
     if $sig_base == $"($base).sig" {
         null
     } else {

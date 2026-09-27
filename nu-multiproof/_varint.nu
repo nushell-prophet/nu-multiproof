@@ -16,12 +16,15 @@
 # emit bytes that mean something else. Pinned by tests/test_varint.nu.
 export def encode-varint []: int -> binary {
     mut n = $in
+
     if $n < 0 {
         error make {msg: $"encode-varint takes a non-negative integer, got ($n)"}
     }
     mut out = 0x[]
+
     while $n >= 128 {
         let byte = ($n mod 128) | bits or 128
+
         $out = ($out | bytes add --end ($byte | into binary --endian little | bytes at 0..0))
         $n = $n // 128
     }

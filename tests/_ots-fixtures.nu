@@ -20,6 +20,7 @@ export def build-pending-ots [
 ] {
     let url_bytes = $url | into binary
     mut ots = ($OTS_HEADER | bytes add --end 0x[01 08] | bytes add --end $hash)
+
     if $with_ops {
         $ots = (
             $ots
@@ -30,6 +31,7 @@ export def build-pending-ots [
     let url_len = $url_bytes | bytes length
     let inner_len = ($url_len | into binary --endian little | bytes at 0..0)
     let outer_len = ($url_len + 1 | into binary --endian little | bytes at 0..0)
+
     $ots
     | bytes add --end 0x[00]
     | bytes add --end $ATT_PENDING_TAG
@@ -47,6 +49,7 @@ export def build-pending-ots [
 export def build-bitcoin-ots [--hash: binary = $ZERO_HASH --height: int = 123456] {
     let h = $height | encode-varint
     let payload = (($h | bytes length) | encode-varint) | bytes add --end $h
+
     $OTS_HEADER
     | bytes add --end 0x[01 08]
     | bytes add --end $hash
@@ -63,6 +66,7 @@ export def build-bitcoin-ots [--hash: binary = $ZERO_HASH --height: int = 123456
 export def build-calendar-response [] {
     let url_bytes = "https://a.pool.opentimestamps.org" | into binary
     let url_len = $url_bytes | bytes length
+
     0x[00]
     | bytes add --end $ATT_PENDING_TAG
     | bytes add --end ($url_len + 1 | into binary --endian little | bytes at 0..0)

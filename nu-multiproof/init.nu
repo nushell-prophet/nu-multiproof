@@ -31,6 +31,7 @@ export def main [
     # Canonical bytes of the key to register, or null when there is nothing to
     # register and the operator has been told why.
     let canon = resolve-key $root $pubkey
+
     if $canon != null {
         register $canon $pubkeys_dir $root
     }
@@ -51,14 +52,17 @@ def resolve-key [root: path pubkey: any]: nothing -> any {
         return (resolve-pubkey $pubkey)
     }
     let git_key = (do { ^git -C $root config user.signingKey } | complete)
+
     if $git_key.exit_code != 0 {
         print "No git signing key configured and no --pubkey given"
         print "Use --pubkey to specify a public key file"
         return null
     }
     let raw = $git_key.stdout | str trim
+
     if ($raw | str starts-with "key::") {
         let key_data = $raw | str replace "key::" ""
+
         # Why the inner message survives (same shape as canonical-file, which
         # names the source file; the source here is git config): replacing it
         # wholesale answered "is not an SSH public key" for every refusal alike
@@ -73,6 +77,7 @@ def resolve-key [root: path pubkey: any]: nothing -> any {
         )
     }
     let expanded = $raw | path expand
+
     # Why: keep soft-warning behavior for the git-config branch — a key
     # configured on another machine shouldn't hard-error init; --pubkey
     # can still recover. --pubkey itself has no such fallback (user
@@ -143,6 +148,7 @@ def register [canon: string pubkeys_dir: path root: path]: nothing -> nothing {
 # real message.
 def ssh-fingerprint [key: string]: nothing -> string {
     let out = $key | ^ssh-keygen -lf - | complete
+
     if $out.exit_code == 0 {
         $out.stdout | str trim | split row " " | get 1
     } else {
@@ -158,6 +164,7 @@ def ssh-fingerprint [key: string]: nothing -> string {
 def resolve-pubkey [key_path: path]: nothing -> string {
     let expanded = $key_path | path expand
     let pub_sibling = $"($expanded).pub"
+
     if ($pub_sibling | path exists) {
         return (canonical-file $pub_sibling)
     }

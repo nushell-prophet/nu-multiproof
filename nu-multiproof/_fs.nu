@@ -29,6 +29,7 @@ export def list-files [
     let here = (if $regular { $entries | where type == file } else { $entries | where type != dir })
         | get name
         | where $suffix == "" or ($it | path basename | str ends-with $suffix)
+
     if not $recursive {
         return $here
     }
@@ -37,6 +38,7 @@ export def list-files [
         | get name
         | each {|sub| list-files $sub --recursive --suffix $suffix --regular=$regular }
         | flatten
+
     $here ++ $deeper
 }
 
@@ -63,6 +65,7 @@ export def copy-file [
     --force # overwrite an existing destination, as `cp` did unconditionally
 ]: nothing -> nothing {
     let bytes = open --raw $src | into binary
+
     $bytes | save --raw --force=$force $dest
 }
 
@@ -90,6 +93,7 @@ export def list-dirs [dir: path]: nothing -> list<path> {
 # of the prefix: without it `/a/bc` counts as under `/a/b`.
 export def cwd-relative []: path -> path {
     let p = $in
+
     if ($p | str starts-with ($env.PWD | path join "")) {
         $p | path relative-to $env.PWD
     } else {

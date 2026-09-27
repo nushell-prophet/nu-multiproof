@@ -81,6 +81,7 @@ export def seal-commit-line [
         let endorsements = $result | get --optional sig_ots | default [] | length
         let plural = if $endorsements == 1 { "endorsement" } else { "endorsements" }
         let anchors = (if $content_anchored { ["content"] } else { [] }) ++ [$"($endorsements) ($plural)"]
+
         $"Anchors: ($anchors | str join ' + '), pending until Bitcoin confirms"
     } else {
         "Anchors: none, sealed with --no-stamp"

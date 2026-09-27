@@ -40,16 +40,17 @@ export def tracked-entries [root: path]: nothing -> table {
     let exclude_prefix = $MULTIPROOFS_DIR + "/"
     let entries = (
         ^git -C $root ls-files -s -z
-        | split row (char -i 0)
-        | where { $in != "" }
+        | split row (char --integer 0)
+        | where $it != ""
         # Why split on the first tab instead of `parse`: ls-files -s separates
         # "<mode> <object> <stage>" from the path with one tab, and the path
         # itself may contain tabs (see the control-byte gate below).
         | each {|row|
             let parts = $row | split row --number 2 (char tab)
+
             {mode: ($parts.0 | split row " " | first) path: $parts.1}
         }
-        | where { not ($in.path | str starts-with $exclude_prefix) }
+        | where not ($it.path | str starts-with $exclude_prefix)
         | sort-by path
     )
 
@@ -62,7 +63,8 @@ export def tracked-entries [root: path]: nothing -> table {
     # verifier-side guard for untrusted manifests). Consequence accepted: the
     # repo is unsealable until the file is renamed — per the spec's
     # "reject, never normalize".
-    let control_byte_paths = $entries | get path | where { $in =~ '[\x00-\x1f]' }
+    let control_byte_paths = $entries | get path | where $it =~ '[\x00-\x1f]'
+
     if ($control_byte_paths | is-not-empty) {
         error make {msg: $"git-tracked filenames contain control bytes \(< 0x20\), which merkle leaves reject — rename: ($control_byte_paths | to json)"}
     }
@@ -78,6 +80,7 @@ export def tracked-entries [root: path]: nothing -> table {
     # Naming the offending paths also replaces the opaque death a broken link
     # caused downstream in `open` ("Eval block failed with pipeline input").
     let symlink_paths = $entries | where mode == "120000" | get path
+
     if ($symlink_paths | is-not-empty) {
         error make {msg: $"git-tracked symlinks are not supported — one manifest row cannot describe both the link and its target; remove or replace: ($symlink_paths | to json)"}
     }
@@ -129,10 +132,11 @@ export def tracked-entries [root: path]: nothing -> table {
 export def walked-entries [root: path under: string = "."]: nothing -> list<string> {
     let exclude_prefix = $MULTIPROOFS_DIR + "/"
     let base = if $under == "." { $root } else { $root | path join $under }
+
     if not ($base | path exists) { return [] }
     list-files $base --recursive
-    | each { path relative-to $root }
-    | where { not ($in | str starts-with $exclude_prefix) }
+    | path relative-to $root
+    | where not ($it | str starts-with $exclude_prefix)
     | where {|rel| ".git" not-in ($rel | path split) }
     | sort
 }
@@ -144,7 +148,7 @@ export def walked-entries [root: path under: string = "."]: nothing -> list<stri
 # COMPONENTS and throws when there is no such prefix — the same argument
 # resolve-leaf-file makes for containment.
 export def at-or-under [under: string]: list<string> -> list<string> {
-    $in | where {|rel| try { $rel | path relative-to $under; true } catch { false } }
+    where {|rel| try { $rel | path relative-to $under; true } catch { false } }
 }
 
 # Every directory that appears as a parent of a tracked file. ls-files returns
@@ -153,6 +157,7 @@ export def tracked-dirs [tracked_files: list<string>]: nothing -> list<string> {
     $tracked_files
     | each {|f|
         let parts = $f | path split
+
         if ($parts | length) <= 1 { [] } else {
             1..(($parts | length) - 1) | each {|n| $parts | first $n | path join }
         }
@@ -173,6 +178,7 @@ export def cid-nodes [file_entries: table dirs: list<string>]: nothing -> record
         ($file_entries | get rel) ++ $dirs
         | each {|rel|
             let parent = $rel | path dirname
+
             {parent: (if ($parent | is-empty) { "." } else { $parent }) name: ($rel | path basename) rel: $rel}
         }
         | group-by parent
@@ -184,6 +190,7 @@ export def cid-nodes [file_entries: table dirs: list<string>]: nothing -> record
         | get rel
     )
     mut nodes = $file_entries | reduce --fold {} {|e acc| $acc | insert $e.rel $e.node }
+
     for d in $deepest_first {
         let built = $nodes # a closure cannot capture a mutable variable
         # Why sort by name: `ipfs add` walks directory entries in byte-wise name
@@ -194,6 +201,7 @@ export def cid-nodes [file_entries: table dirs: list<string>]: nothing -> record
             | default []
             | sort-by name
             | each {|c| {name: $c.name node: ($built | get $c.rel)} }
+
         $nodes = ($nodes | insert $d (dir-node $links --path $d))
     }
     $nodes
@@ -235,8 +243,10 @@ export def cid-nodes [file_entries: table dirs: list<string>]: nothing -> record
 #               a verdict.
 export def resolve-leaf-file [target: path filepath: string]: nothing -> string {
     let joined = $target | path join $filepath
+
     if ($joined | path type) == "symlink" { return "symlink" }
     let contained = try { $joined | path expand | path relative-to ($target | path expand); true } catch { false }
+
     if not $contained { return "outside" }
     match ($joined | path type) {
         "file" => "ok"
@@ -277,11 +287,13 @@ export def content-tree [
         | each {|f| {rel: $f status: (resolve-leaf-file $root $f)} }
         | where status != "ok"
     )
+
     if ($problems | is-not-empty) {
         if $lenient {
             return {files: [] dirs: [] nodes: {} problems: $problems}
         }
         let named = $problems | each {|p| $"($p.rel) \(($p.status)\)" } | str join ", "
+
         error make {msg: $"tracked paths do not resolve to regular files inside ($root): ($named)"}
     }
     let dirs = tracked-dirs $tracked_files
@@ -289,6 +301,7 @@ export def content-tree [
         $tracked_files
         | each {|f|
             let content = open --raw ($root | path join $f) | into binary
+
             {
                 rel: $f
                 content_sha256: ($content | hash sha256)
@@ -309,10 +322,12 @@ export def content-tree [
     # with. Both dirs and nodes are narrowed, or the record would list a
     # directory it holds no node for.
     let nodes = cid-nodes $files $dirs
+
     if not ($walk and $under != ".") {
         return {files: $files dirs: $dirs nodes: $nodes problems: []}
     }
     let scoped = $nodes | columns | at-or-under $under
+
     {
         files: $files
         dirs: ($dirs | at-or-under $under)

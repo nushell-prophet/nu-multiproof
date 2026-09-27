@@ -25,6 +25,7 @@ use ../nu-multiproof/_temp-helpers.nu with-temp-dir
 def "verify confirms a real Bitcoin-anchored bundle" [] {
     let bundle = "multiproofs/origin-proofs/tree-hashes.CCA016A8"
     let result = ots verify $"($bundle)/tree-hashes.ots" --file $"($bundle)/tree-hashes.csv"
+
     assert $result.valid
     assert equal $result.height 939896
     assert $result.content_verified
@@ -39,15 +40,17 @@ def "verify confirms a real Bitcoin-anchored bundle" [] {
 # responder chose, block time and all. Only a live explorer can put exactly one
 # responder on the wire, which is why this lives here and not in tests/.
 @test
-def "one explorer is not enough, unless it is asked for" [] {
+def "one explorer is not enough unless it is asked for" [] {
     let proof = "multiproofs/origin-proofs/tree-hashes.CCA016A8/tree-hashes.ots"
 
     let outcome = try { ots verify $proof --sources ["https://mempool.space/api"] | get valid } catch {|e| $e.msg }
+
     assert ($outcome | describe | str starts-with "string") $"expected a refusal, got valid: ($outcome)"
     assert ($outcome | str contains "below --min-sources") $"expected the min-sources refusal, got: ($outcome)"
 
     # The deliberate override still answers.
     let forced = ots verify $proof --sources ["https://mempool.space/api"] --min-sources 1
+
     assert $forced.valid
     assert equal ($forced.sources_confirmed | length) 1
 }
@@ -57,7 +60,7 @@ def "one explorer is not enough, unless it is asked for" [] {
 # URL the fixture author typed, so they cannot catch the allowlist going stale
 # — and a stale allowlist would refuse to upgrade every fresh stamp.
 @test
-def "stamp reaches the public calendar, and upgrade will talk to it" [] {
+def "stamp reaches the public calendar and upgrade will talk to it" [] {
     with-temp-dir "network-stamp" {|dir|
         let file = $dir | path join "doc.txt"
         "hello opentimestamps" | save --raw --force $file

@@ -31,7 +31,7 @@ const SK_ECDSA = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbml
 const RSA_PADDED_MODULUS = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAgAAxMZ8FFYbCIeusNTiBhxcq9Ka4qJ8R6BxJpEnYA7zKPOrw2qx8DvPB+ckOGYUXFEwUuKS2DGxjHhkHx0AWySOD/F2q7IMrO03zGfaCau/7b0p7fOcX5F4sYUkkzJpdw/NBQL4UuIT450m6mmlXgXFund7ggxqYm12fXrXnfZ2NT7FbbLxE+e6KCfKhoeHt5apMAlyWgihgGOM6rU2SgBI7JtD3ArnhQ7jfc1k082MvV2bnKnBmgQ7Ja8pYseQFvNUMDs1pZBO57pFhgoLki1Hs5rPMq9TVPWdhwZcLd4VQuQS6jzqw1keeY4RELhlfEVWQU+i2lX1XT6oTQNZSU5/Yw=="
 
 @test
-def "canonical is `<type> <base64>` + newline: comment and extra whitespace dropped" [] {
+def "canonical is the type and base64 plus a newline with comment and extra whitespace dropped" [] {
     assert equal ($"($ED25519) alice@host\n" | pubkey canonical) $"($ED25519)\n"
     assert equal ($"($ED25519 | str replace ' ' '  ')  " | pubkey canonical) $"($ED25519)\n"
     # already-canonical input is a fixed point — verifiers rely on this
@@ -74,11 +74,13 @@ def "canonical rejects key material that is not a key" [] {
 @test
 def "canonical refuses a second encoding of a key it already accepts" [] {
     let tmp_dir = $in.tmp_dir
+
     assert (ssh-keygen-accepts $tmp_dir $RSA_PADDED_MODULUS) "the vector no longer loads — it must be a key OpenSSH takes, or it proves nothing"
     assert equal (fingerprint-of $tmp_dir $RSA_PADDED_MODULUS) (fingerprint-of $tmp_dir $RSA) "the vector must be the same key to be a fork"
 
     assert equal ($RSA | pubkey canonical) $"($RSA)\n"
     let outcome = try { $RSA_PADDED_MODULUS | pubkey canonical; "accepted" } catch {|e| $e.msg }
+
     assert ($outcome | str contains "not the encoding OpenSSH writes") $"the padded copy was accepted: ($outcome)"
 }
 
@@ -92,12 +94,14 @@ def "canonical is a fixed point for real keys of every accepted type" [] {
     let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
         | each {|args|
             let path = $"($tmp_dir)/fixed-($args | str join '-')"
+
             ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
             open --raw $"($path).pub" | str trim
         }
 
     for key in ($generated ++ [$ED25519 $RSA $SK $SK_ECDSA]) {
         let line = $key | split row --regex '\s+' | first 2 | str join " "
+
         assert equal ($key | pubkey canonical) $"($line)\n"
         # and applying it twice changes nothing more
         assert equal ($key | pubkey canonical | pubkey canonical) $"($line)\n"
@@ -115,10 +119,11 @@ def "canonical is a fixed point for real keys of every accepted type" [] {
 # Mutation-checked: deleting the allowlist leaves every other test in this file
 # green, because the round trip's accept-set is ssh-keygen's own.
 @test
-def "canonical refuses the key shapes ssh-keygen reads but pubkeys/ must not hold" [] {
+def "canonical refuses the key shapes ssh-keygen reads but the pubkeys directory must not hold" [] {
     let tmp_dir = $in.tmp_dir
     let ca = $"($tmp_dir)/ca"
     let user = $"($tmp_dir)/user"
+
     ^ssh-keygen -t ed25519 -f $ca -N "" -q
     ^ssh-keygen -t ed25519 -f $user -N "" -q -C "alice@host"
     ^ssh-keygen -s $ca -I alice-id -n alice -V +52w $"($user).pub"
@@ -140,12 +145,13 @@ def "canonical refuses the key shapes ssh-keygen reads but pubkeys/ must not hol
 # varies with the operator's umask. Run under a fixed umask 0022 for that
 # reason: at 0077 the bug is invisible.
 @test
-def "an unreadable key reports the parser reason, not a umask artifact" [] {
+def "an unreadable key reports the parser reason rather than a umask artifact" [] {
     let tmp_dir = $in.tmp_dir
     let script = $"($tmp_dir)/probe.nu"
     # Valid base64 of the right shape, but not a key: it gets past the type
     # allowlist and dies inside ssh-keygen, which is the branch under test.
     let broken = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICQSxzg3nX7AN3jgd3UK5yRoZgY/SX5cuFFiFwpjKuj="
+
     [
         $"use ($MODULE_DIR)/pubkey.nu"
         $"const BROKEN = \"($broken)\""
@@ -160,6 +166,7 @@ def "an unreadable key reports the parser reason, not a umask artifact" [] {
     # unparseable key. Either is the parse-stage reason; the pins that matter
     # are the two asserts below.
     let parse_reasons = ["invalid format" "error in libcrypto"]
+
     assert ($parse_reasons | any {|reason| $out.stdout | str contains $reason }) $"expected ssh-keygen's parse error, got: ($out.stdout)"
     assert (not ($out.stdout | str contains "UNPROTECTED")) $"the reason is a umask artifact: ($out.stdout)"
     assert (not ($out.stdout | str contains $nu.temp-dir)) $"the reason names a temp path the operator cannot look at: ($out.stdout)"
@@ -172,9 +179,10 @@ def "an unreadable key reports the parser reason, not a umask artifact" [] {
 # good one: the only thing wrong is the environment, and the message must say
 # so.
 @test
-def "a missing ssh-keygen is reported as a toolchain problem, not a bad key" [] {
+def "a missing ssh-keygen is reported as a toolchain problem rather than a bad key" [] {
     let tmp_dir = $in.tmp_dir
     let bin = $"($tmp_dir)/bin"
+
     mkdir $bin
     # A PATH holding nu and chmod but no ssh-keygen. nu is needed to run the
     # probe at all; chmod stays so the assertion is about ssh-keygen alone.
@@ -182,6 +190,7 @@ def "a missing ssh-keygen is reported as a toolchain problem, not a bad key" [] 
         ^ln -s (which $tool | get 0.path) $"($bin)/($tool)"
     }
     let script = $"($tmp_dir)/probe.nu"
+
     [
         $"use ($MODULE_DIR)/pubkey.nu"
         $"const GOOD = \"($ED25519)\""
@@ -189,6 +198,7 @@ def "a missing ssh-keygen is reported as a toolchain problem, not a bad key" [] 
     ] | str join "\n" | save --force $script
 
     let out = ^bash -c $"PATH=($bin) exec ($bin)/nu ($script)" | complete
+
     assert ($out.stdout | str contains "toolchain problem") $"expected a toolchain message, got: ($out.stdout)($out.stderr)"
     assert (not ($out.stdout | str contains "not an SSH public key")) $"a good key was blamed: ($out.stdout)"
 }
@@ -200,7 +210,13 @@ def "canonical rejects a truncated or padded blob" [] {
     # length prefix runs past the end of the blob
     assert error {|| "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNr" | pubkey canonical }
     # a whole extra byte after the last field
-    let padded = ($ED25519 | split row " " | get 1 | decode base64 | bytes add --end 0x[00] | encode base64)
+    let padded = $ED25519
+        | split row " "
+        | get 1
+        | decode base64
+        | bytes add --end 0x[00]
+        | encode base64
+
     assert error {|| $"ssh-ed25519 ($padded)" | pubkey canonical }
 }
 
@@ -230,6 +246,7 @@ def cleanup [] {
 
 def ssh-keygen-accepts [dir: path line: string]: nothing -> bool {
     let file = $"($dir)/candidate.pub"
+
     $line | save --force $file
     (do { ^ssh-keygen -lf $file } | complete | get exit_code) == 0
 }
@@ -238,6 +255,7 @@ def ssh-keygen-accepts [dir: path line: string]: nothing -> bool {
 # itself would report for it.
 def fingerprint-of [dir: path line: string]: nothing -> string {
     let file = $"($dir)/fingerprint.pub"
+
     $line | save --force $file
     ^ssh-keygen -lf $file | str trim | split row " " | get 1
 }
@@ -247,6 +265,7 @@ def fingerprint-of [dir: path line: string]: nothing -> string {
 # 4648, so the padding a 32-byte digest drops has to be put back.
 def ssh-fingerprint-hex [dir: path line: string]: nothing -> string {
     let b64 = fingerprint-of $dir $line | str replace "SHA256:" ""
+
     $"($b64)=" | decode base64 | encode hex | str lowercase
 }
 
@@ -257,17 +276,19 @@ def ssh-fingerprint-hex [dir: path line: string]: nothing -> string {
 # would be comparing two different things. Hex versus base64 is the only
 # difference the two spellings are allowed to have.
 @test
-def "fingerprint is the digest ssh-keygen prints, written as hex" [] {
+def "fingerprint is the digest ssh-keygen prints written as hex" [] {
     let tmp_dir = $in.tmp_dir
     let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
         | each {|args|
             let path = $"($tmp_dir)/fp-($args | str join '-')"
+
             ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
             open --raw $"($path).pub" | str trim
         }
 
     for key in ($generated ++ [$ED25519 $RSA $SK $SK_ECDSA]) {
         let mine = $key | pubkey fingerprint
+
         assert equal $mine (ssh-fingerprint-hex $tmp_dir $key) $"fingerprint diverges from ssh-keygen for ($key | str substring 0..40)"
         assert ($mine =~ '^[0-9a-f]{64}$') $"a principal must be 64 lowercase hex, got ($mine)"
         # The comment is not part of the identity: it is not part of the blob.
@@ -284,11 +305,17 @@ def "fingerprint is the digest ssh-keygen prints, written as hex" [] {
 @test
 def "fingerprint refuses an encoding canonical refuses" [] {
     let tmp_dir = $in.tmp_dir
+
     assert equal (fingerprint-of $tmp_dir $RSA_PADDED_MODULUS) (fingerprint-of $tmp_dir $RSA) "the vector must be the same key to be a fork"
     assert error {|| $RSA_PADDED_MODULUS | pubkey fingerprint }
 
     # ...and the value it would have produced really is a second identity.
-    let unvalidated = $RSA_PADDED_MODULUS | split row " " | get 1 | decode base64 | hash sha256
+    let unvalidated = $RSA_PADDED_MODULUS
+        | split row " "
+        | get 1
+        | decode base64
+        | hash sha256
+
     assert not ($unvalidated == ($RSA | pubkey fingerprint)) "the padded blob hashes the same, so this pins nothing"
 }
 
@@ -306,6 +333,7 @@ def "canonical never accepts a key ssh-keygen cannot load" [] {
     let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
         | each {|args|
             let path = $"($tmp_dir)/gen-($args | str join '-')"
+
             ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
             open --raw $"($path).pub" | str trim
         }
@@ -325,7 +353,9 @@ def "canonical never accepts a key ssh-keygen cannot load" [] {
         "ssh-rsa AAAAB3NzaC1yc2EAAAADAQAB"
         # The type says nistp256, the blob says nistp384.
         (
-            $generated | where ($it | str starts-with "ecdsa-sha2-nistp384") | first
+            $generated
+            | where $it starts-with "ecdsa-sha2-nistp384"
+            | first
             | str replace "ecdsa-sha2-nistp384" "ecdsa-sha2-nistp256"
         )
         # A structurally sound ssh-dss line — 5 length-prefixed fields, the
@@ -366,14 +396,17 @@ def "canonical never accepts a key ssh-keygen cannot load" [] {
     # `$it.`-qualified, not `where canonical and not ssh_keygen`: the bare word
     # on the right of a `where` shorthand is a string literal, so that form
     # compares every row against "ssh_keygen" instead of reading the column.
-    let unloadable = $verdicts | where $it.canonical and not $it.ssh_keygen
-        | each {|r| $r | update line ($r.line | str substring 0..48) }
+    let unloadable = $verdicts
+        | where $it.canonical and not $it.ssh_keygen
+        | update line { str substring 0..48 }
+
     assert equal $unloadable [] "canonical accepted a key ssh-keygen cannot load"
 
     # Not vacuous: a `canonical` that refused everything would satisfy the
     # assertion above.
     let real_keys = $generated ++ [$ED25519 $RSA $SK $SK_ECDSA]
     let real = $verdicts | where $it.line in $real_keys
+
     assert equal ($real | length) ($real_keys | length) "a real key is missing from the candidate list"
-    assert ($real | all {|r| $r.canonical and $r.ssh_keygen }) $"a real key was refused: ($real | where not $it.canonical | get line | each {|l| $l | str substring 0..48 })"
+    assert ($real | all {|r| $r.canonical and $r.ssh_keygen }) $"a real key was refused: ($real | where not $it.canonical | get line | str substring 0..48)"
 }

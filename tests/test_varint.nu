@@ -24,9 +24,10 @@ def "known base-128 varint vectors" [] {
 # to `into binary` and returned two's-complement bytes: -1 became 0xFF, which
 # any reader decodes as 127. Silently the wrong number, never an error.
 @test
-def "a negative input is refused, not encoded as something else" [] {
+def "a negative input is refused rather than encoded as something else" [] {
     for n in [-1 -128 -262144] {
         let outcome = try { $n | encode-varint | encode hex } catch {|e| $e.msg }
+
         assert ($outcome | str contains "non-negative") $"expected a refusal for ($n), got: ($outcome)"
     }
 }

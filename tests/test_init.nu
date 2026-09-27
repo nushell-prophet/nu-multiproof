@@ -25,6 +25,7 @@ def registered [repo: path]: nothing -> list<string> {
 
 def make-repo [tmp_dir: path]: nothing -> path {
     let repo = $"($tmp_dir)/repo"
+
     mkdir $repo
     ^git -C $repo init -q
     $repo
@@ -45,11 +46,12 @@ def cleanup [] {
 # Nothing derives a file name from a key comment: the name is the fingerprint,
 # and the comment does not survive `pubkey canonical` at all.
 @test
-def "an inline key registers under its fingerprint, not its comment" [] {
+def "an inline key registers under its fingerprint rather than its comment" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -C "alice@bar.com" -q
     ^git -C $repo config user.signingKey $"key::(open --raw $"($key_path).pub" | str trim)"
 
@@ -62,13 +64,15 @@ def "an inline key registers under its fingerprint, not its comment" [] {
 # split on a single space, and the line still has to reach `canonical` intact.
 # No field of it decides a name — the fingerprint does.
 @test
-def "a commentless inline key registers under its fingerprint, whatever the spacing" [] {
+def "a commentless inline key registers under its fingerprint whatever the spacing" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -C "" -q
     let spaced = (open --raw $"($key_path).pub" | str trim | str replace " " "  ")
+
     ^git -C $repo config user.signingKey $"key::($spaced)"
 
     init --repo $repo
@@ -83,12 +87,14 @@ def "init refuses to copy a private-key file as pubkey" [] {
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     rm $"($key_path).pub"
 
     ^git -C $repo config user.signingKey $key_path
 
     let outcome = (try { init --repo $repo; "ok" } catch {|e| $"err:($e.msg)" })
+
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
     assert equal (registered $repo) []
@@ -103,10 +109,12 @@ def "init --pubkey refuses a private-key file" [] {
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     rm $"($key_path).pub"
 
     let outcome = (try { init --repo $repo --pubkey $key_path; "ok" } catch {|e| $"err:($e.msg)" })
+
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
 
     assert equal (registered $repo) []
@@ -115,28 +123,31 @@ def "init --pubkey refuses a private-key file" [] {
 # --pubkey pointed at the private key with .pub sibling present should still
 # resolve to the .pub sibling (mirrors the git-config branch's forgiving lookup).
 @test
-def "init --pubkey prefers .pub sibling over private-key path" [] {
+def "init --pubkey prefers the pub sibling over the private-key path" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
 
     init --repo $repo --pubkey $key_path
 
     assert equal (registered $repo) [$"(principal-of $"($key_path).pub").pub"]
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/(registered $repo | first)")
+
     assert ($saved | str starts-with "ssh-")
 }
 
 # When both <path> and <path>.pub exist, init should prefer the .pub sibling
 # even if user.signingKey points at the private file (forgiving misconfig).
 @test
-def "init prefers .pub sibling when signingKey points to private key" [] {
+def "init prefers the pub sibling when signingKey points to a private key" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
 
     ^git -C $repo config user.signingKey $key_path
@@ -145,6 +156,7 @@ def "init prefers .pub sibling when signingKey points to private key" [] {
 
     assert equal (registered $repo) [$"(principal-of $"($key_path).pub").pub"]
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/(registered $repo | first)")
+
     assert ($saved | str starts-with "ssh-")
 }
 
@@ -152,16 +164,19 @@ def "init prefers .pub sibling when signingKey points to private key" [] {
 # branch. Without it, `key::<private key material>` lands a private key in
 # pubkeys/ under a .pub name — the exact outcome the other branches refuse.
 @test
-def "init refuses inline key:: material that is not a public key" [] {
+def "init refuses inline key material that is not a public key" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     let private_data = (open --raw $key_path | str trim)
+
     ^git -C $repo config user.signingKey $"key::($private_data)"
 
     let outcome = (try { init --repo $repo; "ok" } catch {|e| $"err:($e.msg)" })
+
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
     # The inner refusal must survive: private key material is multi-line, and
     # `pubkey canonical` names that exact reason. A bare `str contains "public
@@ -176,11 +191,12 @@ def "init refuses inline key:: material that is not a public key" [] {
 # the file), so every write path must land the canonical `<type> <base64>\n`
 # form — the comment ssh-keygen embeds must not survive into pubkeys/.
 @test
-def "init stores the registered pubkey in canonical form, comment dropped" [] {
+def "init stores the registered pubkey in canonical form with the comment dropped" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -C "alice@host" -q
 
     init --repo $repo --pubkey $"($key_path).pub"
@@ -188,6 +204,7 @@ def "init stores the registered pubkey in canonical form, comment dropped" [] {
     assert equal (registered $repo | length) 1
     let saved = (open --raw $"($repo)/multiproofs/pubkeys/(registered $repo | first)")
     let src = (open --raw $"($key_path).pub" | str trim | split row " ")
+
     assert equal $saved $"($src.0) ($src.1)\n"
 }
 
@@ -200,6 +217,7 @@ def "init reports the same key registered twice as already registered" [] {
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/alice"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     let name = $"(principal-of $"($key_path).pub").pub"
 
@@ -207,6 +225,7 @@ def "init reports the same key registered twice as already registered" [] {
     let first = (open --raw $"($repo)/multiproofs/pubkeys/($name)")
 
     let out = (^nu -c $"use ($MODULE_DIR)/init.nu; init --repo ($repo) --pubkey ($key_path).pub" | complete)
+
     assert equal $out.exit_code 0 $"expected exit 0, got ($out)"
     assert ($out.stdout | str contains $"pubkey already registered: multiproofs/pubkeys/($name)") $"got ($out.stdout)"
 
@@ -222,6 +241,7 @@ def "the same key offered under two file names registers once" [] {
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/alice"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     init --repo $repo --pubkey $"($key_path).pub"
 
@@ -240,6 +260,7 @@ def "two different keys sharing a comment both register" [] {
 
     let expected = ["first" "second"] | each {|which|
             let key = $"($tmp_dir)/($which)"
+
             ^ssh-keygen -t ed25519 -f $key -N "" -C "alice@host" -q
             ^git -C $repo config user.signingKey $"key::(open --raw $"($key).pub" | str trim)"
             init --repo $repo
@@ -255,21 +276,24 @@ def "two different keys sharing a comment both register" [] {
 # success. The file is written by hand for that reason; nothing this repo does
 # produces one.
 @test
-def "a file named for one key but holding another is refused, not overwritten" [] {
+def "a file named for one key but holding another is refused rather than overwritten" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     let alice = $"($tmp_dir)/alice"
     let bob = $"($tmp_dir)/bob"
+
     ^ssh-keygen -t ed25519 -f $alice -N "" -q
     ^ssh-keygen -t ed25519 -f $bob -N "" -q
 
     let lying = $"($repo)/multiproofs/pubkeys/(principal-of $"($alice).pub").pub"
+
     mkdir ($lying | path dirname)
     open --raw $"($bob).pub" | save --force $lying
     let planted = open --raw $lying
 
     let outcome = try { init --repo $repo --pubkey $"($alice).pub"; "ok" } catch {|e| $e.msg }
+
     assert ($outcome | str contains "holds a different key") $"got ($outcome)"
     # Both fingerprints, in the form ssh-keygen prints, so the operator can tell
     # which file to move.
@@ -298,6 +322,7 @@ def "init refuses a second encoding of a key it already holds" [] {
 
     $"($RSA_PADDED_MODULUS) mallory@host\n" | save --force $"($tmp_dir)/mallory.pub"
     let outcome = try { init --repo $repo --pubkey $"($tmp_dir)/mallory.pub"; "ok" } catch {|e| $e.msg }
+
     assert ($outcome | str contains "not the encoding OpenSSH writes") $"the padded copy was registered: ($outcome)"
     # The same key, so OpenSSH reports the same fingerprint for both — that is
     # what makes this a fork rather than two keys.
@@ -310,12 +335,13 @@ def "init refuses a second encoding of a key it already holds" [] {
 # key IS a real public key, and only the canonical error naming both encodings
 # (given vs what OpenSSH writes) tells the operator what is wrong with it.
 @test
-def "an inline key:: padded encoding surfaces the canonical error naming both encodings" [] {
+def "an inline key with a padded encoding surfaces the canonical error naming both encodings" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     ^git -C $repo config user.signingKey $"key::($RSA_PADDED_MODULUS)"
     let outcome = try { init --repo $repo; "ok" } catch {|e| $e.msg }
+
     assert ($outcome | str contains "not the encoding OpenSSH writes") $"canonical's refusal was replaced: ($outcome)"
     assert ($outcome | str contains $RSA_PADDED_MODULUS) $"the given encoding is missing: ($outcome)"
     assert ($outcome | str contains $RSA_ALICE) $"the encoding OpenSSH writes is missing: ($outcome)"
@@ -325,29 +351,33 @@ def "an inline key:: padded encoding surfaces the canonical error naming both en
 # The toolchain refusal through the inline `key::` path: with ssh-keygen off
 # PATH the catch there must not turn "this is a toolchain problem" into a
 # verdict about the key. Same probe shape as tests/test_pubkey.nu "a missing
-# ssh-keygen is reported as a toolchain problem, not a bad key"; git joins the
+# ssh-keygen is reported as a toolchain problem rather than a bad key"; git joins the
 # PATH because init reads the key out of git config before any parsing happens.
 @test
-def "a missing ssh-keygen through key:: stays a toolchain problem, not a bad key" [] {
+def "a missing ssh-keygen through an inline key stays a toolchain problem rather than a bad key" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     ^git -C $repo config user.signingKey $"key::(open --raw $"($key_path).pub" | str trim)"
 
     let bin = $"($tmp_dir)/bin"
+
     mkdir $bin
     for tool in ["nu" "git" "chmod"] {
         ^ln -s (which $tool | get 0.path) $"($bin)/($tool)"
     }
     let script = $"($tmp_dir)/probe.nu"
+
     [
         $"use ($MODULE_DIR)/init.nu"
         $"try { init --repo ($repo) } catch {|e| print $e.msg }"
     ] | str join "\n" | save --force $script
 
     let out = ^bash -c $"PATH=($bin) exec ($bin)/nu ($script)" | complete
+
     assert ($out.stdout | str contains "toolchain problem") $"expected a toolchain message, got: ($out.stdout)($out.stderr)"
     assert (not ($out.stdout | str contains "not an SSH public key")) $"a good key was blamed: ($out.stdout)"
 }
@@ -363,9 +393,11 @@ def "init refuses an inline key whose type names a path" [] {
     # One level up, into a directory that exists: the write lands unless the
     # type itself is refused.
     let escape = $"($repo)/multiproofs/pwned.pub"
+
     ^git -C $repo config user.signingKey "key::ssh-../pwned Zm9v"
 
     let outcome = (try { init --repo $repo; "ok" } catch {|e| $"err:($e.msg)" })
+
     assert ($outcome | str starts-with "err:") $"expected error, got ($outcome)"
     assert (not ($escape | path exists)) "init wrote outside pubkeys/"
     assert equal (registered $repo) []
@@ -379,11 +411,13 @@ def "a source file name the trust list could never express registers fine" [] {
     let repo = make-repo $tmp_dir
 
     let key_path = $"($tmp_dir)/sshkey"
+
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     let expected = [$"(principal-of $"($key_path).pub").pub"]
 
     for stem in ["al ice" "*" "alice,mallory" 'ali"ce' "ali?e" "#alice" "ali\u{200b}ce"] {
         let source = $"($tmp_dir)/($stem).pub"
+
         cp $"($key_path).pub" $source
 
         init --repo $repo --pubkey $source
