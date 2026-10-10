@@ -13,12 +13,13 @@ No external dependencies beyond `git`, `ssh-keygen` and `chmod`
 — network calls use Nushell's built-in `http`.
 
 🚧 A proof of concept.
-The code was generated with Claude Code
-and has never been reviewed by an outside cryptographer
+Claude Code generated the code,
+and no outside cryptographer has ever reviewed it
 — do not rely on it for anything that matters.
 Its guards are tested against hostile artifacts built by hand,
-not only against the output of its own builder;
-that shows the guards do something, not that the design is sound.
+not only against the output of its own builder.
+These tests show the guards do something.
+They do not show that the design is sound.
 
 ## What you can prove
 
@@ -41,35 +42,35 @@ so it is minted when that statement is written.
 
 Signing is the step under two of the claims, not a fourth one:
 the root statement that `ssh-sign` signs carries the merkle root and the beacon.
-The timestamp does not rest on a key
-— an OTS proof is a hash compare —
-which is why the content and its signature are stamped separately (see [Dating the endorsement](SPEC.md#dating-the-endorsement)).
+The timestamp does not depend on a key
+— an OTS proof is a hash compare.
+For this reason, the content and its signature are stamped separately (see [Dating the endorsement](SPEC.md#dating-the-endorsement)).
 
-A signer is named by its **key fingerprint**:
+The name of a signer is its **key fingerprint**:
 the SHA-256 of the key blob, as 64 lowercase hex.
-Nothing is read from a file name or a key comment.
-A fingerprint names a key, not a person,
-and binding it to a person is the verifier's step
+The tool reads nothing from a file name or a key comment.
+A fingerprint names a key, not a person.
+The verifier does the step that binds it to a person
 — see [Verifying commit signatures](#verifying-commit-signatures).
 The details are under [Signers](SPEC.md#signers).
 
 Any git repo works, SHA-1 or SHA-256:
-the merkle tree and the CID hash file contents, not git objects.
+the merkle tree and the CID hash the contents of files, not git objects.
 
 ## Prerequisites
 
 - [Nushell](https://www.nushell.sh/)
-  — the suite passes on 0.115.1;
-  the minimum supported version has not been established
+  — the test suite passes on 0.115.1;
+  the minimum supported version is not known
 - `git` (any repo)
 - `chmod`
   — `pubkey canonical` writes a key to a temp file at 0600 before handing it to `ssh-keygen`,
   so it sits on the same path as `ssh-keygen` below and is checked for at the same moment
 - `ssh-keygen`, from OpenSSH
-  — for signing, and also for **verifying**:
-  `pubkey canonical` defers to `ssh-keygen` to decide what is a well-formed key,
-  so anything that renders a trust list needs it.
-  That includes `init`, `ssh-sign verify` and `merkle verify`.
+  — to sign, and also to **verify**:
+  `pubkey canonical` lets `ssh-keygen` decide what a well-formed key is,
+  so every command that renders a trust list needs it.
+  These commands include `init`, `ssh-sign verify` and `merkle verify`.
   A missing binary is reported as a broken toolchain, never as a verdict about the artifact
 
 ## Quick start
@@ -87,20 +88,22 @@ nu-multiproof merkle prove README.md               # a compact proof for one fil
 nu-multiproof merkle verify multiproofs/inclusion-proofs/README.md.multiproof.json
 ```
 
-`seal` posts a digest to the public OpenTimestamps calendar, a permanent public write;
+`seal` posts a digest to the public OpenTimestamps calendar.
+This is a permanent public write.
 `seal --no-stamp` seals offline.
-The timestamp stays *pending* until Bitcoin confirms it, hours or days later;
+The timestamp stays *pending* until Bitcoin confirms it, after hours or days;
 the next `seal`, or `ots upgrade`, completes it.
 
 ## All commands
 
-Every command that works on a repo takes `--repo`,
-defaulting to the git root of the current directory
-— `init`, `tree-hashes`, `tree-hashes root-cid`, `merkle write-root`, `merkle prove`, `merkle verify`, `seal` and `seal status`.
-`ssh-sign sign`, `ssh-sign verify` and `ots stamp` predate the rule:
-they resolve the git root of the current directory with no way to override it,
-so a chain using them runs from inside the target repo.
-The remaining commands take bytes or a file path and no repo at all.
+Every command that works on a repo takes `--repo`.
+The default is the git root of the current directory.
+These commands are `init`, `tree-hashes`, `tree-hashes root-cid`, `merkle write-root`, `merkle prove`, `merkle verify`, `seal` and `seal status`.
+`ssh-sign sign`, `ssh-sign verify` and `ots stamp` are older than this rule:
+they resolve the git root of the current directory,
+and no flag overrides it.
+So a chain that uses them runs from inside the target repo.
+The other commands take bytes or a file path, and no repo at all.
 
 ```nushell no-run
 use nu-multiproof/   # from this repo's root; from elsewhere, give the path
@@ -142,41 +145,49 @@ open --raw README.md | nu-multiproof cid-v0    # the CID v0 of any bytes, as tre
 
 This document and `SPEC.md` refer to these by number.
 
-1. **Upgrade** every pending `.ots` it finds — opportunistic, so earlier seals progress.
-   Still pending is silent; any other failure is printed and skipped.
-2. **Beacon** — mint the lower time bound and carry it into the statement stage 3 writes.
-   It runs before anything on disk is touched, so an explorer outage costs nothing.
+1. **Upgrade** every pending `.ots` that it finds.
+   This step is opportunistic, so earlier seals move forward.
+   If a stamp is still pending, the step says nothing;
+   it prints and skips any other failure.
+2. **Beacon** — mint the lower time bound,
+   and put it into the statement that stage 3 writes.
+   It runs before the tool touches anything on disk,
+   so an explorer outage costs nothing.
 3. **Manifest and root** — regenerate `multiproofs/tree-hashes.csv` from the worktree,
    then derive `multiproofs/tree-root.txt` from it.
 4. **Sign** the root statement.
 5. **Stamp** the root statement and every signature over it, into one bundle.
 
-`--no-stamp` skips stages 2 and 5; `--no-content-anchor` runs stage 5 over the signatures only.
-Stage 1 is not skipped by either,
-so `--no-stamp` reaches the network anyway when the tree holds a pending `.ots`
-— it seals offline only in a repo with nothing left to upgrade.
+`--no-stamp` skips stages 2 and 5;
+`--no-content-anchor` runs stage 5 over the signatures only.
+Neither flag skips stage 1,
+so `--no-stamp` reaches the network anyway when the tree contains a pending `.ots`.
+It seals offline only in a repo that has nothing left to upgrade.
 
 `seal` refuses a repo with no tracked files:
-the root of a no-file tree is the same for every empty repo,
-so a signature over it would state nothing about this one.
+the root of a tree with no files is the same for every empty repo.
+So a signature over it would state nothing about this repo.
 A repo that has files but no commit yet seals normally
 — only `multiproofs/snapshot.txt` is withheld, since there is no HEAD to name.
 The same holds for a dirty tree, and a stale snapshot record is deleted rather than left behind.
 
-`init` is safe to re-run.
-It creates nothing that is already there,
-names the key already registered,
-and exits 0.
-A re-run with `--pubkey` adds that key if the trust list does not hold it,
-and says so if it does;
-a bare re-run registers the signing key from `git config`, which after the first run is already there.
+It is safe to run `init` again.
+It creates nothing that already exists,
+it names the key that is already registered,
+and it exits 0.
+If `init` runs again with `--pubkey`,
+it adds that key when the trust list does not contain it.
+When the list contains it, `init` says so.
+A second run with no flags registers the signing key from `git config`.
+After the first run, that key is already there.
 
 ### Sealing under an explicit key
 
-The signing key comes from the target repo's `git config user.signingKey`;
+The signing key comes from `git config user.signingKey` of the target repo.
 `seal` has no `--key` flag,
-because a repo's signing identity belongs in its config rather than in each invocation.
-To seal under a different key, run the steps `seal` wraps:
+because the signing identity of a repo belongs in its config,
+not in each command call.
+To seal under a different key, run the steps that `seal` wraps:
 
 ```nushell no-run
 nu-multiproof init --pubkey ./otherkey.pub          # register it: sign refuses an unregistered key
@@ -186,46 +197,50 @@ nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ./otherkey
 nu-multiproof ots stamp multiproofs/tree-root.txt   # optional — the time anchor
 ```
 
-`merkle write-root` mints no beacon of its own:
-its `--beacon` defaults to `none`, so this chain produces a statement with no lower bound
-unless a token from `beacon latest` is passed in.
+`merkle write-root` does not mint a beacon itself:
+the default of its `--beacon` is `none`.
+So this chain makes a statement with no lower bound,
+unless the signer gives it a token from `beacon latest`.
 
-That is what `merkle write-root` is for on its own:
-it is the only way to mint `tree-root.txt` without `seal`,
-and therefore without `seal`'s key.
-What follows it is a plain `ssh-sign sign`,
-so a second signer is added the same way
-— sign the existing `tree-root.txt`, no re-rooting.
+This is the purpose of `merkle write-root` as a separate command.
+`merkle write-root` is the only way to mint `tree-root.txt` without `seal`,
+and so without the key of `seal`.
+The next step is a plain `ssh-sign sign`.
+So add a second signer the same way:
+sign the current `tree-root.txt`, and do not make a new root.
 
-Two things this path does not buy.
-Staying offline is one:
-`seal --no-stamp` already skips the calendar post,
-so reach for the manual chain only for the key.
-The other is a repo elsewhere
-— `ssh-sign sign` takes `--pubkeys-dir` but no `--repo`,
-so run the chain from inside the target repo.
+Two other goals do not need this path.
+The first is to stay offline:
+`seal --no-stamp` already skips the calendar post.
+So use the manual chain only for the key.
+The second is a repo in a different location:
+`ssh-sign sign` takes `--pubkeys-dir` but no `--repo`.
+So run the chain from inside the target repo.
 
-Its cost is state between steps:
-a manifest regenerated after the root was signed leaves a CSV no signature covers.
-`merkle verify` catches exactly that and reports it as `manifest_root`
+The cost of this path is state between steps:
+if the manifest is regenerated after the signer signs the root,
+no signature covers the new CSV.
+`merkle verify` finds exactly that,
+and reports it as `manifest_root`
 — see [Merkle inclusion proofs](SPEC.md#merkle-inclusion-proofs).
 
 ### Committing a seal
 
 `seal` does not commit,
 and `--propose-commit` does not change that.
-It writes the commit into your prompt with `commandline edit` and stops there,
-so nothing runs until you read it, edit it and press enter.
-What it removes is the other failure:
-a seal landing under "wip", or spread over three commits,
-which makes the log useless for the one question it should answer
+It writes the commit into the prompt of the signer with `commandline edit`,
+and then it stops.
+Nothing runs until the signer reads it, edits it and presses enter.
+It removes a different failure:
+a seal that goes into a commit called "wip", or that spreads over three commits.
+Then the log cannot answer the one question that it should answer
 — when was this root sealed.
 
 ```nushell no-run
 nu-multiproof seal --propose-commit
 ```
 
-The prompt then holds this, unrun:
+Then the prompt contains this, and it does not run:
 
 ```nushell no-run
 let repo = "/path/to/repo"
@@ -241,60 +256,65 @@ git -C $repo add -- multiproofs
 git -C $repo commit -m $msg
 ```
 
-A block with variables rather than one long line,
+The proposal is a block with variables, not one long line,
 because the message is meant to be edited before it runs
 and a body escaped into `\n` inside a quoted argument is the one shape that cannot be edited comfortably.
 `$msg` gives the body real lines;
-`$repo` is used twice.
-Splitting `add` from `commit` costs nothing:
-Nushell throws on a non-zero external exit,
+the block uses `$repo` two times.
+A separate `add` and `commit` cost nothing:
+Nushell throws an error when an external command exits non-zero,
 so a failed `add` still stops before `commit`.
 
-Why the block is shaped this way, and what it does not sanitize, is under [Committing a seal](SPEC.md#committing-a-seal).
+The reason for this block shape, and what the block does not sanitize, are under [Committing a seal](SPEC.md#committing-a-seal).
 
 ## Exit status
 
 A verdict is a returned value, not an exit code.
-`ots verify`, `beacon verify`, `merkle verify` and `ssh-sign verify` all return a record carrying `valid`,
-and all four **exit 0 whether that field is `true` or `false`**.
+`ots verify`, `beacon verify`, `merkle verify` and `ssh-sign verify` all return a record with a `valid` field.
+All four **exit 0 whether that field is `true` or `false`**.
 So a CI job that only reads the exit code passes on a tampered artifact.
 
-Pass `--fail` to those four commands to make a not-valid result exit 1.
-Without it the record is returned and the caller decides,
-so `--fail` is the flag that turns a report into a gate.
+To make a not-valid result exit 1, pass `--fail` to those four commands.
+Without it, the command returns the record and the caller decides.
+So `--fail` is the flag that turns a report into a gate.
 
-Two of the four are pinned by tests
+Tests pin two of the four
 — "verify --fail errors on invalid signature" for `ssh-sign verify`,
 and the `merkle verify` cases in `tests/test_merkle.nu`.
-`ots verify --fail` and `beacon verify --fail` behave the same way but no test holds them there.
+`ots verify --fail` and `beacon verify --fail` behave the same way,
+but no test holds them there.
 
-Everything else exits non-zero by throwing, with no flag needed.
+All other failures throw an error, and so exit non-zero, with no flag necessary.
 That is the difference between a verdict and a broken run,
 and the two never share an exit code:
 
 - A refusal to make a claim at all
-  — `merkle verify --signer <fingerprint>` where the trust list holds no such key,
+  — `merkle verify --signer <fingerprint>` where the trust list contains no such key,
   `merkle prove <path>` where the path is not in the manifest,
   `ots verify` on a proof that is still pending.
 - A toolchain problem
-  — `ssh-keygen` or `chmod` missing from `PATH`.
+  — `ssh-keygen` or `chmod` is not in `PATH`.
 - An outage
-  — fewer than `--min-sources` explorers answering, or explorers disagreeing.
-- `ots stamp` losing the race for `<stem>.ots`.
-  The digest already reached the calendar, so the assembled proof is parked beside it
-  and the path is named in the error.
-- `seal --no-stamp` together with `--no-content-anchor`, refused before anything is touched.
+  — fewer than `--min-sources` explorers answer, or the explorers disagree.
+- A race for `<stem>.ots` that `ots stamp` loses.
+  The digest is already at the calendar,
+  so `ots stamp` puts the assembled proof beside that file,
+  and the error names the path.
+- `seal --no-stamp` together with `--no-content-anchor`:
+  `seal` refuses it before it touches anything.
 
-`nu toolkit.nu test` exits non-zero on any failing test.
-That is `--fail` again, on by default there, with `--no-fail` to opt out.
+`nu toolkit.nu test` exits non-zero if any test fails.
+That is `--fail` again:
+there it is on by default,
+and `--no-fail` disables it.
 
 ## Verifying without the origin repo
 
 The artifact set is portable.
-Lay it out in a plain directory
+Put it in a plain directory
 — no git, no clone of the origin repo —
-mirroring the `multiproofs/` layout,
-and point `merkle verify` at it with `--repo`:
+with the same layout as `multiproofs/`.
+Then point `merkle verify` at it with `--repo`:
 
 ```text
 bundle/
@@ -312,122 +332,130 @@ nu-multiproof merkle verify bundle/multiproofs/inclusion-proofs/README.md.multip
 ```
 
 The proof file belongs under `multiproofs/`, not at the bundle root.
-Everything under that prefix is excluded from the manifest and from the re-derivation,
-so a proof of the `.` row does not fold its own proof file into the CID it is checking.
-At the root it would,
+The manifest and the re-derivation exclude everything under that prefix.
+So a proof of the `.` row does not fold its own proof file into the CID that it checks.
+At the root, it would do this,
 and the bundle would report itself as tampered.
 
-This is a supported contract, pinned by a test
+This is a supported contract that a test pins
 — not an accident of path handling:
 an explicit `--repo` is taken as-is (no git required),
 and every lookup is layout-relative to it.
 One caveat:
-`seal`'s opportunistic OTS upgrade only walks the target repo's own `multiproofs/ots-timestamps/`,
-so a bundle's `pending` stamp stays pending until you run `ots upgrade` on it yourself.
+the opportunistic OTS upgrade of `seal` walks only the `multiproofs/ots-timestamps/` of the target repo.
+So a `pending` stamp in a bundle stays pending until `ots upgrade` runs on it directly.
 
-A proof of a **directory row** (or of `.`) works the same way, with one extra thing in the bundle:
-the subtree itself, laid out under the row's `filepath`.
-A directory's `content_cid` commits to every entry under it,
-so it can only be re-derived from the files,
-and a compact proof cannot stand in for them.
-Away from the origin repo there is no git index to enumerate from,
-so `merkle verify` walks the bundle instead
-— dropping `multiproofs/` and `.git`, the two directories the manifest never covered and which sit *inside* the walked tree when the row is `.`.
-Dropping `.git` is what lets a bundle be a clone of the sealed repo,
-the most ordinary way one travels (pinned by "the root row of a bundle distributed as a git repo still verifies").
+A proof of a **directory row** (or of `.`) works the same way.
+The bundle then holds one more thing:
+the subtree itself, under the `filepath` of the row.
+The `content_cid` of a directory commits to every entry under it.
+So it can be re-derived only from the files,
+and a compact proof cannot replace them.
+Away from the origin repo, there is no git index to enumerate from,
+so `merkle verify` walks the bundle.
+It drops `multiproofs/` and `.git`.
+The manifest never covered these two directories,
+and they are *inside* the walked tree when the row is `.`.
+Because the walk drops `.git`, a bundle can be a clone of the sealed repo.
+That is the most usual way that a bundle travels (pinned by "the root row of a bundle distributed as a git repo still verifies").
 
 That walk trusts the bundle for the file list,
-and does not need to:
-the sealed `content_cid` is what checks the list.
-Under the proven row, a bundle that drops a file, adds one, or alters a byte folds to a different CID and is refused
-— pinned by "a non-git bundle carrying the sealed subtree verifies a directory row" (the same fixture verifying), "a bundle that drops a file from a proven directory is refused", "a bundle that adds a file under a proven directory is refused", and "a non-git bundle carrying the wrong bytes under a proven directory is refused".
-Files *outside* the proven row's subtree are not covered and never were:
-the walk is scoped to that subtree,
-so an unrelated file
+and it does not need to:
+the sealed `content_cid` checks the list.
+Under the proven row, a bundle that drops a file, adds a file, or changes a byte folds to a different CID.
+`merkle verify` refuses that bundle.
+Tests pin this: "a non-git bundle carrying the sealed subtree verifies a directory row" (the same fixture, which verifies), "a bundle that drops a file from a proven directory is refused", "a bundle that adds a file under a proven directory is refused", and "a non-git bundle carrying the wrong bytes under a proven directory is refused".
+The proof does not cover files *outside* the subtree of the proven row, and it never did:
+the walk stays in that subtree.
+So an unrelated file
 — or a stray symlink —
-beside it does not turn a genuine proof into a report of tampering.
-What git answers in a live worktree is a different question again,
-which files are untracked build output the seal never covered.
+beside it does not turn a genuine proof into a report of a tampered bundle.
+In a live worktree, git answers a different question:
+which files are untracked build output that the seal never covered.
 
-**Pass `--bundle` for an artifact someone sent you.**
+**Pass `--bundle` for an artifact from a sender.**
 Without it, `merkle verify` takes the git arm whenever the target *is* a git repo root
 — and a sender can make that true.
-A `.git` costs nothing to ship,
-and one whose index lists exactly the sealed paths hands the sender the file set:
-the same bundle carrying an extra file under the proven directory answers `valid: true` with that `.git` present and `valid: false` without it.
-`--bundle` ignores any index the target carries and always walks,
-so the enumeration is the verifier's choice rather than the artifact's (pinned by "a bundle cannot hand itself the git arm by shipping its own index").
+A `.git` costs nothing to ship.
+If its index lists exactly the sealed paths,
+it lets the sender choose the file set.
+The same bundle with an extra file under the proven directory answers `valid: true` with that `.git`,
+and `valid: false` without it.
+`--bundle` ignores any index in the target and always walks.
+So the verifier chooses the enumeration, not the artifact (pinned by "a bundle cannot hand itself the git arm by shipping its own index").
 Distributing a bundle as a git repo is ordinary,
 so this is not an exotic shape.
-The flag is a no-op for file rows, which never consult git.
+The flag has no effect for file rows,
+because file rows never consult git.
 
-Which arm ran is reported as `content_enumeration`
+The result reports the arm that ran as `content_enumeration`
 — `"git-index"` or `"walk"`, and `null` for a row that consulted no file set.
-The two readings of `content_verified: true` are different claims ("the tracked files are the sealed ones" versus "everything the sender shipped folds to the sealed CID"),
-so a consumer keying on `.valid` needs to see which one it got.
+The two meanings of `content_verified: true` are different claims ("the tracked files are the sealed ones" versus "everything the sender shipped folds to the sealed CID").
+So a consumer that keys on `.valid` needs to see which claim it got.
 The flag lets a verifier choose the arm;
 the field lets it check what it chose.
 
-`content_verified: "unverifiable"` is therefore left for one case only:
+So `content_verified: "unverifiable"` stays for one case only:
 a row that commits to no content at all
 — no `content_sha256` and no `content_cid`.
 It still blocks `valid`,
-because a row whose only commitment cannot be checked must not read as one that was.
+because a row whose only commitment cannot be checked must not look like a row that was checked.
 
 ## Origin proofs
 
-This repository contains proofs of how it came to exist in [`multiproofs/origin-proofs/`](multiproofs/origin-proofs/).
-See that directory's README for the full story;
-in brief:
+[`multiproofs/origin-proofs/`](multiproofs/origin-proofs/) contains proofs of how this repository came to exist.
+The README of that directory tells the full story.
+In brief:
 
 - **`tree-hashes.CCA016A8/`**
-  — Bitcoin block 939896 timestamp of the extracted subtree (source repo snapshot), with SSH signature
+  — a timestamp of the extracted subtree (a snapshot of the source repo) in Bitcoin block 939896, with an SSH signature
 - **`tree-hashes.93223B2F/`**
-  — bridge stamp:
-  first OTS made from inside this repo post-extraction, Bitcoin block 940583
+  — a bridge stamp:
+  the first OTS made from inside this repo after the extraction, Bitcoin block 940583
 
 These are archival artifacts.
-Ongoing operational timestamps live in [`multiproofs/ots-timestamps/`](multiproofs/ots-timestamps/),
-whose layout `SPEC.md` specifies under [Timestamp bundles](SPEC.md#timestamp-bundles).
+The current operational timestamps are in [`multiproofs/ots-timestamps/`](multiproofs/ots-timestamps/).
+`SPEC.md` specifies their layout under [Timestamp bundles](SPEC.md#timestamp-bundles).
 
 ## Verifying commit signatures
 
-Signing here is occasional rather than policy:
-agent-made commits carry no signature,
-and the hand-signed ones are scattered through the log,
-so `git log --show-signature` prints nothing for most of it.
-The commit "revoke claude-code signing key" is one signed commit to try the recipe on
-— found by its subject, since a sha changes whenever history is rewritten.
-The recipe stays here because `multiproofs/pubkeys/` is exactly what an `allowed_signers` file is rendered from.
+Here, a signature on a commit is occasional, not a policy.
+Commits that agents made have no signature,
+and the commits signed by hand are spread through the log.
+So `git log --show-signature` prints nothing for most of the log.
+The commit "revoke claude-code signing key" is one signed commit on which to try the recipe.
+Find it by its subject,
+because a sha changes each time history is rewritten.
+The recipe stays here because `multiproofs/pubkeys/` is exactly the source from which an `allowed_signers` file is rendered.
 
-Verifying an SSH-signed commit involves two distinct checks:
+The verification of an SSH-signed commit has two different checks:
 
 1. **Cryptographic validity**
    — does the signature mathematically match the commit bytes under some public key?
-   Key-agnostic, no trust required.
+   This check is key-agnostic and needs no trust.
 2. **Trust**
-   — is that public key one *you* choose to recognize as a valid signer?
-   Verifier-side policy.
+   — is that public key one that the *verifier* chooses to recognize as a valid signer?
+   This is a policy of the verifier.
 
-Git conflates them:
-it refuses to verify SSH signatures unless `gpg.ssh.allowedSignersFile` is configured and points to an existing file.
+Git does not keep the two checks apart:
+it refuses to verify SSH signatures unless `gpg.ssh.allowedSignersFile` is set and points to a file that exists.
 That file maps principals → keys → namespaces;
-it is your **local trust list**, not part of any commit.
-Setting it is a statement *you* make about which keys you trust
-— the repo cannot make it for you.
+it is the **local trust list** of the verifier, not part of a commit.
+When the verifier sets it, the *verifier* makes a statement about the keys that it trusts
+— the repo cannot make it for the verifier.
 
-`multiproofs/pubkeys/` is this project's source of truth for who can sign.
-Nothing here writes the trust file for you:
-that file *is* your statement about which keys you accept,
-so building it is your step, not the repo's.
-The format is one line per key
+`multiproofs/pubkeys/` is the source of truth of this project for who can sign.
+Nothing here writes the trust file for the verifier.
+That file *is* the statement about the keys that the *verifier* accepts,
+so the verifier makes it, not the repo.
+The format has one line for each key
 — `<principals> namespaces="git" <keytype> <base64>`.
 The `*` principal below is collective trust:
-the key is in this project's list, with no personal identity attached to it.
+the key is in the list of this project, with no personal identity attached to it.
 
 ### One-shot inspection
 
-`git -c key=value` overrides config for a single invocation, no persisted state:
+`git -c key=value` overrides the config for one command call only, and keeps no state:
 
 ```nushell no-run
 let signers = "/tmp/nu-multiproof-signers"
@@ -436,13 +464,16 @@ git -c $"gpg.ssh.allowedSignersFile=($signers)" log --format='%h %G? %an %s'   #
 git -c $"gpg.ssh.allowedSignersFile=($signers)" log --show-signature -1 --grep "revoke claude-code signing key"
 ```
 
-The first command is where to start:
-`%G?` marks every commit `G` or `N`,
-so it shows both that the trust list resolves and which commits it has anything to say about.
+Start with the first command:
+`%G?` marks each commit `G` or `N`.
+So it shows that the trust list resolves,
+and it also shows the commits that the list can say something about.
 `--show-signature -1` on an unsigned commit prints no signature line at all.
 
-`first 2` keeps the key type and the base64 blob and drops the trailing comment (`alice@laptop`)
-— it is not part of the trust statement and differs per machine.
+`first 2` keeps the key type and the base64 blob,
+and drops the comment at the end (`alice@laptop`).
+The comment is not part of the trust statement,
+and it is different on each machine.
 
 ### Per-clone setup
 
@@ -454,10 +485,10 @@ ls --all multiproofs/pubkeys | get name | where ($it | path parse | get extensio
 git config gpg.ssh.allowedSignersFile $signers
 ```
 
-`.git/config` lives inside this clone's `.git/` directory
-— it is not tracked, not pushed, not shared with collaborators.
-Plain `git log --show-signature` now resolves cleanly.
-Re-run the render after any change to `multiproofs/pubkeys/`.
+`.git/config` is inside the `.git/` directory of this clone
+— git does not track it, push it or share it with collaborators.
+Now a plain `git log --show-signature` resolves without problems.
+After each change to `multiproofs/pubkeys/`, render the file again.
 
 ### Reading the output
 
@@ -468,62 +499,71 @@ Good "git" signature for * with ECDSA-SK key SHA256:7SOGNZ2C…
 - `Good`
   — both checks above passed.
 - `for *`
-  — the matched principal is the `*` you wrote into the file:
-  confirms the key is in the project's trust list, but does not attach a personal identity.
-  This is the appropriate trust statement for a project's tracked signers
+  — the matched principal is the `*` that the verifier wrote into the file.
+  This principal confirms that the key is in the trust list of the project,
+  but it does not attach a personal identity.
+  This is the suitable trust statement for the tracked signers of a project
   — collective trust, not individual identification.
 
-One caveat about where the keys come from:
-`multiproofs/pubkeys/` travels inside the repo under examination,
-so rendering the trust file from it and then verifying that repo's commits proves the repo agrees with itself.
+One caveat about the source of the keys:
+`multiproofs/pubkeys/` travels inside the repo that the verifier examines.
+If the verifier renders the trust file from it and then verifies the commits of that repo,
+the result proves that the repo agrees with itself.
 Anyone can fork, add their own key and re-sign.
-To make it an identity check, compare the fingerprint git reports against one you hold from elsewhere
-— the same verifier-side step `merkle verify --pubkeys-dir` exists for.
+To make it an identity check,
+compare the fingerprint that git reports with one that the verifier has from a different source.
+`merkle verify --pubkeys-dir` exists for the same verifier-side step.
 
 ## Limitations
 
 Collected here because each is easy to miss in the section that explains it.
 
 **The work behind a Bitcoin header is not checked.**
-`ots verify` recomputes the header's hash and its merkle binding,
-but `bits` is read out of the very header under examination,
+`ots verify` recomputes the hash of the header and its merkle binding.
+But it reads `bits` from the same header that it examines,
 so "the hash meets its own target" proves nothing.
-Independent explorers agreeing on the height to hash mapping is the whole defence
+The whole defence is that independent explorers agree on the hash for each height
 — see [Verifying a timestamp](SPEC.md#verifying-a-timestamp).
 
-**A trust list travelling inside the artifact proves only self-consistency.**
-A default `valid: true` says the bundle agrees with itself.
+**A trust list that travels inside the artifact proves only self-consistency.**
+A default `valid: true` says that the bundle agrees with itself.
 Anyone can fork, `init` with their own key and re-`seal`.
-`--pubkeys-dir` and `--signer` are how a verifier states its own policy.
+A verifier uses `--pubkeys-dir` and `--signer` to state its own policy.
 
 **Three commands take no `--repo`** — `ssh-sign sign`, `ssh-sign verify` and `ots stamp`.
-They resolve the git root of the current directory and offer no override.
+They resolve the git root of the current directory,
+and no flag overrides it.
 
-**`seal`'s opportunistic upgrade walks only the target repo's bundles.**
-A bundle someone sent you keeps its `pending` stamp until `ots upgrade` is run on it directly.
+**The opportunistic upgrade of `seal` walks only the bundles of the target repo.**
+A bundle from a sender keeps its `pending` stamp until the recipient runs `ots upgrade` on it directly.
 
 **No test vector covers a file DAG deeper than two levels** — about 7.9 GB.
 The fold there is the same code, but nothing outside this repo pins it.
 
 **A directory that would become a HAMT shard is refused, not approximated.**
-Roughly 6200 files with 8-character names in one directory, fewer as names grow.
-`tree-hashes` errors rather than emit a CID no IPFS client would reproduce.
+That is approximately 6200 files with 8-character names in one directory,
+and fewer when the names are longer.
+`tree-hashes` stops with an error,
+and does not emit a CID that no IPFS client would reproduce.
 
 **The commit proposal is not sanitized for display.**
-A repo path holding ANSI escapes reaches the prompt raw and can repaint the line before you press enter.
-The guarantee is that the block parses as one command, never that it renders honestly.
+A repo path that contains ANSI escapes goes into the prompt raw,
+and it can repaint the line before the signer presses enter.
+The guarantee is that the block parses as one command,
+never that it renders honestly.
 
 **Two of the four `--fail` paths have no test** — `ots verify` and `beacon verify`.
 Both behave like the two that do, checked by running, but nothing holds them there.
 
-**Eleven of the fifteen bundles committed here carry no endorsement anchor and cannot get one**,
-and the two under `origin-proofs/` carry a signature over the `.ots` rather than over the snapshot
-— a shape `ots stamp` never writes.
-They are history, not examples of the grammar.
+**Eleven of the fifteen bundles committed here carry no endorsement anchor and cannot get one**.
+And the two under `origin-proofs/` carry a signature over the `.ots`, not over the snapshot.
+`ots stamp` never writes that shape.
+These thirteen bundles are history, not examples of the grammar.
 
 ## Testing
 
-Tests use [nutest](https://github.com/vyadh/nutest), cloned as a sibling directory.
+The tests use [nutest](https://github.com/vyadh/nutest),
+which is cloned as a sibling directory.
 Run them from the repo root:
 
 ```nushell no-run
@@ -533,8 +573,9 @@ nu toolkit.nu test --network    # runs tests-network/ instead — reaches the in
                                 # one test writes a permanent public timestamp
 ```
 
-The suite runs on one thread by default;
-`CLAUDE.md` explains why, and what `--threads 0` risks.
+By default, the suite runs on one thread.
+`CLAUDE.md` tells why,
+and what the risk of `--threads 0` is.
 
 ## License
 
