@@ -60,7 +60,7 @@ def git-hashes [root: path tracked_files: list<string> format: string]: nothing 
 }
 
 def build-tree [
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
 ]: nothing -> table {
     let root = repo-root $repo
 
@@ -125,7 +125,7 @@ def build-tree [
 # root CID covers all listed files but not the CSV itself.
 @example "compute and record the IPFS root CID" { nu-multiproof tree-hashes root-cid }
 export def root-cid [
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
 ]: nothing -> string {
     let root = repo-root $repo
 
@@ -145,7 +145,7 @@ export def root-cid [
 @example "preview the manifest without saving" { nu-multiproof tree-hashes --echo }
 export def main [
     --echo # Output as nushell table instead of saving to file
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
 ]: nothing -> any {
     let table = (build-tree --repo $repo)
     let target_root = repo-root $repo

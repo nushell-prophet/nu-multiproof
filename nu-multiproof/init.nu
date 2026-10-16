@@ -12,10 +12,10 @@ use pubkey.nu
 # everywhere and its name says which key it is (see pubkey.nu).
 @example "bootstrap multiproofs/ in the current repo" { nu-multiproof init }
 export def main [
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the current directory)
     --pubkey: path # SSH public key file to register (default: signing key from git config)
 ]: nothing -> nothing {
-    let root = repo-root $repo
+    let root = repo-root $repo --init
     let multiproofs = multiproofs-dir $root
     let pubkeys_dir = pubkeys-dir $root
 

@@ -77,7 +77,7 @@ use beacon.nu
     nu-multiproof seal --no-stamp
 }
 export def main [
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
     --no-stamp # Seal offline: no beacon, no OTS timestamp (both are on by default — a seal should be complete)
     --beacon: string # Use this beacon token instead of minting one (`beacon latest`, or `none`)
     --no-content-anchor # Stamp only the signatures, leaving the root statement undated
@@ -220,8 +220,8 @@ export def main [
     # Why resolve here and not let `ssh-sign sign` do it: the key comes from
     # --repo's git config, and ssh-sign reads the CWD's repo. The closure form
     # bounds an inline `key::` temp file to the signing call.
-    # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's git
-    # root, but seal may target a different repo via --repo.
+    # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's
+    # repo, but seal may target a different repo via --repo.
     let root_sig = if $external_signer {
         let sig = sig-path-for $root_statement_path $signer
 
@@ -299,7 +299,7 @@ export def main [
     # anchor time-bounds the full CSV — the same argument that dropped the
     # whole-CSV signature. Archival tree-hashes.* bundles from the stamping era
     # stay.
-    # Why pass out-dir explicitly: ots stamp defaults it to the CWD's git root,
+    # Why pass out-dir explicitly: ots stamp defaults it to the CWD's repo,
     # but seal may target a different repo via --repo (same fix as pubkeys-dir
     # in step 4). Without it, `seal --repo /other` writes the bundle into the
     # CWD's repo, or fails when CWD is not a repo.
@@ -429,7 +429,7 @@ export def main [
     nu-multiproof seal status
 }
 export def status [
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
 ]: nothing -> table {
     let root = repo-root $repo
     let mp = multiproofs-dir $root

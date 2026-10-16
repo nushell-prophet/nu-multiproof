@@ -97,10 +97,14 @@ the next `seal`, or `ots upgrade`, completes it.
 ## All commands
 
 Every command that works on a repo takes `--repo`.
-The default is the git root of the current directory.
+The default is the nearest directory that holds `multiproofs/`,
+from the current directory up to the git root.
+With none, the default is the git root.
+`init` always takes the current directory,
+and refuses to run inside a `multiproofs/` directory.
 These commands are `init`, `tree-hashes`, `tree-hashes root-cid`, `merkle write-root`, `merkle prove`, `merkle verify`, `seal` and `seal status`.
 `ssh-sign sign`, `ssh-sign verify` and `ots stamp` are older than this rule:
-they resolve the git root of the current directory,
+they resolve the same default,
 and no flag overrides it.
 So a chain that uses them runs from inside the target repo.
 The other commands take bytes or a file path, and no repo at all.
@@ -535,7 +539,7 @@ Anyone can fork, `init` with their own key and re-`seal`.
 A verifier uses `--pubkeys-dir` and `--signer` to state its own policy.
 
 **Three commands take no `--repo`** — `ssh-sign sign`, `ssh-sign verify` and `ots stamp`.
-They resolve the git root of the current directory,
+They resolve the default of `--repo` from the current directory,
 and no flag overrides it.
 
 **The opportunistic upgrade of `seal` walks only the bundles of the target repo.**

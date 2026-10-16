@@ -15,7 +15,7 @@ use _fs.nu cwd-relative
 export def sign [
     path: path # File to sign
     --key: path # SSH private key (default: from git config user.signingKey)
-    --pubkeys-dir: path # Directory of registered *.pub files (default: multiproofs/pubkeys from git root)
+    --pubkeys-dir: path # Directory of registered *.pub files (default: multiproofs/pubkeys of the nearest dir holding it, up to the git root)
 ]: nothing -> path {
     # Why default from git config: makes `ssh-sign sign <file>` usable with no
     # flags; without it, a missing --key blew up with a null-conversion error.
@@ -102,7 +102,7 @@ export def sign [
 @example "verify all signatures on the root statement" { nu-multiproof ssh-sign verify multiproofs/tree-root.txt }
 export def verify [
     path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
-    --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys from git root)
+    --pubkeys-dir: path # Directory containing *.pub files (default: multiproofs/pubkeys of the nearest dir holding it, up to the git root)
     --fail # Exit non-zero if any signature is invalid (for CI)
 ]: nothing -> table {
     # A positional .sig names both the signature to check and, by inference, the

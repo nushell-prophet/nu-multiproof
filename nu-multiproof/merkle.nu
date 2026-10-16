@@ -149,7 +149,7 @@ def derive-dir-cid [target: path leaf: record bundle: bool]: nothing -> record {
 # claiming a bound it could not mint.
 @example "derive and record the merkle root" { nu-multiproof merkle write-root }
 export def write-root [
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
     --beacon: string = $BEACON_NONE # Lower time bound for a NEW root: `bitcoin:<height>:<hash>` from `beacon latest`
 ]: nothing -> record {
     # Before the manifest is read, so a malformed token costs nothing.
@@ -237,7 +237,7 @@ export def read-root [
 @example "extract a compact inclusion proof" { nu-multiproof merkle prove README.md }
 export def prove [
     filepath: string # Manifest row to prove (as listed in tree-hashes.csv; a trailing / is accepted for a directory row)
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
 ]: nothing -> path {
     let target = repo-root $repo
     # A trailing slash reaches this argument from shell completion and never
@@ -368,7 +368,7 @@ export def prove [
 @example "verify a proof, failing on invalid (for CI)" { nu-multiproof merkle verify proof.json --fail }
 export def verify [
     proof_file: path
-    --repo: path # Target git repo root (default: git root of current directory)
+    --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
     --pubkeys-dir: path # Trusted *.pub directory (default: multiproofs/pubkeys of the target — i.e. the bundle's own keys)
     --multiproofs-dir: path # Directory holding the seal's tree-root.txt, its .sig files and optionally tree-hashes.csv (default: multiproofs/ of the target) — names an older seal's snapshot so its proofs verify without rebuilding a bundle
     --signer: string # Require a valid signature from the key with this fingerprint (see `pubkey fingerprint`)

@@ -570,9 +570,10 @@ The folder would then look as if the signatures had their dates at seal time.
 `nu-multiproof seal status` reports every bundle in one table.
 So to answer "is this sealed, and is it dated yet", the signer does not need to read directory names or run `ots info` by hand.
 
-It takes `--repo`, and the default is the git root of the current directory.
-If the repo is a subdirectory of a larger repo, that default goes up to the larger repo, and the report is empty.
-In that case, pass `--repo .` to name the directory that holds `multiproofs/`.
+It takes `--repo`.
+The default is the nearest directory that holds `multiproofs/`,
+from the current directory up to the git root.
+So a repo that is a subdirectory of a larger repo gets its own report when the command runs inside it.
 A repo with no bundles returns an empty list, which prints nothing.
 
 This is the output for this repo.
