@@ -169,7 +169,7 @@ so a rule that quietly stops matching fails instead of passing.
 ## Commit messages
 
 The prefix is the command the change is about, spelled as the user types it
-— `ots:`, `ots stamp:`, `merkle:`, `merkle verify:`, `ssh-sign:`, `seal:`, `pubkey:`, `init:`, `tree-hashes:`, `cid-v0:`.
+— `ots:`, `ots stamp:`, `merkle:`, `merkle verify:`, `ssh-sign:`, `beacon:`, `seal:`, `pubkey:`, `init:`, `tree-hashes:`, `cid-v0:`.
 That is `mod.nu`'s export list,
 so the prefix survives a file rename
 and a reader can go straight from the log to the command.
