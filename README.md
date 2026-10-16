@@ -382,7 +382,7 @@ In a live worktree, git answers a different question:
 which files are untracked build output that the seal never covered.
 
 **Pass `--bundle` for an artifact from a sender.**
-Without it, `merkle verify` takes the git arm whenever the target *is* a git repo root
+Without it, `merkle verify` takes the git arm whenever the git index of the target tracks a file under it outside `multiproofs/`
 — and a sender can make that true.
 A `.git` costs nothing to ship.
 If its index lists exactly the sealed paths,

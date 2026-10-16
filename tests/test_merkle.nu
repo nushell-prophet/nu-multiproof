@@ -931,6 +931,117 @@ def "a bundle cannot hand itself the git arm by shipping its own index" [] {
     assert equal $unguarded.content_enumeration "git-index" "a verdict reached through the target's own index did not say so"
 }
 
+# --- a target below the git root ---
+
+# An honest project sealed one level below its git root — one project of a
+# monorepo. Committed, signed and proven the way make-sealed-bundle does it.
+def make-subproject [tmp_dir: path]: nothing -> record {
+    let outer = $"($tmp_dir)/mono"
+    let project = $"($outer)/project"
+    let key_path = $"($tmp_dir)/sshkey"
+
+    mkdir $"($project)/sub"
+    ^git -C $outer init -q
+    "hello\n" | save --force $"($project)/README.md"
+    "world\n" | save --force $"($project)/sub/inner.txt"
+    ^git -C $outer add . o+e>| ignore
+    ^git -C $outer -c user.email=t@t -c user.name=t commit -q -m init
+    tree-hashes --repo $project
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($project)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($project)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle write-root --repo $project
+
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($project)/multiproofs/pubkeys"
+    {project: $project dir_proof: (merkle prove sub --repo $project)}
+}
+
+# The case a monorepo makes ordinary: below the git root the index is still the
+# one the manifest was built from, so an untracked file is outside what the row
+# commits to — exactly as at the root. Walking the disk instead read the stray
+# file as tampering with evidence nobody touched.
+@test
+def "an untracked file below a proven directory of a project below the git root is not tampering" [] {
+    let fx = make-subproject $in.tmp_dir
+
+    "scratch\n" | save --force $"($fx.project)/sub/notes.txt"
+
+    let result = merkle verify $fx.dir_proof --repo $fx.project
+
+    assert equal $result.content_enumeration "git-index" "a project below the git root was not read through the index it was built from"
+    assert equal $result.content_verified true "an untracked file read as tampering"
+    assert $result.valid
+}
+
+# The case the walk exists for, without the flag: nothing under the bundle is
+# tracked, so the consumer's index cannot be the one the manifest was built
+# from, and listing it would report sealed evidence as tampered.
+@test
+def "an untracked bundle inside another git repo is walked without the bundle flag" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealed-bundle $tmp_dir
+    let outer = $"($tmp_dir)/consumer"
+
+    mkdir $outer
+    ^git -C $outer init -q
+    cp --recursive $fx.bundle $"($outer)/bundle"
+
+    let result = merkle verify $fx.dir_proof --repo $"($outer)/bundle"
+
+    assert equal $result.content_enumeration "walk"
+    assert $result.valid "a genuine bundle inside a git repo was judged against that repo's index"
+}
+
+# Tracked proof artifacts are not tracked content: multiproofs/ is outside the
+# builder's list, so a consumer who commits only the proof layer of a bundle
+# has an index that lists nothing the manifest could have been built from.
+@test
+def "a bundle whose only tracked files are its proof layer is walked" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealed-bundle $tmp_dir
+    let outer = $"($tmp_dir)/consumer"
+
+    mkdir $outer
+    ^git -C $outer init -q
+    cp --recursive $fx.bundle $"($outer)/bundle"
+    ^git -C $outer add bundle/multiproofs o+e>| ignore
+    ^git -C $outer -c user.email=t@t -c user.name=t commit -q -m proofs
+
+    let result = merkle verify $fx.dir_proof --repo $"($outer)/bundle"
+
+    assert equal $result.content_enumeration "walk"
+    assert $result.valid
+}
+
+# The hostile shape one level up: the sender ships a `.git` ABOVE the bundle,
+# whose index lists only the sealed paths, so the extra file is untracked. The
+# git arm then ignores it by design — the same arm a `.git` at the bundle root
+# already earns (see "a bundle cannot hand itself the git arm"), so the target
+# being below that root opens nothing new. --bundle stays the defence.
+@test
+def "a git index above a bundle does not decide its file set under the bundle flag" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealed-bundle $tmp_dir
+    let shipped = $"($tmp_dir)/shipped"
+
+    mkdir $shipped
+    cp --recursive $fx.bundle $"($shipped)/bundle"
+    "payload\n" | save --force $"($shipped)/bundle/sub/extra.txt"
+    ^git -C $shipped init -q
+    ^git -C $shipped add bundle/README.md bundle/sub/inner.txt o+e>| ignore
+    ^git -C $shipped -c user.email=m@m -c user.name=m commit -q -m seed
+
+    let guarded = merkle verify $fx.dir_proof --repo $"($shipped)/bundle" --bundle
+
+    assert not $guarded.valid "an index above the bundle decided the file set under --bundle"
+    assert equal $guarded.content_enumeration "walk"
+
+    let unguarded = merkle verify $fx.dir_proof --repo $"($shipped)/bundle"
+
+    assert equal $unguarded.content_enumeration "git-index" "a verdict reached through the enclosing index did not say so"
+    assert equal $unguarded.content_verified true
+}
+
 # A file row is checked against its own content_sha256 and never asks what else
 # is on disk, so there is no enumeration to report — and reporting one anyway
 # would suggest a file set was consulted when none was.

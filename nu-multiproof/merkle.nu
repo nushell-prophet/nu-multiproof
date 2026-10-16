@@ -12,7 +12,7 @@ use _tracked.nu [content-tree resolve-leaf-file]
 use _cid-helpers.nu node-cid
 use _layout.nu [
     manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir
-    multiproofs-dir MERKLE_ROOT_FILE MANIFEST_FILE
+    multiproofs-dir MERKLE_ROOT_FILE MANIFEST_FILE MULTIPROOFS_DIR
 ]
 use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
@@ -66,26 +66,47 @@ use ots.nu
 # — could not tell "the tracked files are the sealed ones" from "everything the
 # sender shipped folds to the sealed CID". The flag lets a verifier choose; the
 # field lets it check what it got.
+#
+# Without $bundle the git arm runs when the target is inside a work tree AND
+# that index tracks a file under it outside multiproofs/ — the builder's own
+# list, read the way tracked-entries reads it (`git -C <target> ls-files`, so
+# the paths are relative to the target wherever the git root is).
+#
+# Why a target below the git root qualifies: a monorepo holds each project in
+# a subdirectory, and the index there is still the one its manifest was built
+# from. A walk there would read every untracked file under a proven directory
+# as tampering. Pinned by "an untracked file below a proven directory of a
+# project below the git root is not tampering".
+#
+# Why an empty list does not: a consumer who unpacks a genuine bundle inside a
+# git repo of their own — the ordinary case — has an index that tracks nothing
+# under it, and the git arm over that list would report sealed, untouched
+# evidence as tampered. An empty list also cannot be the one any manifest was built
+# from: `merkle write-root` refuses a no-file manifest. Pinned by "an untracked
+# bundle inside another git repo is walked without the bundle flag" and "a
+# bundle whose only tracked files are its proof layer is walked".
+#
+# Not "the manifest is tracked" because: `seal` writes the manifest and does
+# not commit it, so a project fresh from its first seal would walk below the
+# git root and take the index at the root — two answers for one honest repo.
+#
+# A sender who ships a `.git` above the bundle gets the git arm without the
+# flag, the same arm a `.git` at the bundle root already earns; `--bundle` is
+# the defence for both. Pinned by "a git index above a bundle does not decide
+# its file set under the bundle flag".
 def dir-enumeration [target: path bundle: bool]: nothing -> string {
     if $bundle { return "walk" }
-    # Why --show-toplevel compared against the target, and not
-    # --is-inside-work-tree: that answers yes for any directory *under* a work
-    # tree. A consumer who unpacks a genuine bundle inside any git repo — the
-    # ordinary case — then had `git ls-files` run over the bundle path, which
-    # lists whatever happens to be tracked there (usually nothing), and the
-    # sealed, unmodified evidence was reported as tampered: `valid: false`,
-    # "the directory's tracked contents differ from the sealed catalogue".
-    # Claiming tampering about untouched evidence is the same defect class as
-    # an explorer outage reading as an invalid proof. The manifest's paths are
-    # relative to the repo root, so only the root itself is the repo this row
-    # was catalogued in; anything else is walked whether or not --bundle said so.
-    let toplevel = do { ^git -C $target rev-parse --show-toplevel } | complete
-    let at_repo_root = (
-        $toplevel.exit_code == 0
-        and ($toplevel.stdout | str trim | path expand) == ($target | path expand)
-    )
+    # Not tracked-entries: it throws on a symlink or a control byte, which would
+    # turn the choice of an arm into a crash before the content check runs.
+    let listed = do { ^git -C $target ls-files -z } | complete
 
-    if $at_repo_root { "git-index" } else { "walk" }
+    if $listed.exit_code != 0 { return "walk" }
+    let exclude_prefix = $MULTIPROOFS_DIR + "/"
+    let tracked = $listed.stdout
+        | split row (char --integer 0)
+        | where $it != "" and not ($it | str starts-with $exclude_prefix)
+
+    if ($tracked | is-empty) { "walk" } else { "git-index" }
 }
 
 # Content check for a row that attests no sha256 — a directory, or "." itself.
@@ -324,7 +345,8 @@ export def prove [
 #                      from the subtree the target carries, so a portable bundle
 #                      gets a real verdict rather than "unverifiable"
 #   content_enumeration — which file set answered a directory row: "git-index"
-#                      (the tracked files of the repo the target IS the root of)
+#                      (the tracked files under the target, read from the index of
+#                      the work tree it sits in)
 #                      or "walk" (every file under the row, which --bundle
 #                      forces). null for a file row, and for a row committing to
 #                      no content — nothing was enumerated either way. The two
