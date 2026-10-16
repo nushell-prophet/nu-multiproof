@@ -4,7 +4,7 @@ use ots.nu
 use ssh-sign.nu
 use _repo.nu repo-root
 use _layout.nu [ manifest-path merkle-root-path ots-dir pubkeys-dir multiproofs-dir ]
-use _sig.nu sig-files-for
+use _sig.nu [ sig-files-for sig-path-for ]
 use _fs.nu [ list-files cwd-relative ]
 use _ots-helpers.nu freeze-bundle
 use _key-helpers.nu [ with-signing-key signing-principal ]
@@ -49,6 +49,15 @@ use beacon.nu
 # gives explicit key choice for a one-off. "Seal but do not sign" is
 # `tree-hashes` followed by `merkle write-root` — the two commands this step
 # wraps — so the flag bought a second name for a path that already exists.
+#
+# --external-signer is not that flag. The key is still the repo's
+# user.signingKey, read for its public half only, and the signature still has
+# to exist before step 5: what it changes is who runs step 4. The private half
+# lives on a device this machine never touches (js-okp-signer on a phone), so
+# the first run stops after step 3 and names the file the signature goes in,
+# and the second run finds it over the same bytes and stamps. What the two
+# commands it replaces cannot give is step 5: the statement and an outside
+# signature dated into one bundle.
 # The live form is plain `seal` in an initialized repo — step 5 then posts the
 # root statement's digest to the public OTS calendar, a permanent public write.
 # That is why it is named here in prose and the example below stays offline:
@@ -74,6 +83,7 @@ export def main [
     --no-content-anchor # Stamp only the signatures, leaving the root statement undated
     --response-file: path # Calendar answer for step 5, instead of posting the digest
     --propose-commit # Leave a `git commit` for this seal in the prompt, unrun
+    --external-signer # Step 4 happens off this machine: stop until the signature sits beside the statement, then stamp
 ]: nothing -> record {
     # Why refused rather than given a precedence: they ask for different things —
     # "no stamps at all" and "stamp the signatures only" — and letting one win
@@ -212,8 +222,39 @@ export def main [
     # bounds an inline `key::` temp file to the signing call.
     # Why pass pubkeys-dir explicitly: ssh-sign sign defaults to the CWD's git
     # root, but seal may target a different repo via --repo.
-    let root_sig = with-signing-key --root $root {|signing_key|
-        ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
+    let root_sig = if $external_signer {
+        let sig = sig-path-for $root_statement_path $signer
+
+        if not ($sig | path exists) {
+            # Why return here and not wait on a prompt: the round trip goes
+            # through a phone and a camera, which can take longer than a shell
+            # should hold a half-done seal open. Step 3 already left the
+            # statement on disk, and re-running regenerates the same bytes
+            # (an unchanged root keeps its beacon), so the next run picks up
+            # exactly here. No commit proposal: nothing is sealed yet.
+            let statement = open --raw $root_statement_path
+            let digest = $statement | hash sha256
+            # The line without its LF: that is what goes into the page's
+            # textarea, which refuses a trailing newline in file mode.
+            print ($statement | into string | str trim --right --char "\n")
+            print $"Sign ($root_statement_path | cwd-relative) as a file, namespace `file`; sha256 ($digest)."
+            print $"Save the signature as ($sig | cwd-relative), then run seal --external-signer again."
+            return ($result | insert awaiting_signature {sig: ($sig | cwd-relative) sha256: $digest})
+        }
+        # Checked before step 5 stamps it: an anchor dates whatever bytes it
+        # is given, so a block that does not verify would come out of this
+        # seal as a dated endorsement of nothing. The file name is not trusted
+        # either — the signer is read from the key inside the block. Pinned by
+        # "an external signer seal refuses a signature it cannot verify before stamping".
+        let verdict = ssh-sign verify $sig --pubkeys-dir (pubkeys-dir $root) | first
+        if not $verdict.valid or $verdict.signer != $signer {
+            error make {msg: $"($sig | cwd-relative) is not a valid signature by ($signer) over the current root statement: ($verdict.error? | default $"signed by ($verdict.signer)")"}
+        }
+        $sig | cwd-relative
+    } else {
+        with-signing-key --root $root {|signing_key|
+            ssh-sign sign $root_statement_path --key $signing_key --pubkeys-dir (pubkeys-dir $root)
+        }
     }
 
     $result = ($result | insert root_sig $root_sig)

@@ -7,6 +7,8 @@ use std/testing *
 # bytes could only run against live explorers, so it would not run here at all.
 # The value is the Bitcoin genesis block, so nothing about it can go stale.
 const TEST_BEACON = "bitcoin:0:000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+# Block 1, for a run that mints after an earlier one.
+const LATER_BEACON = "bitcoin:1:00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048"
 
 use ../nu-multiproof/seal.nu
 use ../nu-multiproof/ssh-sign.nu
@@ -975,4 +977,122 @@ def "seal status says nothing about a parked rejected calendar answer" [] {
     assert equal $run.exit_code 0 $"seal status failed: ($run.stderr)"
     assert not ($run.stdout | str contains "unparsable") $"a rejected answer was reported as a broken proof:(char newline)($run.stdout)"
     assert equal ($run.stdout | str trim) "[]" $"a non-proof produced a row: ($run.stdout)"
+}
+
+# --external-signer: the private half is on another device, so seal stops after
+# step 3 and the second run stamps what the device signed. Signed here with
+# ssh-keygen standing in for that device: seal only sees an SSHSIG file.
+@test
+def "an external signer seal waits for the signature and then stamps it into the bundle" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    let response = $"($tmp_dir)/calendar-response.bin"
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    let sig = $"($root_file).(principal-of $fx.key).sig"
+
+    build-calendar-response | save --raw --force $response
+
+    let waiting = seal --repo $fx.repo --external-signer --beacon $TEST_BEACON --response-file $response
+
+    assert equal $waiting.awaiting_signature.sha256 (open --raw $root_file | hash sha256)
+    assert not ("root_sig" in $waiting) "a seal with no signature reported one"
+    assert not ($fx.ots_dir | path exists) "the first run stamped before anything was signed"
+    let statement = open --raw $root_file
+
+    $statement | ^ssh-keygen -Y sign -q -f $fx.key -n file | save --raw $sig
+    # A later block on purpose: the round trip takes time, and the second run
+    # mints a newer beacon. Only the carry-over of an unchanged root keeps the
+    # signed bytes — without it step 3 clears the signature and the seal waits forever.
+    let sealed = seal --repo $fx.repo --external-signer --beacon $LATER_BEACON --response-file $response
+
+    assert equal (open --raw $root_file) $statement "the second run signed different bytes than the first one asked for"
+    assert ($sealed.root_sig | str ends-with ($sig | path basename))
+    assert equal ($sealed.sig_ots | path dirname) [$sealed.bundle] "the outside signature was dated outside the bundle"
+    assert equal (ots info ($sealed.sig_ots | first) | get hash) (open --raw $sig | hash sha256)
+}
+
+# Step 5 dates whatever bytes it is handed, so the check has to come first: a
+# block over other bytes, or by another registered key under the signer's name,
+# would otherwise leave this seal as a dated endorsement nobody made.
+@test
+def "an external signer seal refuses a signature it cannot verify before stamping" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    let response = $"($tmp_dir)/calendar-response.bin"
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    let sig = $"($root_file).(principal-of $fx.key).sig"
+    let bob = $"($tmp_dir)/bob"
+
+    build-calendar-response | save --raw --force $response
+    ^ssh-keygen -t ed25519 -f $bob -N "" -q
+    cp $"($bob).pub" $"($fx.pubkeys)/bob.pub"
+    seal --repo $fx.repo --external-signer --beacon $TEST_BEACON --response-file $response
+
+    "other bytes\n" | ^ssh-keygen -Y sign -q -f $fx.key -n file | save --raw --force $sig
+    assert error {|| seal --repo $fx.repo --external-signer --beacon $TEST_BEACON --response-file $response }
+
+    open --raw $root_file | ^ssh-keygen -Y sign -q -f $bob -n file | save --raw --force $sig
+    let err = try { seal --repo $fx.repo --external-signer --beacon $TEST_BEACON --response-file $response; null } catch {|e| $e.msg }
+
+    assert ($err | str contains $"signed by (principal-of $bob)")
+    assert not ($fx.ots_dir | path exists) "a refused signature was stamped"
+}
+
+# The form nu-cybergraph runs: every stamping seal there is --no-content-anchor,
+# so the second run mints the bundle with freeze-bundle and dates only the
+# outside signature into it.
+@test
+def "an external signer seal with no content anchor dates only the outside signature" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealable-repo $tmp_dir
+    let response = $"($tmp_dir)/calendar-response.bin"
+    let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
+    let sig = $"($root_file).(principal-of $fx.key).sig"
+
+    build-calendar-response | save --raw --force $response
+
+    seal --repo $fx.repo --external-signer --no-content-anchor --beacon $TEST_BEACON --response-file $response
+    assert not ($fx.ots_dir | path exists) "the first run made a bundle before anything was signed"
+
+    open --raw $root_file | ^ssh-keygen -Y sign -q -f $fx.key -n file | save --raw $sig
+    let sealed = seal --repo $fx.repo --external-signer --no-content-anchor --beacon $LATER_BEACON --response-file $response
+
+    assert not ("root_ots" in $sealed) "the content was anchored under --no-content-anchor"
+    assert equal (list-files $sealed.bundle | path basename | sort) ([
+        "tree-root.txt"
+        ($sig | path basename)
+        ($sig | path basename | str replace --regex '\.sig$' '.ots')
+    ] | sort)
+}
+
+# The config is often inherited — a linked worktree reads the main checkout's —
+# so a missing key file has to name where the fix goes, not only the path.
+@test
+def "a signing key that is not on this machine names the config to fix" [] {
+    let fx = make-sealable-repo $in.tmp_dir
+
+    ^git -C $fx.repo config user.signingKey $"($in.tmp_dir)/elsewhere.pub"
+    let err = try { seal --repo $fx.repo --no-stamp; null } catch {|e| $e.msg }
+
+    assert ($err | str contains "elsewhere.pub")
+    assert ($err | str contains "git config user.signingKey")
+    assert ($err | str contains "--worktree")
+}
+
+# A public half alone, with its private key on another device: step 4 cannot
+# sign, and the refusal names the flag that seal needs instead.
+@test
+def "a seal with no private key here names the external signer flag" [] {
+    let fx = make-sealable-repo $in.tmp_dir
+    let pub_only = $"($in.tmp_dir)/elsewhere"
+
+    mkdir $pub_only
+    cp $"($fx.key).pub" $pub_only
+    ^git -C $fx.repo config user.signingKey $"($pub_only)/sshkey.pub"
+    let err = with-env {SSH_AUTH_SOCK: ""} {
+        try { seal --repo $fx.repo --no-stamp; null } catch {|e| $e.msg }
+    }
+
+    assert ($err | str contains "No private key found")
+    assert ($err | str contains "--external-signer")
 }

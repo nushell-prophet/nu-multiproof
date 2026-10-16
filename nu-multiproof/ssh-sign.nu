@@ -39,7 +39,13 @@ export def sign [
             open --raw $path | into binary | ^ssh-keygen -Y sign -q -f $key -n $NAMESPACE
         } | complete)
         if $signed.exit_code != 0 {
-            error make {msg: $"ssh-keygen could not sign ($path): ($signed.stderr | str trim)"}
+            # Why the hint: a public half with no private key here is the setup
+            # of a signer on another device, and the seal that hit this has
+            # already rewritten its root — the next step is the flag, not a key.
+            let hint = if ($signed.stderr | str contains "No private key found") {
+                " — if the private half lives on another device, seal with --external-signer"
+            } else { "" }
+            error make {msg: $"ssh-keygen could not sign ($path): ($signed.stderr | str trim)($hint)"}
         }
 
         let sig_path = (sig-path-for $path $signer_name)

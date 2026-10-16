@@ -114,6 +114,7 @@ nu-multiproof seal --repo path/to/other/repo   # seal a repo other than the CWD'
 nu-multiproof seal --propose-commit            # leave the git commit in the prompt, unrun
 nu-multiproof seal --no-stamp                  # offline: no beacon, no timestamp
 nu-multiproof seal --no-content-anchor         # anchor the signatures only — see SPEC.md
+nu-multiproof seal --external-signer           # stage 4 on another device: run, sign the statement there, run again
 nu-multiproof seal status                      # every bundle and its anchor state; not a verdict
 
 # The steps seal wraps, one by one
@@ -160,6 +161,9 @@ This document and `SPEC.md` refer to these by number.
 
 `--no-stamp` skips stages 2 and 5;
 `--no-content-anchor` runs stage 5 over the signatures only.
+`--external-signer` moves stage 4 to another device:
+the first run stops after stage 3 and names the `.sig` file it waits for,
+and the next run checks that signature and goes on to stage 5.
 Neither flag skips stage 1,
 so `--no-stamp` reaches the network anyway when the tree contains a pending `.ots`.
 It seals offline only in a repo that has nothing left to upgrade.

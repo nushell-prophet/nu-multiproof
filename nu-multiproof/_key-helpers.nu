@@ -54,7 +54,10 @@ export def with-signing-key [
     } else if ($"($expanded).pub" | path exists) {
         do $action $"($expanded).pub"
     } else {
-        error make {msg: $"signing key not found: ($raw)"}
+        # Why the fix is named: the config is often inherited — a linked
+        # worktree reads the main checkout's — so the path can be right on
+        # another machine and the reader has no idea where it came from.
+        error make {msg: $"signing key not found: ($raw) — set user.signingKey to the key this repo signs with \(`git config user.signingKey <key>.pub`; in a linked worktree add --worktree, or the main checkout changes too\); with `seal --external-signer` the public half alone is enough"}
     }
 }
 
