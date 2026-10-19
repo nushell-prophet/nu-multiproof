@@ -1437,8 +1437,7 @@ def "a leaf that is a symlink or reaches out through one is not content-verified
     assert not $escaped.valid "a leaf resolving out of the repo was content-verified"
 }
 
-# The manifest and the statement signed over it were never compared: verify read
-# the root out of tree-root.txt and trusted it. Every artifact here is written by
+# Every artifact here is written by
 # hand — CSV, statement, signature, proof JSON — because a seal round-trip can
 # only produce the consistent case, which is exactly the one this checks against.
 @test

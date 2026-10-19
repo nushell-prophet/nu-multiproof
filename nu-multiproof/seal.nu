@@ -106,8 +106,7 @@ export def main [
     # early, not enforced twice: sign keeps it for standalone use.
     # Bound rather than ignored: --propose-commit names the signer, and this is
     # the one place the principal comes from key material. Reading it back out
-    # of `<file>.<fingerprint>.sig` would be the filename-as-identity shape this
-    # repo removed.
+    # of `<file>.<fingerprint>.sig` would be the filename-as-identity shape.
     let signer = with-signing-key --root $root {|signing_key|
         signing-principal $signing_key (pubkeys-dir $root)
     }

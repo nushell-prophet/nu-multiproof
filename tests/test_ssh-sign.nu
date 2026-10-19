@@ -269,10 +269,9 @@ def "verify fails with tampered content" [] {
     assert equal ($results | first | get error) "invalid_signature"
 }
 
-# A junk file planted at `doc.<alice-fp>.sig` — a name anyone can write — used
-# to come back as `{signer: <alice-fp>, valid: false, error: invalid_signature}`,
-# byte-identical to the row alice's registered key produces when the content no
-# longer matches (the test above). The two states must be distinguishable, and a
+# A junk file planted at `doc.<alice-fp>.sig` — a name anyone can write — and
+# alice's registered key when the content no longer matches (the test above) are
+# two states that must be distinguishable, and a
 # failed verification must never be attributed to a principal read off a file
 # name: no key was established here, so the row names no signer at all — only
 # the sig file to inspect.

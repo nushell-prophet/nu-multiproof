@@ -277,7 +277,7 @@ export def info [ots_file: path]: nothing -> record {
 # --response-file: read the calendar's answer from a local file instead of
 # posting the digest. Same seam as `upgrade --response-file`, and for the same
 # reason: without it the assemble/validate/write path can only be exercised
-# against a live calendar, so it was not exercised at all.
+# against a live calendar.
 #
 # --into: join an existing bundle instead of deriving `<stem>.<HASH8>` under
 # --out-dir. What it is for: an OTS proof commits to one file's hash, so dating
@@ -528,7 +528,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     # bytes that no longer existed anywhere, and `seal status` read `endorsed:
     # absent` for a bundle that plainly held one. Asking whether some OTHER file
     # in the bundle is what the incumbent proves separates the two: a superseded
-    # proof of this same name matches nothing on disk and is archived as before.
+    # proof of this same name matches nothing on disk and is archived.
     let now = date now | format date "%Y%m%d-%H%M%S"
 
     if ($ots_path | path exists) {

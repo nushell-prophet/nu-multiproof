@@ -92,9 +92,7 @@ export def canonical []: string -> string {
 # value `merkle verify --signer` takes. It is derived from key material and from
 # nothing else, so no file name and no flag can claim it: mallory's key filed as
 # `alice.pub` renders mallory's fingerprint, and there is no name left for a
-# verifier to be fooled by. Everything the old filename-as-principal grammar
-# needed — a charset gate on stems and `--name`, twin detection, name derivation
-# from a key comment — is gone with it.
+# verifier to be fooled by.
 #
 # Why lowercase hex and not OpenSSH's `SHA256:<base64>` spelling of the very
 # same digest: base64 holds `/`, and a principal becomes a path component

@@ -112,7 +112,7 @@ export def tracked-entries [root: path]: nothing -> table {
 # for a reason that has nothing to do with tampering — and the shape that hit it
 # is the most ordinary distribution there is, a clone of a sealed repo, which
 # reported untouched evidence as tampered on its "." row. Only "." rows: .git
-# sits outside any subtree row's scope, which is why the bundle tests missed it.
+# sits outside any subtree row's scope.
 # By component rather than by prefix, because git refuses to track a path with a
 # .git component at any depth, so nothing legitimate can be dropped here.
 #

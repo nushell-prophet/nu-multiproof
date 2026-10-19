@@ -61,8 +61,8 @@ use ots.nu
 # hand itself the git arm by shipping its own index".
 #
 # Which arm ran is reported (verify's content_enumeration), because the two
-# readings of `content_verified: true` are not the same claim and nothing in the
-# result said which one was made. A consumer keying on `.valid` — nu-cybergraph
+# readings of `content_verified: true` are not the same claim. A consumer
+# keying on `.valid` — nu-cybergraph
 # — could not tell "the tracked files are the sealed ones" from "everything the
 # sender shipped folds to the sealed CID". The flag lets a verifier choose; the
 # field lets it check what it got.
@@ -182,7 +182,7 @@ export def write-root [
     # Why refuse a no-file manifest here, at the one place a root is minted:
     # the root of a tree with no tracked files is the same 64 hex for every
     # empty repo — sha256 of nothing for zero rows, and a constant
-    # (ccc017f7de…) for the "." row build-tree now always appends over an
+    # (ccc017f7de…) for the "." row build-tree always appends over an
     # empty file set. A signature over that statement carries no repo in it,
     # so it replays into any other empty seal, and the OTS stamp then times an
     # attestation that says nothing. Reachable without trying: an empty repo,
@@ -305,7 +305,7 @@ export def prove [
     }
     # Under multiproofs/ (excluded from the manifest), never next to the source
     # file — that would pollute the worktree and the next manifest. Not a
-    # --out flag: nothing ever passed one, and `mv` is the escape hatch.
+    # --out flag: `mv` is the escape hatch.
     # $key, not $filepath: a trailing slash here would write the hidden
     # inclusion-proofs/sub/.multiproof.json instead of sub.multiproof.json.
     let out = inclusion-proofs-dir $target | path join $"($key).multiproof.json"
@@ -534,10 +534,7 @@ export def verify [
     # and which dates a given signature. Both now live in the same bundle
     # (`seal` stamps the signatures --into the root's), but nothing here depends
     # on that: a `.sig` stamped separately, or a bundle from before the merge, is
-    # found by the same hash comparison. Filtering dirs by stem was an
-    # optimization that would have excluded the endorsement anchors back when
-    # they had bundles of their own — the comparison below is what decides, so
-    # the filter only ever risked hiding evidence.
+    # found by the same hash comparison.
     # The archive stays keyed to --repo under --multiproofs-dir, for the same
     # reason: it is cross-seal by design — stale bundles are archival — and a
     # seal snapshot carries no stamp copies, while the live archive holds at

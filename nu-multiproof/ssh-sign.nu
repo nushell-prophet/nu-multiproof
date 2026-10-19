@@ -151,8 +151,8 @@ export def verify [
 
         $sig_files | each {|sig_path|
             # find-principals matches by public key alone (not the signature),
-            # so exit 0 means "this sig's key is registered" — its stem is the
-            # signer. It does not prove the content matches; verify does that.
+            # so exit 0 means "this sig's key is registered". It does not
+            # prove the content matches; verify does that.
             let fp = (do { ^ssh-keygen -Y find-principals -s $sig_path -f $signers_file } | complete)
 
             if $fp.exit_code == 0 {

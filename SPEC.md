@@ -64,7 +64,7 @@ No result field shows a deletion.
 So a proposal that names only the written files would commit a folder where git still holds a cleared signature.
 Third, `Signed by` is the principal that `seal` resolved from key material before it signed.
 `Signed by` is never a name read back from `<file>.<fingerprint>.sig`.
-That is the filename-as-identity shape that this repo removed.
+That is the filename-as-identity shape.
 The test "the signer is the principal passed in rather than anything read off a filename" pins the source of `Signed by`.
 
 `to nuon` escapes everything that is interpolated into the block.
@@ -122,7 +122,7 @@ Most repos in the world are SHA-1,
 so a manifest with only SHA-256 would answer none of their `git hash-object` lookups.
 Also, no verifier can rely on a column that exists only sometimes.
 With both formats, every column is also a function of the content alone.
-So the merkle root no longer depends on the object format of the repo where the root was built.
+So the merkle root does not depend on the object format of the repo where the root was built.
 
 The values are git object hashes,
 and a reader needs no git to reproduce them.

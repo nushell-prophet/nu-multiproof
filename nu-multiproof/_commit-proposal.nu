@@ -51,9 +51,8 @@ export def quote-arg [s: string --multiline]: nothing -> string {
 # `signer` is passed in rather than read off the signature's filename: a
 # principal is a key's fingerprint, derived from key material, and `seal`
 # already resolved it from the signing key before step 3. Reading it back out of
-# `<file>.<fingerprint>.sig` is exactly the filename-as-identity shape this repo
-# removed — the same key rendered as two signers depending on which file name
-# was to hand.
+# `<file>.<fingerprint>.sig` is the filename-as-identity shape — the same key
+# rendered as two signers depending on which file name was to hand.
 export def seal-commit-line [
     result: record # what `seal` returned
     root: path # repo root the seal targeted

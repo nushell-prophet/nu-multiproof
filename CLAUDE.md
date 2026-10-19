@@ -113,8 +113,7 @@ Every rule below exists because an audit found the opposite in this repo.
   derived from key material every time a list is rendered
   — never from a filename, a key comment or a flag.
   Key material is the only thing an `allowed_signers` line may carry;
-  anything else interpolated into one needs a charset gate,
-  and that gate is exactly what the filename-stem principal used to cost.
+  anything else interpolated into one needs a charset gate.
 
 ## Nushell traps this repo has already hit
 
