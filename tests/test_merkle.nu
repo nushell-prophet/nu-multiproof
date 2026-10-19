@@ -973,6 +973,45 @@ def "an untracked file below a proven directory of a project below the git root 
     assert $result.valid
 }
 
+# The reason export-ignore enters the manifest rule: the published repo drops
+# todo/, and the "." row it carries must still verify there. The copy is built
+# the way a recipient gets it — a clone with the export-ignored files removed —
+# not by the builder, so the check is against a tree this code did not write.
+@test
+def "the root row verifies in a published copy that lacks the export-ignored files" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    let published = $"($tmp_dir)/published"
+    let key_path = $"($tmp_dir)/sshkey"
+
+    mkdir $"($repo)/todo"
+    ^git -C $repo init -q
+    "hello\n" | save --force $"($repo)/README.md"
+    "note\n" | save --force $"($repo)/todo/note.md"
+    "todo/** export-ignore\n" | save --force $"($repo)/.gitattributes"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    tree-hashes --repo $repo
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle write-root --repo $repo
+
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let proof = merkle prove . --repo $repo | path relative-to $repo
+
+    ^git clone -q $repo $published
+    ^git -C $published rm -r -q todo
+    ^git -C $published -c user.email=t@t -c user.name=t commit -q -m export
+    cp --recursive $"($repo)/multiproofs" $published
+
+    let result = merkle verify ($published | path join $proof) --repo $published
+
+    assert equal $result.content_enumeration "git-index"
+    assert equal $result.content_verified true "the root row named files the published copy does not hold"
+    assert $result.valid
+}
+
 # The case the walk exists for, without the flag: nothing under the bundle is
 # tracked, so the consumer's index cannot be the one the manifest was built
 # from, and listing it would report sealed evidence as tampered.
@@ -990,6 +1029,29 @@ def "an untracked bundle inside another git repo is walked without the bundle fl
 
     assert equal $result.content_enumeration "walk"
     assert $result.valid "a genuine bundle inside a git repo was judged against that repo's index"
+}
+
+# The same holds for export-ignored files: they are outside the builder's list,
+# so an index that tracks only those under the target is not the one any
+# manifest was built from.
+@test
+def "a bundle whose only tracked files are export-ignored is walked" [] {
+    let tmp_dir = $in.tmp_dir
+    let fx = make-sealed-bundle $tmp_dir
+    let outer = $"($tmp_dir)/consumer"
+
+    mkdir $outer
+    ^git -C $outer init -q
+    cp --recursive $fx.bundle $"($outer)/bundle"
+    mkdir $"($outer)/bundle/todo"
+    "note\n" | save --force $"($outer)/bundle/todo/note.md"
+    "bundle/todo/** export-ignore\n" | save --force $"($outer)/.gitattributes"
+    ^git -C $outer add .gitattributes bundle/todo o+e>| ignore
+    ^git -C $outer -c user.email=t@t -c user.name=t commit -q -m notes
+
+    let result = merkle verify $fx.dir_proof --repo $"($outer)/bundle"
+
+    assert equal $result.content_enumeration "walk"
 }
 
 # Tracked proof artifacts are not tracked content: multiproofs/ is outside the

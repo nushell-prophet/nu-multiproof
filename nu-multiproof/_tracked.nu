@@ -19,7 +19,31 @@ use _cid-helpers.nu [ file-node dir-node ]
 use _fs.nu list-files
 use _layout.nu MULTIPROOFS_DIR
 
-# git-tracked files, minus the proof directory, sorted byte-wise.
+# The pathspec that drops every path git marks `export-ignore`: the files a
+# project keeps in git but leaves out of what it publishes, todo/ notes being the
+# case that asked for it. Every reading of the index that must agree with the
+# manifest passes it.
+#
+# Why export-ignore, not a list of our own: it is git's standard name for "in the
+# repo, not in the published tree" (`git archive` already honours it), it sits in
+# a tracked .gitattributes and so is sealed with the manifest (tracked-entries
+# refuses a .gitattributes that drops itself), and a clone of the
+# published repo reads the same rule back. A rule that lived only beside the
+# exporter would leave the published "." row unverifiable.
+#
+# Write `todo/** export-ignore`, not `todo/ export-ignore`. A directory pattern
+# sets the attribute on the directory alone; `git archive` stops descending there,
+# but a pathspec tests each file, and the files under it carry no attribute. The
+# directory form excludes nothing here. Pinned by "a directory pattern for
+# export-ignore leaves its files in the manifest".
+#
+# Machine-local attributes (.git/info/attributes, core.attributesFile) count too.
+# That fails safe in the same way as a checkout filter (see _snapshot.nu): files
+# excluded on one machine only make its root disagree with every other checkout.
+export const EXPORT_IGNORED = ":(exclude,attr:export-ignore)"
+
+# git-tracked files, minus the proof directory and the export-ignored paths,
+# sorted byte-wise.
 #
 # Why multiproofs/ is excluded: it is the proof-output dir, derived from the
 # source it describes. Hashing it would make the manifest mutate every seal
@@ -39,7 +63,7 @@ use _layout.nu MULTIPROOFS_DIR
 export def tracked-entries [root: path]: nothing -> table {
     let exclude_prefix = $MULTIPROOFS_DIR + "/"
     let entries = (
-        ^git -C $root ls-files -s -z
+        ^git -C $root ls-files -s -z -- "." $EXPORT_IGNORED
         | split row (char --integer 0)
         | where $it != ""
         # Why split on the first tab instead of `parse`: ls-files -s separates
@@ -83,6 +107,17 @@ export def tracked-entries [root: path]: nothing -> table {
 
     if ($symlink_paths | is-not-empty) {
         error make {msg: $"git-tracked symlinks are not supported — one manifest row cannot describe both the link and its target; remove or replace: ($symlink_paths | to json)"}
+    }
+
+    # Why refuse a .gitattributes marked export-ignore: it holds the rule that
+    # shrinks the manifest, so a seal without it signs a file set no reader can
+    # rebuild — the rule is gone from the evidence that depends on it.
+    let unsealed_rules = ^git -C $root ls-files -z -- ":(glob,attr:export-ignore)**/.gitattributes"
+        | split row (char --integer 0)
+        | where $it != ""
+
+    if ($unsealed_rules | is-not-empty) {
+        error make {msg: $"a .gitattributes marked export-ignore would leave the rule that shapes the manifest out of it; unmark it: ($unsealed_rules | to json)"}
     }
 
     $entries

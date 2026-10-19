@@ -8,7 +8,7 @@
 
 use _repo.nu repo-root
 use _fs.nu [cwd-relative]
-use _tracked.nu [content-tree resolve-leaf-file]
+use _tracked.nu [EXPORT_IGNORED content-tree resolve-leaf-file]
 use _cid-helpers.nu node-cid
 use _layout.nu [
     manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir
@@ -68,9 +68,10 @@ use ots.nu
 # field lets it check what it got.
 #
 # Without $bundle the git arm runs when the target is inside a work tree AND
-# that index tracks a file under it outside multiproofs/ — the builder's own
-# list, read the way tracked-entries reads it (`git -C <target> ls-files`, so
-# the paths are relative to the target wherever the git root is).
+# that index tracks a file under it outside multiproofs/ and the export-ignored
+# paths — the builder's own list, read the way tracked-entries reads it
+# (`git -C <target> ls-files`, so the paths are relative to the target wherever
+# the git root is).
 #
 # Why a target below the git root qualifies: a monorepo holds each project in
 # a subdirectory, and the index there is still the one its manifest was built
@@ -98,7 +99,7 @@ def dir-enumeration [target: path bundle: bool]: nothing -> string {
     if $bundle { return "walk" }
     # Not tracked-entries: it throws on a symlink or a control byte, which would
     # turn the choice of an arm into a crash before the content check runs.
-    let listed = do { ^git -C $target ls-files -z } | complete
+    let listed = do { ^git -C $target ls-files -z -- "." $EXPORT_IGNORED } | complete
 
     if $listed.exit_code != 0 { return "walk" }
     let exclude_prefix = $MULTIPROOFS_DIR + "/"

@@ -118,6 +118,52 @@ def "hidden tracked files are included" [] {
     }
 }
 
+# The case export-ignore exists for: a note kept in git that the published repo
+# never receives. A manifest that named it would describe a tree no recipient holds.
+@test
+def "export-ignored files are left out of the manifest" [] {
+    let repo = make-repo $in.tmp_dir
+
+    mkdir $"($repo)/todo"
+    "note\n" | save --force $"($repo)/todo/note.md"
+    "todo/** export-ignore\n" | save --force $"($repo)/.gitattributes"
+    ^git -C $repo add . o+e>| ignore
+    let paths = tree-hashes --echo --repo $repo | get filepath
+
+    assert ("todo/note.md" not-in $paths) "an export-ignored file entered the manifest"
+    assert ("todo" not-in $paths) "the directory of export-ignored files kept its row"
+    assert (".gitattributes" in $paths) "the file that states the rule was left out of the seal"
+}
+
+# The trap the comment on EXPORT_IGNORED names: `git archive` drops the directory
+# for this form, a pathspec does not. Pinned so a change to the reading is
+# noticed, whichever way it goes.
+@test
+def "a directory pattern for export-ignore leaves its files in the manifest" [] {
+    let repo = make-repo $in.tmp_dir
+
+    mkdir $"($repo)/todo"
+    "note\n" | save --force $"($repo)/todo/note.md"
+    "todo/ export-ignore\n" | save --force $"($repo)/.gitattributes"
+    ^git -C $repo add . o+e>| ignore
+
+    assert ("todo/note.md" in (tree-hashes --echo --repo $repo | get filepath))
+}
+
+@test
+def "a gitattributes file that marks itself export-ignore is refused" [] {
+    let repo = make-repo $in.tmp_dir
+
+    "sub/inner.txt export-ignore\n" | save --force $"($repo)/sub/.gitattributes"
+    "* export-ignore\n" | save --force $"($repo)/sub/deeper/.gitattributes"
+    ^git -C $repo add . o+e>| ignore
+    let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
+
+    assert ($err != null) "a manifest was built without the rule that shaped it"
+    assert ($err =~ 'sub/deeper/\.gitattributes') $"the refusal did not name the file: ($err)"
+    assert ($err !~ '"sub/\.gitattributes"') "a gitattributes file that keeps itself was refused"
+}
+
 # One in-process pass yields per-file, per-dir AND the root "." CID, so the
 # manifest is written complete in a single pass and `root-cid` is a thin wrapper
 # returning that "." CID. The CIDs themselves are pinned against the reference

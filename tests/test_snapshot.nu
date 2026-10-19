@@ -107,6 +107,26 @@ def "an untracked file leaves the record standing" [] {
 }
 
 @test
+def "an edit to an export-ignored file leaves the record standing" [] {
+    let repo = $in.tmp_dir | path join repo
+
+    make-repo $repo | ignore
+    mkdir ($repo | path join todo)
+    "note\n" | save --force ($repo | path join todo note.md)
+    "todo/** export-ignore\n" | save --force ($repo | path join .gitattributes)
+    ^git -C $repo add -- . o+e>| ignore
+    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m todo
+    let head = ^git -C $repo rev-parse HEAD | str trim
+
+    # The note is outside the manifest, so the manifest of HEAD's tree and of
+    # this working tree are still the same bytes.
+    "edited note\n" | save --force ($repo | path join todo note.md)
+    tree-hashes --repo $repo | ignore
+
+    assert equal (parse-snapshot-statement (snapshot-path $repo)) $head
+}
+
+@test
 def "a change outside the sealed subtree leaves the record standing" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $tmp_dir | path join repo

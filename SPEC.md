@@ -98,6 +98,13 @@ The test "asking for a commit proposal leaves the seal result untouched" pins th
 
 `nu-multiproof tree-hashes` writes `multiproofs/tree-hashes.csv`:
 one row per git-tracked file, one per parent directory, and one for the repo root `.`.
+A file that git marks `export-ignore` gets no row:
+the repo keeps it,
+and the published tree does not hold it.
+Write the pattern as `todo/** export-ignore`;
+the form `todo/ export-ignore` marks only the directory, and its files keep their rows.
+`tree-hashes` refuses a `.gitattributes` that is itself marked `export-ignore`,
+because the manifest then does not hold the rule that shapes it.
 A file row names the same bytes in four ways.
 `content_sha256` is over the raw bytes.
 `content_git_sha1` and `content_git_sha256` are the git blob object in each object format.
@@ -208,7 +215,7 @@ It does not emit a CID that no IPFS client would reproduce.
 The root CID names content, but it does not publish it.
 Nothing here talks to IPFS,
 so the tree is available through the network only if the signer adds it.
-Over a directory that holds exactly the tracked files, `ipfs add -r --hidden --cid-version=0 --raw-leaves=false --hash=sha2-256 --chunker=size-262144` reproduces the `.` row (`--hidden` because `ipfs add` skips dotfiles otherwise).
+Over a directory that holds exactly the files with a row, `ipfs add -r --hidden --cid-version=0 --raw-leaves=false --hash=sha2-256 --chunker=size-262144` reproduces the `.` row (`--hidden` because `ipfs add` skips dotfiles otherwise).
 
 ## Merkle inclusion proofs
 

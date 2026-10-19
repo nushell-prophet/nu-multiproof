@@ -24,6 +24,7 @@
 # Internal module: mod.nu does not re-export _*.nu files.
 
 use _layout.nu [ MULTIPROOFS_DIR snapshot-path ]
+use _tracked.nu EXPORT_IGNORED
 
 export const SNAPSHOT_SCHEMA = "multiproof-snapshot-v1"
 
@@ -77,6 +78,8 @@ export def parse-snapshot-statement [file: path]: nothing -> string {
 #   :(exclude)multiproofs the proof directory is rewritten by every seal, and it
 #                         is outside the manifest, so its state says nothing about
 #                         whether the manifest matches the commit.
+#   EXPORT_IGNORED        the export-ignored paths are outside the manifest too,
+#                         so an edit to a todo/ note leaves the record standing.
 #   --no-optional-locks   `status` writes refreshed stat data back through the
 #                         index lock. A library inspecting someone else's repo
 #                         should not take it.
@@ -90,7 +93,7 @@ export def snapshot-state [root: path]: nothing -> any {
 
     let exclude_spec = ":(exclude)" + $MULTIPROOFS_DIR
     let status = do {
-        ^git --no-optional-locks -C $root status --porcelain --untracked-files=no -- "." $exclude_spec
+        ^git --no-optional-locks -C $root status --porcelain --untracked-files=no -- "." $exclude_spec $EXPORT_IGNORED
     } | complete
 
     # Not a third state — the same "nothing to record". And not removable: a
