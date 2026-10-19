@@ -326,6 +326,12 @@ A row whose commitment could not be checked must never read as a row that passed
 - `"directory"` — a file row that lands on a directory.
 - `"unverifiable"` — the leaf carries no commitment at all
   — neither a `content_sha256` nor a `content_cid`, so there is nothing to re-derive.
+- `"export-ignored"` — the git arm found a tracked file under the row that git marks `export-ignore`.
+  The rule comes from bytes that the proof does not cover,
+  so one committed `.gitattributes` line could hide a committed file.
+  A published copy holds no such file, so its rows verify;
+  in the origin worktree, a row over `todo/` notes gets this verdict.
+  (Pinned by the test "a committed file hidden by an export-ignore line is not verified".)
 
 If `multiproofs/tree-hashes.csv` is there,
 `merkle verify` also rebuilds the root from it and reports that root as `manifest_root`.

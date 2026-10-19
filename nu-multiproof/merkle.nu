@@ -135,6 +135,24 @@ def dir-enumeration [target: path bundle: bool]: nothing -> string {
 def derive-dir-cid [target: path leaf: record bundle: bool]: nothing -> record {
     if $leaf.content_cid == "" { return {verdict: "unverifiable" enumeration: null} }
     let enumeration = dir-enumeration $target $bundle
+
+    # Why refuse a tracked file that export-ignore drops under the row: the rule
+    # comes from bytes the proof does not cover — a .gitattributes above the
+    # proven directory, an untracked one inside it, .git/info/attributes,
+    # core.attributesFile. One committed line hides a committed file from the
+    # git arm, and the row reads as `true` over a tree that holds it. Checking
+    # each rule source against the manifest would keep "." verifiable in a
+    # worktree that holds its todo/ notes; a source above the seal root or
+    # local to the machine can enter no manifest, so the plain refusal is the
+    # one that cannot be argued around. The walk reads no attributes. Pinned by
+    # "a committed file hidden by an export-ignore line is not verified".
+    if $enumeration == "git-index" {
+        let hidden = ^git -C $target ls-files -z -- $":\(literal,attr:export-ignore\)($leaf.filepath)" $":\(exclude\)($MULTIPROOFS_DIR)"
+            | split row (char --integer 0)
+            | where $it != ""
+
+        if ($hidden | is-not-empty) { return {verdict: "export-ignored" enumeration: $enumeration} }
+    }
     # A directory CID is a function of the whole subtree, so this reads every
     # file in the set. Only rows that attest no sha256 reach it — file rows keep
     # the single-file hash.
@@ -341,7 +359,9 @@ export def prove [
 #                      regular file), "outside" (resolves out of the repo
 #                      through a symlinked parent), "directory" (a file row
 #                      landing on a directory), "unverifiable" (the row commits
-#                      to no content at all, so there is nothing to re-derive).
+#                      to no content at all, so there is nothing to re-derive),
+#                      "export-ignored" (the git arm, with a tracked file under
+#                      the row that export-ignore drops).
 #                      A directory row away from its origin repo is re-derived
 #                      from the subtree the target carries, so a portable bundle
 #                      gets a real verdict rather than "unverifiable"
@@ -582,6 +602,8 @@ export def verify [
         $"on-disk ($proof.leaf.filepath) does not match the proven content_sha256"
     } else if $content_verified == "unverifiable" {
         $"($proof.leaf.filepath) commits to no content at all — the row carries neither a content_sha256 nor a content_cid, so there is nothing about it to check"
+    } else if $content_verified == "export-ignored" {
+        $"a tracked file under ($proof.leaf.filepath) is marked export-ignore — the rule comes from bytes this proof does not cover, so the index cannot say which files the row commits to; pass --bundle over a copy without those files, or remove the attribute"
     } else if $content_verified == "missing" and $proof.leaf.content_sha256 == "" {
         # Two disk states share this verdict: a tracked file deleted from the
         # worktree (the ordinary mid-edit state), and a row naming a directory
@@ -611,7 +633,7 @@ export def verify [
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
     let enumerated_by = if $content_enumeration == null { "" } else { $" \(via ($content_enumeration)\)" }
 
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (the row commits to no content)' })($enumerated_by)"
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (the row commits to no content)', 'export-ignored' => 'EXPORT-IGNORED (a tracked file under the row is hidden by an attribute)' })($enumerated_by)"
     print $"ots:       ($ots_status.status)"
     print $"beacon:    ($beacon_report) \(as stated — `beacon verify` checks it against Bitcoin\)"
     for e in $endorsements {

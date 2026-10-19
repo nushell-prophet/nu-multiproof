@@ -973,6 +973,40 @@ def "an untracked file below a proven directory of a project below the git root 
     assert $result.valid
 }
 
+# The attack the export-ignore rule opened on the git arm: the file is committed,
+# so the index lists it, and one attribute line takes it out of the enumeration.
+# Each source sits outside the bytes a proof of sub/ covers: a committed rule in
+# the project, an untracked one inside the proven directory, and one local to
+# the clone.
+@test
+def "a committed file hidden by an export-ignore line is not verified" [] {
+    let tmp_dir = $in.tmp_dir
+    let sources = [
+        {name: committed rule: ".gitattributes" commit: true}
+        {name: untracked rule: "sub/.gitattributes" commit: false}
+        {name: local rule: "../.git/info/attributes" commit: false}
+    ]
+
+    for s in $sources {
+        let fx = make-subproject ($tmp_dir | path join $s.name)
+
+        "evil\n" | save --force $"($fx.project)/sub/evil.sh"
+        let rule = $fx.project | path join $s.rule
+
+        mkdir ($rule | path dirname)
+        "sub/evil.sh export-ignore\nevil.sh export-ignore\n" | save --append $rule
+        let staged = if $s.commit { [sub/evil.sh $s.rule] } else { [sub/evil.sh] }
+
+        ^git -C $fx.project add ...$staged
+        ^git -C $fx.project -c user.email=t@t -c user.name=t commit -q -m evil
+
+        let result = merkle verify $fx.dir_proof --repo $fx.project
+
+        assert equal $result.content_verified "export-ignored" $"a ($s.name) attribute hid a committed file from the git arm"
+        assert (not $result.valid)
+    }
+}
+
 # The reason export-ignore enters the manifest rule: the published repo drops
 # todo/, and the "." row it carries must still verify there. The copy is built
 # the way a recipient gets it — a clone with the export-ignored files removed —
