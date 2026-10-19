@@ -105,6 +105,14 @@ Write the pattern as `todo/** export-ignore`;
 the form `todo/ export-ignore` marks only the directory, and its files keep their rows.
 `tree-hashes` refuses a `.gitattributes` that is itself marked `export-ignore`,
 because the manifest then does not hold the rule that shapes it.
+`tree-hashes` also refuses when a rule from outside the index changes which files are export-ignored:
+an untracked or unstaged `.gitattributes`, a global or system attributes file, `attr.tree` or `GIT_ATTR_SOURCE`.
+No checkout of the commit holds such a rule,
+so every other machine would rebuild a different root.
+It compares the export-ignored set as git reads it with the set from the index tree alone,
+so an attribute file that marks nothing `export-ignore` passes.
+Any rule in `$GIT_DIR/info/attributes` is refused, because no flag turns that file off.
+(Pinned by the tests "a rule from outside the index that changes the export-ignored set is refused" and "a global attributes file that marks nothing export-ignore is accepted".)
 A file row names the same bytes in four ways.
 `content_sha256` is over the raw bytes.
 `content_git_sha1` and `content_git_sha256` are the git blob object in each object format.

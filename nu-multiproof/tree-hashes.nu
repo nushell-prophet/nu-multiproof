@@ -8,7 +8,7 @@
 # there is only ever one manifest shape to sign.
 
 use _cid-helpers.nu node-cid
-use _tracked.nu content-tree
+use _tracked.nu [content-tree refuse-unsealed-rules]
 use _repo.nu repo-root
 use _layout.nu [ multiproofs-dir manifest-path ]
 use _temp-helpers.nu [ with-temp-dir with-temp-file ]
@@ -63,6 +63,10 @@ def build-tree [
     --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
 ]: nothing -> table {
     let root = repo-root $repo
+
+    # Here and not in tracked-entries: `merkle verify` reads that too, and a
+    # verifier's own attributes must not turn its verdict into a throw.
+    refuse-unsealed-rules $root
 
     # The enumeration, the per-file hashes and the folded directory nodes all
     # come from _tracked.nu, because `merkle verify` re-derives directory CIDs

@@ -164,6 +164,73 @@ def "a gitattributes file that marks itself export-ignore is refused" [] {
     assert ($err !~ '"sub/\.gitattributes"') "a gitattributes file that keeps itself was refused"
 }
 
+# Every source git reads the attribute from that no checkout of the commit
+# carries. Each one hides a tracked file from the manifest or brings back one the
+# committed rule hides, so the root would differ on every other machine.
+@test
+def "a rule from outside the index that changes the export-ignored set is refused" [] {
+    let tmp_dir = $in.tmp_dir
+    # In the test repo, not the CWD: the id depends on the object format.
+    let empty_tree = {|r| ^git -C $r hash-object -t tree /dev/null | str trim }
+    let cases = [
+        {name: untracked-inside setup: {|r| "inner.txt export-ignore\n" | save $"($r)/sub/.gitattributes" }}
+        {name: ignored-inside setup: {|r|
+            ".gitattributes\n" | save $"($r)/sub/.gitignore"
+            "inner.txt export-ignore\n" | save $"($r)/sub/.gitattributes"
+        }}
+        {name: unstaged-edit setup: {|r| "sub/inner.txt export-ignore\n" | save --append $"($r)/.gitattributes" }}
+        {name: global-file setup: {|r| "sub/inner.txt export-ignore\n" | save $"($r)/../xdg/git/attributes" }}
+        {name: info-attributes setup: {|r| "file.txt -diff\n" | save $"($r)/.git/info/attributes" }}
+        {name: attr-tree setup: {|r| ^git -C $r config attr.tree (do $empty_tree $r) }}
+    ]
+
+    for c in $cases {
+        let repo = make-repo ($tmp_dir | path join $c.name)
+
+        # A committed rule, so attr.tree has one to drop.
+        "apple.txt export-ignore\n" | save $"($repo)/.gitattributes"
+        ^git -C $repo add .gitattributes
+        ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m rule
+        mkdir $"($repo)/../xdg/git" $"($repo)/.git/info"
+        do $c.setup $repo
+
+        let err = with-env {XDG_CONFIG_HOME: $"($repo)/../xdg" GIT_CONFIG_GLOBAL: /dev/null} {
+            try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
+        }
+
+        assert ($err != null) $"a manifest was built under an unsealed rule: ($c.name)"
+    }
+
+    # The environment variable, and a rule above a seal root that is a subdirectory.
+    let repo = make-repo ($tmp_dir | path join env)
+    "apple.txt export-ignore\n" | save $"($repo)/.gitattributes"
+    ^git -C $repo add .gitattributes
+    let err = with-env {GIT_ATTR_SOURCE: (do $empty_tree $repo)} { try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg } }
+    assert ($err != null) "GIT_ATTR_SOURCE shaped the manifest"
+
+    let repo = make-repo ($tmp_dir | path join above)
+    "sub/inner.txt export-ignore\n" | save $"($repo)/.gitattributes"
+    let err = try { tree-hashes --echo --repo $"($repo)/sub"; null } catch {|e| $e.msg }
+    assert ($err != null) "an untracked rule above the seal root shaped the manifest"
+    assert ($err =~ 'inner\.txt') $"the refusal did not name the file: ($err)"
+}
+
+# The comparison is on the effect, so a global file that sets other attributes
+# is not a reason to refuse.
+@test
+def "a global attributes file that marks nothing export-ignore is accepted" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-repo $tmp_dir
+
+    mkdir $"($tmp_dir)/xdg/git"
+    "*.png diff=exif\n" | save $"($tmp_dir)/xdg/git/attributes"
+    let paths = with-env {XDG_CONFIG_HOME: $"($tmp_dir)/xdg" GIT_CONFIG_GLOBAL: /dev/null} {
+        tree-hashes --echo --repo $repo | get filepath
+    }
+
+    assert ("sub/inner.txt" in $paths)
+}
+
 # One in-process pass yields per-file, per-dir AND the root "." CID, so the
 # manifest is written complete in a single pass and `root-cid` is a thin wrapper
 # returning that "." CID. The CIDs themselves are pinned against the reference

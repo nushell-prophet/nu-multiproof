@@ -27,9 +27,10 @@ use _layout.nu MULTIPROOFS_DIR
 # Why export-ignore, not a list of our own: it is git's standard name for "in the
 # repo, not in the published tree" (`git archive` already honours it), it sits in
 # a tracked .gitattributes and so is sealed with the manifest (tracked-entries
-# refuses a .gitattributes that drops itself), and a clone of the
-# published repo reads the same rule back. A rule that lived only beside the
-# exporter would leave the published "." row unverifiable.
+# refuses a .gitattributes that drops itself, refuse-unsealed-rules a rule from
+# anywhere else), and a clone of the published repo reads the same rule back. A
+# rule that lived only beside the exporter would leave the published "." row
+# unverifiable.
 #
 # Write `todo/** export-ignore`, not `todo/ export-ignore`. A directory pattern
 # sets the attribute on the directory alone; `git archive` stops descending there,
@@ -37,10 +38,56 @@ use _layout.nu MULTIPROOFS_DIR
 # directory form excludes nothing here. Pinned by "a directory pattern for
 # export-ignore leaves its files in the manifest".
 #
-# Machine-local attributes (.git/info/attributes, core.attributesFile) count too.
-# That fails safe in the same way as a checkout filter (see _snapshot.nu): files
-# excluded on one machine only make its root disagree with every other checkout.
+# A tracked .gitattributes above the seal root is in the commit but not in the
+# manifest, and a recipient exported from the seal root does not hold it. Keep
+# such a rule anchored to its own directory (`todo/**`, not `**/todo/**`), so it
+# reaches nothing below the seal root.
 export const EXPORT_IGNORED = ":(exclude,attr:export-ignore)"
+
+# Refuse a manifest whose export-ignore set comes from rules outside the index.
+#
+# Git also reads the attribute from an untracked or unstaged .gitattributes (in
+# the tree or above it), the global and system attributes files, attr.tree,
+# GIT_ATTR_SOURCE and $GIT_DIR/info/attributes. Such a rule shapes the manifest,
+# and no checkout of the commit rebuilds it: every other machine gets a different
+# root, while the seal that signed it is already timestamped and frozen.
+#
+# Why compare the effect, not search the sources: a macro (`[attr]x
+# export-ignore`) hides the attribute name from any search of a file, and an
+# honest global file (`*.png diff=exif`) changes nothing. So the set is read
+# twice, once as git reads it and once from the index tree alone, and any
+# difference is refused. The index and not HEAD, so a staged rule seals.
+# info/attributes is the one source no flag turns off, so any rule in it is
+# refused. Pinned by "a rule from outside the index that changes the export-ignored
+# set is refused" and "a global attributes file that marks nothing export-ignore
+# is accepted".
+export def refuse-unsealed-rules [root: path]: nothing -> nothing {
+    let info = ^git -C $root rev-parse --path-format=absolute --git-path info/attributes | str trim
+
+    if ($info | path exists) {
+        let rules = open --raw $info | lines | str trim | where $it != "" and not ($it | str starts-with "#")
+
+        if ($rules | is-not-empty) {
+            error make {msg: $"($info) holds attribute rules — it is local to this clone and no flag turns it off, so it could shape the manifest beyond what any commit holds. Move the rules to a tracked .gitattributes"}
+        }
+    }
+
+    let spec = [":(attr:export-ignore)" $":\(exclude\)($MULTIPROOFS_DIR)"]
+    let as_read = ^git -C $root ls-files -z -- ...$spec | split row (char --integer 0) | where $it != ""
+    # write-tree leaves a loose tree object behind; git gc collects it.
+    let index_tree = ^git -C $root write-tree | str trim
+    let as_committed = do {
+        hide-env --ignore-errors GIT_ATTR_SOURCE
+        with-env {GIT_ATTR_NOSYSTEM: "1"} {
+            ^git -C $root --attr-source $index_tree -c core.attributesFile=/dev/null ls-files -z -- ...$spec
+        }
+    } | split row (char --integer 0) | where $it != ""
+    let differ = ($as_read | where $it not-in $as_committed) ++ ($as_committed | where $it not-in $as_read)
+
+    if ($differ | is-not-empty) {
+        error make {msg: $"export-ignore marks ($differ | to json) differently from the rules in the index — an untracked or unstaged .gitattributes, a global or system attributes file, attr.tree or GIT_ATTR_SOURCE shapes the manifest, so no checkout of the commit rebuilds it. Stage the rule, or remove it"}
+    }
+}
 
 # git-tracked files, minus the proof directory and the export-ignored paths,
 # sorted byte-wise.
