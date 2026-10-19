@@ -428,6 +428,11 @@ so an independent implementation reproduces the root from the same CSV (referenc
   The counter counts roots, not runs.
   A new derivation of an unchanged tree writes the same bytes.
   So a reseal that changes nothing leaves existing signatures valid (the rule stated above for the manifest signature).
+  By default the live statement is the seal that a new root replaces.
+  The live statement can be a draft that no seal finished,
+  so a caller that keeps its finished seals names the last one with `--supersedes` (`merkle write-root`, `seal`),
+  or names `genesis` when it has none.
+  A new root then replaces the draft and does not follow it.
   Note what the number is worth.
   `multiproofs/` is outside the manifest,
   so `seq` is not under the merkle root.

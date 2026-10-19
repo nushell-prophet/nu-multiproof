@@ -191,6 +191,7 @@ def derive-dir-cid [target: path leaf: record bundle: bool]: nothing -> record {
 export def write-root [
     --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
     --beacon: string = $BEACON_NONE # Lower time bound for a NEW root: `bitcoin:<height>:<hash>` from `beacon latest`
+    --supersedes: string # The statement file of the last finished seal, or `genesis` (default: the live statement)
 ]: nothing -> record {
     # Before the manifest is read, so a malformed token costs nothing.
     validate-beacon $beacon
@@ -221,11 +222,25 @@ export def write-root [
     # the first real seal counts 0, and root `genesis`, so `prev` is always its
     # predecessor's root — spelled the way the format already spells "nothing
     # came before". That leaves one rule instead of a first-seal case. The
-    # sentinel carries nothing else on purpose: a real root is 64 hex, so it can
-    # never equal one and the carry-over branch below can never read it; were
-    # that ever to change, the `select` there fails on the missing columns
-    # instead of writing invented ones.
-    let superseded = if ($out | path exists) { parse-root-statement $out } else { {root: "genesis" seq: -1} }
+    # sentinel carries nothing else on purpose: the carry-over branch below reads
+    # only the live statement, never this one.
+    #
+    # --supersedes exists because the live statement is not always a finished
+    # seal. `seal --external-signer` stops after writing it, and a seal can fail
+    # after it too. With the default, a changed tree makes that draft the `prev`
+    # of the next root, and a caller that keeps one snapshot per finished seal
+    # finds a hole in its chain that no later seal fills. Only the caller knows
+    # which seal finished, so it names the statement; this command does not
+    # guess from signatures, because a validly signed draft can still miss its
+    # snapshot. Pinned by "a named predecessor replaces the draft instead of
+    # following it".
+    let live = if ($out | path exists) { parse-root-statement $out }
+    let genesis = {root: "genesis" seq: -1}
+    let superseded = match $supersedes {
+        null => ($live | default $genesis)
+        "genesis" => $genesis
+        _ => (parse-root-statement $supersedes)
+    }
     # The counter tracks ROOTS, not runs of this command. Re-deriving an
     # unchanged tree must rewrite the same bytes: the statement is what
     # co-signers sign, and a seq that moved on a no-op run would make every
@@ -242,8 +257,8 @@ export def write-root [
     # regression the idempotence above exists to prevent. So the passed --beacon
     # is deliberately ignored on a carry-over; the statement keeps the one it was
     # minted with, and the bound it states stays the bound that seal earned.
-    let counter = if $superseded.root == $root_hex {
-        $superseded | select seq prev beacon
+    let counter = if $live != null and $live.root == $root_hex {
+        $live | select seq prev beacon
     } else {
         {seq: ($superseded.seq + 1) prev: $superseded.root beacon: $beacon}
     }

@@ -463,6 +463,33 @@ def "each seal raises the sequence by one and names the root it supersedes" [] {
     assert equal (parse-root-statement $"($repo)/multiproofs/tree-root.txt") {root: $second.root seq: 1 prev: $first.root beacon: "none"}
 }
 
+# The live statement can be a draft nobody finished sealing. A caller that
+# keeps its finished seals names the last one, and a changed tree then replaces
+# the draft instead of following it.
+@test
+def "a named predecessor replaces the draft instead of following it" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = make-test-repo $tmp_dir
+    let first = merkle write-root --repo $repo
+    let finished = $"($tmp_dir)/finished-tree-root.txt"
+
+    cp $"($repo)/multiproofs/tree-root.txt" $finished
+    for name in [draft.txt later.txt] {
+        "x\n" | save --force $"($repo)/($name)"
+        ^git -C $repo add $name
+        tree-hashes --repo $repo
+        merkle write-root --repo $repo --supersedes $finished | ignore
+    }
+
+    assert equal (merkle read-root $"($repo)/multiproofs/tree-root.txt" | select seq prev) {seq: 1 prev: $first.root}
+    assert equal (merkle write-root --repo $repo --supersedes genesis | select seq prev) {seq: 1 prev: $first.root} "an unchanged root keeps the counter it was minted with"
+
+    "y\n" | save --force $"($repo)/genesis-again.txt"
+    ^git -C $repo add genesis-again.txt
+    tree-hashes --repo $repo
+    assert equal (merkle write-root --repo $repo --supersedes genesis | select seq prev) {seq: 0 prev: "genesis"}
+}
+
 @test
 def "a proof file holding a JSON scalar is refused instead of crashing" [] {
     let tmp_dir = $in.tmp_dir

@@ -84,6 +84,7 @@ export def main [
     --response-file: path # Calendar answer for step 5, instead of posting the digest
     --propose-commit # Leave a `git commit` for this seal in the prompt, unrun
     --external-signer # Step 4 happens off this machine: stop until the signature sits beside the statement, then stamp
+    --supersedes: string # The statement file of the last finished seal, or `genesis` (default: the live statement; see `merkle write-root`)
 ]: nothing -> record {
     # Why refused rather than given a precedence: they ask for different things —
     # "no stamps at all" and "stamp the signatures only" — and letting one win
@@ -182,7 +183,7 @@ export def main [
     # lands: an unchanged root carries the previous beacon over, so re-sealing an
     # untouched tree rewrites the same bytes and leaves every co-signer signature
     # standing (merkle.nu write-root).
-    let merkle_result = merkle write-root --repo $root --beacon $beacon_token
+    let merkle_result = merkle write-root --repo $root --beacon $beacon_token --supersedes $supersedes
 
     $result = ($result | insert merkle_root $merkle_result.root | insert beacon $merkle_result.beacon)
 

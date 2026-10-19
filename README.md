@@ -168,6 +168,9 @@ This document and `SPEC.md` refer to these by number.
 `--external-signer` moves stage 4 to another device:
 the first run stops after stage 3 and names the `.sig` file it waits for,
 and the next run checks that signature and goes on to stage 5.
+`--supersedes` names the statement file of the last finished seal, or `genesis`,
+for a caller that keeps its finished seals:
+by default the live statement is the predecessor, even when it is a draft that no seal finished.
 Neither flag skips stage 1,
 so `--no-stamp` reaches the network anyway when the tree contains a pending `.ots`.
 It seals offline only in a repo that has nothing left to upgrade.
