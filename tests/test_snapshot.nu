@@ -106,14 +106,18 @@ def "an untracked file leaves the record standing" [] {
     assert equal (parse-snapshot-statement (snapshot-path $repo)) $head
 }
 
+# The status reading takes the rules as git pathspecs, the manifest as a
+# component match; the two must leave out the same paths. "todofoo.md" is the
+# name a prefix match would wrongly drop.
 @test
-def "an edit to an export-ignored file leaves the record standing" [] {
+def "the snapshot leaves out exactly the paths the manifest leaves out" [] {
     let repo = $in.tmp_dir | path join repo
 
     make-repo $repo | ignore
     mkdir ($repo | path join todo)
     "note\n" | save --force ($repo | path join todo note.md)
-    "todo/** export-ignore\n" | save --force ($repo | path join .gitattributes)
+    "foo\n" | save --force ($repo | path join todofoo.md)
+    "todo\n" | save --force ($repo | path join .multiproofignore)
     ^git -C $repo add -- . o+e>| ignore
     ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m todo
     let head = ^git -C $repo rev-parse HEAD | str trim
@@ -124,6 +128,11 @@ def "an edit to an export-ignored file leaves the record standing" [] {
     tree-hashes --repo $repo | ignore
 
     assert equal (parse-snapshot-statement (snapshot-path $repo)) $head
+
+    "edited foo\n" | save --force ($repo | path join todofoo.md)
+    tree-hashes --repo $repo | ignore
+
+    assert not ((snapshot-path $repo) | path exists) "an edit to a manifest file left the record standing"
 }
 
 @test

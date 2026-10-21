@@ -118,117 +118,106 @@ def "hidden tracked files are included" [] {
     }
 }
 
-# The case export-ignore exists for: a note kept in git that the published repo
+# The case the rule file exists for: a note kept in git that the published repo
 # never receives. A manifest that named it would describe a tree no recipient holds.
 @test
-def "export-ignored files are left out of the manifest" [] {
+def "paths named in the rule file are left out of the manifest" [] {
     let repo = make-repo $in.tmp_dir
 
     mkdir $"($repo)/todo"
     "note\n" | save --force $"($repo)/todo/note.md"
-    "todo/** export-ignore\n" | save --force $"($repo)/.gitattributes"
+    "todofoo\n" | save --force $"($repo)/todofoo.md"
+    "# notes stay in git\ntodo\n\nsub/deeper\n" | save --force $"($repo)/.multiproofignore"
     ^git -C $repo add . o+e>| ignore
     let paths = tree-hashes --echo --repo $repo | get filepath
 
-    assert ("todo/note.md" not-in $paths) "an export-ignored file entered the manifest"
-    assert ("todo" not-in $paths) "the directory of export-ignored files kept its row"
-    assert (".gitattributes" in $paths) "the file that states the rule was left out of the seal"
+    assert ("todo/note.md" not-in $paths) "a file under a named directory entered the manifest"
+    assert ("todo" not-in $paths) "the named directory kept its row"
+    assert ("sub/deeper/x.txt" not-in $paths) "a nested named directory entered the manifest"
+    assert ("todofoo.md" in $paths) "a name that only starts with a rule was left out"
+    assert ("sub/inner.txt" in $paths) "a sibling of a named directory was left out"
+    assert (".multiproofignore" in $paths) "the file that states the rule was left out of the seal"
 }
 
-# The trap the comment on EXPORT_IGNORED names: `git archive` drops the directory
-# for this form, a pathspec does not. Pinned so a change to the reading is
-# noticed, whichever way it goes.
+# A nested project is sealed on its own: its rule file shapes its own manifest
+# and nothing in the parent, so the parent lists the files it names.
 @test
-def "a directory pattern for export-ignore leaves its files in the manifest" [] {
+def "a rule file below the seal root excludes nothing" [] {
     let repo = make-repo $in.tmp_dir
 
-    mkdir $"($repo)/todo"
-    "note\n" | save --force $"($repo)/todo/note.md"
-    "todo/ export-ignore\n" | save --force $"($repo)/.gitattributes"
+    "inner.txt\n" | save --force $"($repo)/sub/.multiproofignore"
     ^git -C $repo add . o+e>| ignore
 
-    assert ("todo/note.md" in (tree-hashes --echo --repo $repo | get filepath))
+    assert ("sub/inner.txt" in (tree-hashes --echo --repo $repo | get filepath))
+    assert ("inner.txt" not-in (tree-hashes --echo --repo $"($repo)/sub" | get filepath)) "the nested project ignored its own rule"
 }
 
 @test
-def "a gitattributes file that marks itself export-ignore is refused" [] {
+def "a rule file above the seal root excludes nothing" [] {
     let repo = make-repo $in.tmp_dir
 
-    "sub/inner.txt export-ignore\n" | save --force $"($repo)/sub/.gitattributes"
-    "* export-ignore\n" | save --force $"($repo)/sub/deeper/.gitattributes"
+    "sub/inner.txt\ninner.txt\n" | save --force $"($repo)/.multiproofignore"
+    ^git -C $repo add . o+e>| ignore
+
+    assert ("inner.txt" in (tree-hashes --echo --repo $"($repo)/sub" | get filepath))
+}
+
+@test
+def "a rule line that is not a plain path is refused" [] {
+    let tmp_dir = $in.tmp_dir
+    let lines = [
+        "todo/" "/todo" "!todo" "*.md" "sub/**" "todo?" "[t]odo" "a\\b" " todo" "todo "
+        "./todo" "sub/../todo" "sub//x" "multiproofs" "multiproofs/x" ".multiproofignore" "to\rdo"
+    ]
+
+    for line in ($lines | enumerate) {
+        let repo = make-repo ($tmp_dir | path join $"($line.index)")
+
+        $"($line.item)\n" | save --force $"($repo)/.multiproofignore"
+        ^git -C $repo add . o+e>| ignore
+        let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
+
+        assert ($err != null) $"a rule line was read as a path: ($line.item | to json)"
+        assert str contains $err ".multiproofignore"
+    }
+}
+
+@test
+def "a rule file that excludes itself is refused" [] {
+    let repo = make-repo $in.tmp_dir
+
+    ".multiproofignore\n" | save --force $"($repo)/.multiproofignore"
     ^git -C $repo add . o+e>| ignore
     let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
 
     assert ($err != null) "a manifest was built without the rule that shaped it"
-    assert ($err =~ 'sub/deeper/\.gitattributes') $"the refusal did not name the file: ($err)"
-    assert ($err !~ '"sub/\.gitattributes"') "a gitattributes file that keeps itself was refused"
+    assert str contains $err "leave itself out"
 }
 
-# Every source git reads the attribute from that no checkout of the commit
-# carries. Each one hides a tracked file from the manifest or brings back one the
-# committed rule hides, so the root would differ on every other machine.
+# The manifest is the tracked files: an untracked rule file would shape it
+# while no row commits to it, and no checkout of the commit rebuilds it.
 @test
-def "a rule from outside the index that changes the export-ignored set is refused" [] {
-    let tmp_dir = $in.tmp_dir
-    # In the test repo, not the CWD: the id depends on the object format.
-    let empty_tree = {|r| ^git -C $r hash-object -t tree /dev/null | str trim }
-    let cases = [
-        {name: untracked-inside setup: {|r| "inner.txt export-ignore\n" | save $"($r)/sub/.gitattributes" }}
-        {name: ignored-inside setup: {|r|
-            ".gitattributes\n" | save $"($r)/sub/.gitignore"
-            "inner.txt export-ignore\n" | save $"($r)/sub/.gitattributes"
-        }}
-        {name: unstaged-edit setup: {|r| "sub/inner.txt export-ignore\n" | save --append $"($r)/.gitattributes" }}
-        {name: global-file setup: {|r| "sub/inner.txt export-ignore\n" | save $"($r)/../xdg/git/attributes" }}
-        {name: info-attributes setup: {|r| "file.txt -diff\n" | save $"($r)/.git/info/attributes" }}
-        {name: attr-tree setup: {|r| ^git -C $r config attr.tree (do $empty_tree $r) }}
-    ]
+def "an untracked rule file is refused" [] {
+    let repo = make-repo $in.tmp_dir
 
-    for c in $cases {
-        let repo = make-repo ($tmp_dir | path join $c.name)
+    "sub\n" | save --force $"($repo)/.multiproofignore"
+    let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
 
-        # A committed rule, so attr.tree has one to drop.
-        "apple.txt export-ignore\n" | save $"($repo)/.gitattributes"
-        ^git -C $repo add .gitattributes
-        ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m rule
-        mkdir $"($repo)/../xdg/git" $"($repo)/.git/info"
-        do $c.setup $repo
-
-        let err = with-env {XDG_CONFIG_HOME: $"($repo)/../xdg" GIT_CONFIG_GLOBAL: /dev/null} {
-            try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
-        }
-
-        assert ($err != null) $"a manifest was built under an unsealed rule: ($c.name)"
-    }
-
-    # The environment variable, and a rule above a seal root that is a subdirectory.
-    let repo = make-repo ($tmp_dir | path join env)
-    "apple.txt export-ignore\n" | save $"($repo)/.gitattributes"
-    ^git -C $repo add .gitattributes
-    let err = with-env {GIT_ATTR_SOURCE: (do $empty_tree $repo)} { try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg } }
-    assert ($err != null) "GIT_ATTR_SOURCE shaped the manifest"
-
-    let repo = make-repo ($tmp_dir | path join above)
-    "sub/inner.txt export-ignore\n" | save $"($repo)/.gitattributes"
-    let err = try { tree-hashes --echo --repo $"($repo)/sub"; null } catch {|e| $e.msg }
-    assert ($err != null) "an untracked rule above the seal root shaped the manifest"
-    assert ($err =~ 'inner\.txt') $"the refusal did not name the file: ($err)"
+    assert ($err != null) "an untracked rule shaped the manifest"
+    assert str contains $err "not tracked"
 }
 
-# The comparison is on the effect, so a global file that sets other attributes
-# is not a reason to refuse.
 @test
-def "a global attributes file that marks nothing export-ignore is accepted" [] {
-    let tmp_dir = $in.tmp_dir
-    let repo = make-repo $tmp_dir
+def "a symlinked rule file is refused" [] {
+    let repo = make-repo $in.tmp_dir
 
-    mkdir $"($tmp_dir)/xdg/git"
-    "*.png diff=exif\n" | save $"($tmp_dir)/xdg/git/attributes"
-    let paths = with-env {XDG_CONFIG_HOME: $"($tmp_dir)/xdg" GIT_CONFIG_GLOBAL: /dev/null} {
-        tree-hashes --echo --repo $repo | get filepath
-    }
+    "sub\n" | save --force $"($repo)/../rules"
+    ^ln --symbolic ../rules $"($repo)/.multiproofignore"
+    ^git -C $repo add .multiproofignore
+    let err = try { tree-hashes --echo --repo $repo; null } catch {|e| $e.msg }
 
-    assert ("sub/inner.txt" in $paths)
+    assert ($err != null) "rules behind a symlink shaped the manifest"
+    assert str contains $err "symlink"
 }
 
 # One in-process pass yields per-file, per-dir AND the root "." CID, so the

@@ -7,12 +7,12 @@
 # Tree spec: README.md "Merkle inclusion proofs"; primitives: _merkle-helpers.nu.
 
 use _repo.nu repo-root
-use _fs.nu [cwd-relative]
-use _tracked.nu [EXPORT_IGNORED content-tree resolve-leaf-file]
+use _fs.nu [cwd-relative list-files]
+use _tracked.nu [content-tree resolve-leaf-file ignore-rules is-ignored]
 use _cid-helpers.nu node-cid
 use _layout.nu [
     manifest-path merkle-root-path inclusion-proofs-dir pubkeys-dir ots-dir
-    multiproofs-dir MERKLE_ROOT_FILE MANIFEST_FILE MULTIPROOFS_DIR
+    multiproofs-dir MERKLE_ROOT_FILE MANIFEST_FILE MULTIPROOFS_DIR IGNORE_FILE
 ]
 use _merkle-helpers.nu [
     MERKLE_SCHEMA load-leaves leaf-hash mth audit-path fold-path
@@ -68,8 +68,8 @@ use ots.nu
 # field lets it check what it got.
 #
 # Without $bundle the git arm runs when the target is inside a work tree AND
-# that index tracks a file under it outside multiproofs/ and the export-ignored
-# paths — the builder's own list, read the way tracked-entries reads it
+# that index tracks a file under it outside multiproofs/ and the paths the rule
+# file names — the builder's own list, read the way tracked-entries reads it
 # (`git -C <target> ls-files`, so the paths are relative to the target wherever
 # the git root is).
 #
@@ -95,17 +95,18 @@ use ots.nu
 # flag, the same arm a `.git` at the bundle root already earns; `--bundle` is
 # the defence for both. Pinned by "a git index above a bundle does not decide
 # its file set under the bundle flag".
-def dir-enumeration [target: path bundle: bool]: nothing -> string {
+def dir-enumeration [target: path bundle: bool rules: list<string>]: nothing -> string {
     if $bundle { return "walk" }
     # Not tracked-entries: it throws on a symlink or a control byte, which would
     # turn the choice of an arm into a crash before the content check runs.
-    let listed = do { ^git -C $target ls-files -z -- "." $EXPORT_IGNORED } | complete
+    let listed = do { ^git -C $target ls-files -z -- "." } | complete
 
     if $listed.exit_code != 0 { return "walk" }
     let exclude_prefix = $MULTIPROOFS_DIR + "/"
     let tracked = $listed.stdout
         | split row (char --integer 0)
         | where $it != "" and not ($it | str starts-with $exclude_prefix)
+        | where not ($it | is-ignored $rules)
 
     if ($tracked | is-empty) { "walk" } else { "git-index" }
 }
@@ -134,24 +135,36 @@ def dir-enumeration [target: path bundle: bool]: nothing -> string {
 # reports no enumeration either.
 def derive-dir-cid [target: path leaf: record bundle: bool]: nothing -> record {
     if $leaf.content_cid == "" { return {verdict: "unverifiable" enumeration: null} }
-    let enumeration = dir-enumeration $target $bundle
+    # A rule file that cannot be read is a defect of the artifact: the builder
+    # refuses it, so it was not sealed this way. A verdict, not a throw. Pinned
+    # by "a rule file the builder would refuse leaves the row unverified".
+    let rules = try { ignore-rules $target } catch { return {verdict: "ignored" enumeration: null} }
+    let enumeration = dir-enumeration $target $bundle $rules
 
-    # Why refuse a tracked file that export-ignore drops under the row: the rule
-    # comes from bytes the proof does not cover — a .gitattributes above the
-    # proven directory, an untracked one inside it, .git/info/attributes,
-    # core.attributesFile. One committed line hides a committed file from the
-    # git arm, and the row reads as `true` over a tree that holds it. Checking
-    # each rule source against the manifest would keep "." verifiable in a
-    # worktree that holds its todo/ notes; a source above the seal root or
-    # local to the machine can enter no manifest, so the plain refusal is the
-    # one that cannot be argued around. The walk reads no attributes. Pinned by
-    # "a committed file hidden by an export-ignore line is not verified".
-    if $enumeration == "git-index" {
-        let hidden = ^git -C $target ls-files -z -- $":\(literal,attr:export-ignore\)($leaf.filepath)" $":\(exclude\)($MULTIPROOFS_DIR)"
+    # Why the rules are trusted for "." and for no other row: the rule file
+    # sits at the seal root, so only the "." CID commits to its bytes. Under
+    # any other row a rule comes from bytes this proof does not cover — a
+    # bundle can add sub/evil.sh, name it in its own rule file, and the walk
+    # folds sub to the sealed CID. So a rule that hides an existing file under
+    # such a row refuses the row. For "." the file must be in the enumeration,
+    # or its rules shape the CID while nothing commits to them: on the git arm
+    # that is an untracked rule file. Pinned by "a file hidden by the rule file
+    # under a subdirectory row is not verified" and "an untracked rule file
+    # leaves the root row unverified".
+    if ($rules | is-not-empty) {
+        let refused = if $leaf.filepath == "." {
+            $enumeration == "git-index" and (^git -C $target ls-files -z -- $":\(literal\)($IGNORE_FILE)" | is-empty)
+        } else if $enumeration == "git-index" {
+            ^git -C $target ls-files -z -- $":\(literal\)($leaf.filepath)"
             | split row (char --integer 0)
-            | where $it != ""
+            | any {|rel| $rel != "" and ($rel | is-ignored $rules) }
+        } else {
+            let base = $target | path join $leaf.filepath
 
-        if ($hidden | is-not-empty) { return {verdict: "export-ignored" enumeration: $enumeration} }
+            ($base | path type) == "dir" and (list-files $base --recursive | path relative-to $target | any {|rel| $rel | is-ignored $rules })
+        }
+
+        if $refused { return {verdict: "ignored" enumeration: $enumeration} }
     }
     # A directory CID is a function of the whole subtree, so this reads every
     # file in the set. Only rows that attest no sha256 reach it — file rows keep
@@ -375,8 +388,8 @@ export def prove [
 #                      through a symlinked parent), "directory" (a file row
 #                      landing on a directory), "unverifiable" (the row commits
 #                      to no content at all, so there is nothing to re-derive),
-#                      "export-ignored" (the git arm, with a tracked file under
-#                      the row that export-ignore drops).
+#                      "ignored" (the rule file hides a file under a row other
+#                      than ".", is untracked under ".", or cannot be read).
 #                      A directory row away from its origin repo is re-derived
 #                      from the subtree the target carries, so a portable bundle
 #                      gets a real verdict rather than "unverifiable"
@@ -617,8 +630,8 @@ export def verify [
         $"on-disk ($proof.leaf.filepath) does not match the proven content_sha256"
     } else if $content_verified == "unverifiable" {
         $"($proof.leaf.filepath) commits to no content at all — the row carries neither a content_sha256 nor a content_cid, so there is nothing about it to check"
-    } else if $content_verified == "export-ignored" {
-        $"a tracked file under ($proof.leaf.filepath) is marked export-ignore — the rule comes from bytes this proof does not cover, so the index cannot say which files the row commits to; pass --bundle over a copy without those files, or remove the attribute"
+    } else if $content_verified == "ignored" {
+        $"($IGNORE_FILE) in ($target) shapes the files under ($proof.leaf.filepath) while this proof does not cover it — it hides a file under a row other than \".\", it is untracked, or it cannot be read; prove \".\" instead, or remove the rule"
     } else if $content_verified == "missing" and $proof.leaf.content_sha256 == "" {
         # Two disk states share this verdict: a tracked file deleted from the
         # worktree (the ordinary mid-edit state), and a row naming a directory
@@ -648,7 +661,7 @@ export def verify [
     print $"manifest:  (if $manifest_root == null { 'not present (nothing to cross-check)' } else if $manifest_matches { 'rebuilds to the signed root' } else { 'DESYNC (rebuilds to a different root)' })"
     let enumerated_by = if $content_enumeration == null { "" } else { $" \(via ($content_enumeration)\)" }
 
-    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (the row commits to no content)', 'export-ignored' => 'EXPORT-IGNORED (a tracked file under the row is hidden by an attribute)' })($enumerated_by)"
+    print $"content:   (match $content_verified { true => 'matches', false => 'MISMATCH', 'missing' => 'MISSING (file absent on disk)', 'symlink' => 'SYMLINK (not a catalogued regular file)', 'outside' => 'OUTSIDE (resolves out of the repo)', 'directory' => 'DIRECTORY (a file row landing on a directory)', 'unverifiable' => 'UNVERIFIABLE (the row commits to no content)', 'ignored' => 'IGNORED (the rule file shapes this row while the proof does not cover it)' })($enumerated_by)"
     print $"ots:       ($ots_status.status)"
     print $"beacon:    ($beacon_report) \(as stated — `beacon verify` checks it against Bitcoin\)"
     for e in $endorsements {

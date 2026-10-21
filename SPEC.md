@@ -98,21 +98,24 @@ The test "asking for a commit proposal leaves the seal result untouched" pins th
 
 `nu-multiproof tree-hashes` writes `multiproofs/tree-hashes.csv`:
 one row per git-tracked file, one per parent directory, and one for the repo root `.`.
-A file that git marks `export-ignore` gets no row:
+A path named in `.multiproofignore` at the seal root gets no row,
+and neither does anything under it:
 the repo keeps it,
 and the published tree does not hold it.
-Write the pattern as `todo/** export-ignore`;
-the form `todo/ export-ignore` marks only the directory, and its files keep their rows.
-`tree-hashes` refuses a `.gitattributes` that is itself marked `export-ignore`,
+Each line is one literal path relative to the seal root, a file or a directory;
+a line that starts with `#` is a comment, and an empty line is skipped.
+`tree-hashes` refuses a line with `!`, a glob or escape character, a leading or trailing `/`, an empty, `.` or `..` component, a control byte, or leading or trailing whitespace.
+It also refuses a line that names `multiproofs` or the rule file itself,
 because the manifest then does not hold the rule that shapes it.
-`tree-hashes` also refuses when a rule from outside the index changes which files are export-ignored:
-an untracked or unstaged `.gitattributes`, a global or system attributes file, `attr.tree` or `GIT_ATTR_SOURCE`.
-No checkout of the commit holds such a rule,
-so every other machine would rebuild a different root.
-It compares the export-ignored set as git reads it with the set from the index tree alone,
-so an attribute file that marks nothing `export-ignore` passes.
-Any rule in `$GIT_DIR/info/attributes` is refused, because no flag turns that file off.
-(Pinned by the tests "a rule from outside the index that changes the export-ignored set is refused" and "a global attributes file that marks nothing export-ignore is accepted".)
+(Pinned by the tests "a rule line that is not a plain path is refused" and "a rule file that excludes itself is refused".)
+`tree-hashes` refuses a rule file that is untracked or a symlink:
+no row would commit to its bytes,
+so no checkout of the commit rebuilds the same manifest.
+(Pinned by "an untracked rule file is refused" and "a symlinked rule file is refused".)
+Only the file at the seal root is read.
+A nested project's rule file shapes only the nested project's own manifest,
+and a rule file above the seal root shapes none.
+(Pinned by "a rule file below the seal root excludes nothing" and "a rule file above the seal root excludes nothing".)
 A file row names the same bytes in four ways.
 `content_sha256` is over the raw bytes.
 `content_git_sha1` and `content_git_sha256` are the git blob object in each object format.
@@ -334,12 +337,13 @@ A row whose commitment could not be checked must never read as a row that passed
 - `"directory"` — a file row that lands on a directory.
 - `"unverifiable"` — the leaf carries no commitment at all
   — neither a `content_sha256` nor a `content_cid`, so there is nothing to re-derive.
-- `"export-ignored"` — the git arm found a tracked file under the row that git marks `export-ignore`.
-  The rule comes from bytes that the proof does not cover,
-  so one committed `.gitattributes` line could hide a committed file.
-  A published copy holds no such file, so its rows verify;
-  in the origin worktree, a row over `todo/` notes gets this verdict.
-  (Pinned by the test "a committed file hidden by an export-ignore line is not verified".)
+- `"ignored"` — the rule file shapes the row while the proof does not cover it.
+  The rule file sits at the seal root, so only the `.` CID commits to its bytes.
+  Under any other row, a rule that hides an existing file gets this verdict,
+  because a bundle can add a file and name it in its own rule file.
+  Under `.`, an untracked rule file on the git arm gets it, and so does a rule file that cannot be read.
+  The `.` row verifies both in the origin worktree that keeps its `todo/` notes and in a published copy without them.
+  (Pinned by the tests "a file hidden by the rule file under a subdirectory row is not verified", "an untracked rule file leaves the root row unverified", "a rule file the builder would refuse leaves the row unverified", "the root row verifies in a published copy that lacks the ignored files" and "the root row verifies on the walk over a copy that keeps the ignored files".)
 
 If `multiproofs/tree-hashes.csv` is there,
 `merkle verify` also rebuilds the root from it and reports that root as `manifest_root`.

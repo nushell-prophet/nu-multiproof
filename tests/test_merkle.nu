@@ -1000,46 +1000,68 @@ def "an untracked file below a proven directory of a project below the git root 
     assert $result.valid
 }
 
-# The attack the export-ignore rule opened on the git arm: the file is committed,
-# so the index lists it, and one attribute line takes it out of the enumeration.
-# Each source sits outside the bytes a proof of sub/ covers: a committed rule in
-# the project, an untracked one inside the proven directory, and one local to
-# the clone.
+# The attack a rule file opens under any row but ".": the rule file sits at the
+# seal root, outside the bytes a proof of sub/ covers, so one line takes an
+# added file out of the enumeration and sub/ folds to its sealed CID. On the
+# git arm the file is committed and the rule committed or left untracked; on
+# the walk a hostile bundle ships both.
 @test
-def "a committed file hidden by an export-ignore line is not verified" [] {
+def "a file hidden by the rule file under a subdirectory row is not verified" [] {
     let tmp_dir = $in.tmp_dir
-    let sources = [
-        {name: committed rule: ".gitattributes" commit: true}
-        {name: untracked rule: "sub/.gitattributes" commit: false}
-        {name: local rule: "../.git/info/attributes" commit: false}
-    ]
 
-    for s in $sources {
-        let fx = make-subproject ($tmp_dir | path join $s.name)
+    for commit_rule in [true false] {
+        let fx = make-subproject ($tmp_dir | path join $"git-($commit_rule)")
 
         "evil\n" | save --force $"($fx.project)/sub/evil.sh"
-        let rule = $fx.project | path join $s.rule
-
-        mkdir ($rule | path dirname)
-        "sub/evil.sh export-ignore\nevil.sh export-ignore\n" | save --append $rule
-        let staged = if $s.commit { [sub/evil.sh $s.rule] } else { [sub/evil.sh] }
+        "sub/evil.sh\n" | save --force $"($fx.project)/.multiproofignore"
+        let staged = if $commit_rule { [sub/evil.sh .multiproofignore] } else { [sub/evil.sh] }
 
         ^git -C $fx.project add ...$staged
         ^git -C $fx.project -c user.email=t@t -c user.name=t commit -q -m evil
 
         let result = merkle verify $fx.dir_proof --repo $fx.project
 
-        assert equal $result.content_verified "export-ignored" $"a ($s.name) attribute hid a committed file from the git arm"
+        assert equal $result.content_enumeration "git-index"
+        assert equal $result.content_verified "ignored" $"a rule hid a committed file from the git arm, rule committed: ($commit_rule)"
         assert (not $result.valid)
     }
+
+    let fx = make-sealed-bundle ($tmp_dir | path join walk)
+
+    "evil\n" | save --force $"($fx.bundle)/sub/evil.sh"
+    "sub/evil.sh\n" | save --force $"($fx.bundle)/.multiproofignore"
+    let result = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
+
+    assert equal $result.content_enumeration "walk"
+    assert equal $result.content_verified "ignored" "a bundle hid an added file from the walk with its own rule file"
+    assert (not $result.valid)
 }
 
-# The reason export-ignore enters the manifest rule: the published repo drops
-# todo/, and the "." row it carries must still verify there. The copy is built
-# the way a recipient gets it — a clone with the export-ignored files removed —
-# not by the builder, so the check is against a tree this code did not write.
+# On the git arm the "." CID is folded from the tracked files, so an untracked
+# rule file shapes it while nothing commits to its bytes.
 @test
-def "the root row verifies in a published copy that lacks the export-ignored files" [] {
+def "an untracked rule file leaves the root row unverified" [] {
+    let fx = make-subproject $in.tmp_dir
+    let root_proof = merkle prove "." --repo $fx.project
+
+    "evil\n" | save --force $"($fx.project)/evil.sh"
+    "evil.sh\n" | save --force $"($fx.project)/.multiproofignore"
+    ^git -C $fx.project add evil.sh
+    ^git -C $fx.project -c user.email=t@t -c user.name=t commit -q -m evil
+
+    let result = merkle verify $root_proof --repo $fx.project
+
+    assert equal $result.content_verified "ignored" "an untracked rule hid a committed file from the root row"
+    assert (not $result.valid)
+}
+
+# Why the rule file enters the manifest: the published repo drops todo/, and
+# the "." row it carries must verify there and in the worktree that keeps the
+# notes. The copy is built the way a recipient gets it — a clone with the
+# ignored files removed — not by the builder, so the check is against a tree
+# this code did not write.
+@test
+def "the root row verifies in a published copy that lacks the ignored files" [] {
     let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     let published = $"($tmp_dir)/published"
@@ -1049,7 +1071,7 @@ def "the root row verifies in a published copy that lacks the export-ignored fil
     ^git -C $repo init -q
     "hello\n" | save --force $"($repo)/README.md"
     "note\n" | save --force $"($repo)/todo/note.md"
-    "todo/** export-ignore\n" | save --force $"($repo)/.gitattributes"
+    "todo\n" | save --force $"($repo)/.multiproofignore"
     ^git -C $repo add . o+e>| ignore
     ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
     tree-hashes --repo $repo
@@ -1061,6 +1083,10 @@ def "the root row verifies in a published copy that lacks the export-ignored fil
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let proof = merkle prove . --repo $repo | path relative-to $repo
 
+    let in_place = merkle verify ($repo | path join $proof) --repo $repo
+
+    assert equal $in_place.content_verified true "the root row did not verify in the worktree that keeps the notes"
+
     ^git clone -q $repo $published
     ^git -C $published rm -r -q todo
     ^git -C $published -c user.email=t@t -c user.name=t commit -q -m export
@@ -1070,6 +1096,66 @@ def "the root row verifies in a published copy that lacks the export-ignored fil
 
     assert equal $result.content_enumeration "git-index"
     assert equal $result.content_verified true "the root row named files the published copy does not hold"
+    assert $result.valid
+}
+
+# The builder refuses a rule file it cannot read, so a bundle carrying one was
+# not sealed that way. The verifier answers with a verdict, never a throw:
+# a hostile artifact must not crash it.
+@test
+def "a rule file the builder would refuse leaves the row unverified" [] {
+    let tmp_dir = $in.tmp_dir
+
+    for c in [glob symlink] {
+        let fx = make-sealed-bundle ($tmp_dir | path join $c)
+        let rule = $fx.bundle | path join .multiproofignore
+
+        if $c == "glob" {
+            "*\n" | save --force $rule
+        } else {
+            "sub\n" | save --force ($fx.bundle | path join rules)
+            ^ln --symbolic rules $rule
+        }
+        let result = merkle verify $fx.root_proof --repo $fx.bundle --bundle
+
+        assert equal $result.content_verified "ignored" $"a ($c) rule file was read"
+        assert (not $result.valid)
+    }
+}
+
+# The walk applies the rules for ".": a copy of a sealed repo that still holds
+# its todo/ notes folds "." to the sealed CID only when the walk drops what
+# the rule file names.
+@test
+def "the root row verifies on the walk over a copy that keeps the ignored files" [] {
+    let tmp_dir = $in.tmp_dir
+    let repo = $"($tmp_dir)/repo"
+    let bundle = $"($tmp_dir)/bundle"
+    let key_path = $"($tmp_dir)/sshkey"
+
+    mkdir $"($repo)/todo"
+    ^git -C $repo init -q
+    "hello\n" | save --force $"($repo)/README.md"
+    "note\n" | save --force $"($repo)/todo/note.md"
+    "todo\n" | save --force $"($repo)/.multiproofignore"
+    ^git -C $repo add . o+e>| ignore
+    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    tree-hashes --repo $repo
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let root_result = merkle write-root --repo $repo
+
+    ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
+    let proof = merkle prove . --repo $repo | path relative-to $repo
+
+    mkdir $bundle
+    for f in [README.md todo .multiproofignore multiproofs] { cp --recursive $"($repo)/($f)" $bundle }
+
+    let result = merkle verify ($bundle | path join $proof) --repo $bundle --bundle
+
+    assert equal $result.content_enumeration "walk"
+    assert equal $result.content_verified true "the walk folded the ignored files into the root row"
     assert $result.valid
 }
 
@@ -1092,11 +1178,11 @@ def "an untracked bundle inside another git repo is walked without the bundle fl
     assert $result.valid "a genuine bundle inside a git repo was judged against that repo's index"
 }
 
-# The same holds for export-ignored files: they are outside the builder's list,
-# so an index that tracks only those under the target is not the one any
-# manifest was built from.
+# The same holds for files the rule file names: they are outside the
+# builder's list, so an index that tracks only those under the target is not
+# the one any manifest was built from.
 @test
-def "a bundle whose only tracked files are export-ignored is walked" [] {
+def "a bundle whose only tracked files are ignored is walked" [] {
     let tmp_dir = $in.tmp_dir
     let fx = make-sealed-bundle $tmp_dir
     let outer = $"($tmp_dir)/consumer"
@@ -1106,8 +1192,8 @@ def "a bundle whose only tracked files are export-ignored is walked" [] {
     cp --recursive $fx.bundle $"($outer)/bundle"
     mkdir $"($outer)/bundle/todo"
     "note\n" | save --force $"($outer)/bundle/todo/note.md"
-    "bundle/todo/** export-ignore\n" | save --force $"($outer)/.gitattributes"
-    ^git -C $outer add .gitattributes bundle/todo o+e>| ignore
+    "todo\n" | save --force $"($outer)/bundle/.multiproofignore"
+    ^git -C $outer add bundle/todo o+e>| ignore
     ^git -C $outer -c user.email=t@t -c user.name=t commit -q -m notes
 
     let result = merkle verify $fx.dir_proof --repo $"($outer)/bundle"

@@ -17,79 +17,107 @@
 
 use _cid-helpers.nu [ file-node dir-node ]
 use _fs.nu list-files
-use _layout.nu MULTIPROOFS_DIR
+use _layout.nu [ MULTIPROOFS_DIR IGNORE_FILE ]
 
-# The pathspec that drops every path git marks `export-ignore`: the files a
-# project keeps in git but leaves out of what it publishes, todo/ notes being the
-# case that asked for it. Every reading of the index that must agree with the
-# manifest passes it.
+# The paths a project keeps in git but leaves out of its manifest, read from
+# the rule file at the seal root (IGNORE_FILE): one path per line, relative to
+# that root, naming a file or a directory with everything under it. A line
+# that starts with `#` is a comment, an empty line is skipped. todo/ notes are
+# the case that asked for it.
 #
-# Why export-ignore, not a list of our own: it is git's standard name for "in the
-# repo, not in the published tree" (`git archive` already honours it), it sits in
-# a tracked .gitattributes and so is sealed with the manifest (tracked-entries
-# refuses a .gitattributes that drops itself, refuse-unsealed-rules a rule from
-# anywhere else), and a clone of the published repo reads the same rule back. A
-# rule that lived only beside the exporter would leave the published "." row
-# unverifiable.
+# Why a file of our own, not git's `export-ignore`: git reads attributes at
+# every level of the tree, so a rule in a parent project reaches into a project
+# nested inside it, and the nested one is sealed on its own. This file is read
+# at the seal root and nowhere else — a nested project's file shapes only that
+# project's manifest, and a rule file above the seal root shapes none. The same
+# precedent as `.dockerignore`, read at the root of its context only. Pinned by
+# "a rule file below the seal root excludes nothing" and "a rule file above the
+# seal root excludes nothing".
 #
-# Write `todo/** export-ignore`, not `todo/ export-ignore`. A directory pattern
-# sets the attribute on the directory alone; `git archive` stops descending there,
-# but a pathspec tests each file, and the files under it carry no attribute. The
-# directory form excludes nothing here. Pinned by "a directory pattern for
-# export-ignore leaves its files in the manifest".
+# Why literal paths, no globs and no `!`: every extra piece of syntax is one
+# more way to hide a file from the proof, and literal paths cover every rule in
+# use. So a line that looks like more than a path is refused, never read as
+# one — a `*` taken literally would exclude nothing while its author believes
+# otherwise. Pinned by "a rule line that is not a plain path is refused".
 #
-# A tracked .gitattributes above the seal root is in the commit but not in the
-# manifest, and a recipient exported from the seal root does not hold it. Keep
-# such a rule anchored to its own directory (`todo/**`, not `**/todo/**`), so it
-# reaches nothing below the seal root.
-export const EXPORT_IGNORED = ":(exclude,attr:export-ignore)"
+# The file itself is a manifest row, so the "." row commits to the rules; a
+# line naming the file would drop the rule from the evidence it shapes, and is
+# refused. Pinned by "a rule file that excludes itself is refused".
+export def ignore-rules [root: path]: nothing -> list<string> {
+    let file = $root | path join $IGNORE_FILE
 
-# Refuse a manifest whose export-ignore set comes from rules outside the index.
-#
-# Git also reads the attribute from an untracked or unstaged .gitattributes (in
-# the tree or above it), the global and system attributes files, attr.tree,
-# GIT_ATTR_SOURCE and $GIT_DIR/info/attributes. Such a rule shapes the manifest,
-# and no checkout of the commit rebuilds it: every other machine gets a different
-# root, while the seal that signed it is already timestamped and frozen.
-#
-# Why compare the effect, not search the sources: a macro (`[attr]x
-# export-ignore`) hides the attribute name from any search of a file, and an
-# honest global file (`*.png diff=exif`) changes nothing. So the set is read
-# twice, once as git reads it and once from the index tree alone, and any
-# difference is refused. The index and not HEAD, so a staged rule seals.
-# info/attributes is the one source no flag turns off, so any rule in it is
-# refused. Pinned by "a rule from outside the index that changes the export-ignored
-# set is refused" and "a global attributes file that marks nothing export-ignore
-# is accepted".
-export def refuse-unsealed-rules [root: path]: nothing -> nothing {
-    let info = ^git -C $root rev-parse --path-format=absolute --git-path info/attributes | str trim
+    if ($file | path type) == "symlink" {
+        error make {msg: $"($file) is a symlink — the rule file is a manifest row, and one row cannot describe both the link and its target"}
+    }
+    if not ($file | path exists) { return [] }
+    let text = open --raw $file
 
-    if ($info | path exists) {
-        let rules = open --raw $info | lines | str trim | where $it != "" and not ($it | str starts-with "#")
+    if ($text | describe) != "string" {
+        error make {msg: $"($file) is not UTF-8 text"}
+    }
+    let rules = $text | split row "\n" | where $it != "" and not ($it | str starts-with "#")
 
-        if ($rules | is-not-empty) {
-            error make {msg: $"($info) holds attribute rules — it is local to this clone and no flag turns it off, so it could shape the manifest beyond what any commit holds. Move the rules to a tracked .gitattributes"}
+    # A loop and not `each`: an error raised inside an `each` closure reaches
+    # the caller as a bare "Eval block failed with pipeline input".
+    for line in $rules {
+        let why = rule-defect $line
+
+        if $why != null {
+            error make {msg: $"($file): ($line | to json) — ($why)"}
         }
     }
+    $rules
+}
 
-    let spec = [":(attr:export-ignore)" $":\(exclude\)($MULTIPROOFS_DIR)"]
-    let as_read = ^git -C $root ls-files -z -- ...$spec | split row (char --integer 0) | where $it != ""
-    # write-tree leaves a loose tree object behind; git gc collects it.
-    let index_tree = ^git -C $root write-tree | str trim
-    let as_committed = do {
-        hide-env --ignore-errors GIT_ATTR_SOURCE
-        with-env {GIT_ATTR_NOSYSTEM: "1"} {
-            ^git -C $root --attr-source $index_tree -c core.attributesFile=/dev/null ls-files -z -- ...$spec
-        }
-    } | split row (char --integer 0) | where $it != ""
-    let differ = ($as_read | where $it not-in $as_committed) ++ ($as_committed | where $it not-in $as_read)
+# Why a rule line is refused, or null when it is a plain path.
+def rule-defect [line: string]: nothing -> any {
+    let parts = $line | split row "/"
 
-    if ($differ | is-not-empty) {
-        error make {msg: $"export-ignore marks ($differ | to json) differently from the rules in the index — an untracked or unstaged .gitattributes, a global or system attributes file, attr.tree or GIT_ATTR_SOURCE shapes the manifest, so no checkout of the commit rebuilds it. Stage the rule, or remove it"}
+    if $line =~ '[\x00-\x1f\x7f]' { return "holds a control byte" }
+    if $line != ($line | str trim) { return "has leading or trailing whitespace" }
+    if ($line | str starts-with "!") { return "`!` negation is not supported" }
+    if $line =~ '[*?\[\]\\]' { return "globs and escapes are not supported — write a literal path" }
+    if ($line | str starts-with "/") { return "write the path relative to the seal root, without a leading /" }
+    if ($line | str ends-with "/") { return "write a directory without the trailing /" }
+    if ($parts | any {|p| $p in ["" "." ".."] }) { return "empty, `.` and `..` components are not supported" }
+    if $parts.0 == $MULTIPROOFS_DIR { return $"($MULTIPROOFS_DIR)/ is outside the manifest already" }
+    if $line == $IGNORE_FILE { return "the rule file would leave itself out of the manifest it shapes" }
+    null
+}
+
+# Whether a path relative to the seal root is the path a rule names, or lies
+# under it.
+#
+# Not `str starts-with`: that is separator arithmetic, and reads "todofoo.md"
+# as lying under "todo". Same component comparison as at-or-under.
+export def is-ignored [rules: list<string>]: string -> bool {
+    let rel = $in
+
+    $rules | any {|rule| try { $rel | path relative-to $rule; true } catch { false } }
+}
+
+# The same rules as git pathspecs, for a git command that must leave the same
+# paths out. A literal pathspec matches the path itself and everything under it
+# as a directory, by component. Pinned against is-ignored by "the snapshot
+# leaves out exactly the paths the manifest leaves out".
+export def ignore-pathspecs [rules: list<string>]: nothing -> list<string> {
+    $rules | each {|rule| $":\(exclude,literal\)($rule)" }
+}
+
+# Refuse a rule file that exists but is not in the index: the manifest is the
+# tracked files, so the rules would shape it while no row commits to them, and
+# no checkout of the commit rebuilds the same manifest. Pinned by "an untracked
+# rule file is refused".
+export def refuse-untracked-rules [root: path]: nothing -> nothing {
+    if not (($root | path join $IGNORE_FILE) | path exists) { return }
+    let listed = ^git -C $root ls-files -z -- $":\(literal\)($IGNORE_FILE)" | split row (char --integer 0) | where $it != ""
+
+    if ($listed | is-empty) {
+        error make {msg: $"($root | path join $IGNORE_FILE) is not tracked — its rules would shape the manifest while no row commits to them. `git add` it, or remove it"}
     }
 }
 
-# git-tracked files, minus the proof directory and the export-ignored paths,
+# git-tracked files, minus the proof directory and the paths the rule file names,
 # sorted byte-wise.
 #
 # Why multiproofs/ is excluded: it is the proof-output dir, derived from the
@@ -109,8 +137,9 @@ export def refuse-unsealed-rules [root: path]: nothing -> nothing {
 # needs — no extra stat over the tree.
 export def tracked-entries [root: path]: nothing -> table {
     let exclude_prefix = $MULTIPROOFS_DIR + "/"
+    let rules = ignore-rules $root
     let entries = (
-        ^git -C $root ls-files -s -z -- "." $EXPORT_IGNORED
+        ^git -C $root ls-files -s -z -- "."
         | split row (char --integer 0)
         | where $it != ""
         # Why split on the first tab instead of `parse`: ls-files -s separates
@@ -122,6 +151,7 @@ export def tracked-entries [root: path]: nothing -> table {
             {mode: ($parts.0 | split row " " | first) path: $parts.1}
         }
         | where not ($it.path | str starts-with $exclude_prefix)
+        | where not ($it.path | is-ignored $rules)
         | sort-by path
     )
 
@@ -154,17 +184,6 @@ export def tracked-entries [root: path]: nothing -> table {
 
     if ($symlink_paths | is-not-empty) {
         error make {msg: $"git-tracked symlinks are not supported — one manifest row cannot describe both the link and its target; remove or replace: ($symlink_paths | to json)"}
-    }
-
-    # Why refuse a .gitattributes marked export-ignore: it holds the rule that
-    # shrinks the manifest, so a seal without it signs a file set no reader can
-    # rebuild — the rule is gone from the evidence that depends on it.
-    let unsealed_rules = ^git -C $root ls-files -z -- ":(glob,attr:export-ignore)**/.gitattributes"
-        | split row (char --integer 0)
-        | where $it != ""
-
-    if ($unsealed_rules | is-not-empty) {
-        error make {msg: $"a .gitattributes marked export-ignore would leave the rule that shapes the manifest out of it; unmark it: ($unsealed_rules | to json)"}
     }
 
     $entries
@@ -216,9 +235,12 @@ export def walked-entries [root: path under: string = "."]: nothing -> list<stri
     let base = if $under == "." { $root } else { $root | path join $under }
 
     if not ($base | path exists) { return [] }
+    let rules = ignore-rules $root
+
     list-files $base --recursive
     | path relative-to $root
     | where not ($it | str starts-with $exclude_prefix)
+    | where not ($it | is-ignored $rules)
     | where {|rel| ".git" not-in ($rel | path split) }
     | sort
 }

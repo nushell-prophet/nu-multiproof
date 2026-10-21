@@ -24,6 +24,9 @@ export const INCLUSION_PROOFS_DIR = "inclusion-proofs"
 # _snapshot.nu), so it carries no schema-versioned signing target, only its own
 # name.
 export const SNAPSHOT_FILE = "snapshot.txt"
+# The rule file sits at the seal root, beside multiproofs/ and not inside it:
+# it is project content the manifest seals, not proof output.
+export const IGNORE_FILE = ".multiproofignore"
 
 # <root>/multiproofs
 export def multiproofs-dir [root: path]: nothing -> path {
