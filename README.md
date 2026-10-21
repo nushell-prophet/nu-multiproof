@@ -198,7 +198,22 @@ The signing key comes from `git config user.signingKey` of the target repo.
 `seal` has no `--key` flag,
 because the signing identity of a repo belongs in its config,
 not in each command call.
-To seal under a different key, run the steps that `seal` wraps:
+To seal under a different key,
+override the config for one run.
+Git reads `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>` and `GIT_CONFIG_VALUE_<n>` as extra config,
+so `.git/config` stays as it is:
+
+```nushell no-run
+nu-multiproof init --pubkey ~/.ssh/otherkey.pub     # register it: seal refuses an unregistered key
+let other = {GIT_CONFIG_COUNT: 1, GIT_CONFIG_KEY_0: user.signingKey, GIT_CONFIG_VALUE_0: ('~/.ssh/otherkey.pub' | path expand)}
+with-env $other { nu-multiproof seal }
+```
+
+With `--external-signer`, wrap both runs:
+the first run names the `.sig` file after the key,
+and a run without the override waits for the key from the config.
+
+To do the same by hand, run the steps that `seal` wraps:
 
 ```nushell no-run
 nu-multiproof init --pubkey ./otherkey.pub          # register it: sign refuses an unregistered key
@@ -223,7 +238,7 @@ sign the current `tree-root.txt`, and do not make a new root.
 Two other goals do not need this path.
 The first is to stay offline:
 `seal --no-stamp` already skips the calendar post.
-So use the manual chain only for the key.
+So use `seal --no-stamp`, not the chain.
 The second is a repo in a different location:
 `ssh-sign sign` takes `--pubkeys-dir` but no `--repo`.
 So run the chain from inside the target repo.
