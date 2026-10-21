@@ -13,6 +13,12 @@ use _commit-proposal.nu seal-commit-line
 use _beacon-helpers.nu [BEACON_NONE validate-beacon]
 use beacon.nu
 
+# A principal in the `SHA256:<base64>` spelling that OpenSSH and the signing
+# device print: one digest, so no key file is read to show it.
+def openssh-fingerprint [principal: string]: nothing -> string {
+    $"SHA256:($principal | decode hex | encode base64 | str trim --right --char '=')"
+}
+
 # Full seal pipeline: hash+root-cid → sign → stamp.
 #
 # Operations order:
@@ -224,6 +230,8 @@ export def main [
     # repo, but seal may target a different repo via --repo.
     let root_sig = if $external_signer {
         let sig = sig-path-for $root_statement_path $signer
+        let statement = open --raw $root_statement_path
+        let digest = $statement | hash sha256
 
         if not ($sig | path exists) {
             # Why return here and not wait on a prompt: the round trip goes
@@ -232,12 +240,14 @@ export def main [
             # statement on disk, and re-running regenerates the same bytes
             # (an unchanged root keeps its beacon), so the next run picks up
             # exactly here. No commit proposal: nothing is sealed yet.
-            let statement = open --raw $root_statement_path
-            let digest = $statement | hash sha256
             # The line without its LF: that is what goes into the page's
             # textarea, which refuses a trailing newline in file mode.
             print ($statement | into string | str trim --right --char "\n")
             print $"Sign ($root_statement_path | cwd-relative) as a file, namespace `file`; sha256 ($digest)."
+            # Why name the key: the device holds several, and a block by the
+            # wrong one is found only on the next run, after the round trip.
+            # The SHA256: form is the one the device and `ssh-keygen -lf` show.
+            print $"Sign with the key user.signingKey names: (openssh-fingerprint $signer) \(($signer)\)."
             print $"Save the signature as ($sig | cwd-relative), then run seal --external-signer again."
             return ($result | insert awaiting_signature {sig: ($sig | cwd-relative) sha256: $digest})
         }
@@ -247,8 +257,22 @@ export def main [
         # either — the signer is read from the key inside the block. Pinned by
         # "an external signer seal refuses a signature it cannot verify before stamping".
         let verdict = ssh-sign verify $sig --pubkeys-dir (pubkeys-dir $root) | first
-        if not $verdict.valid or $verdict.signer != $signer {
-            error make {msg: $"($sig | cwd-relative) is not a valid signature by ($signer) over the current root statement: ($verdict.error? | default $"signed by ($verdict.signer)")"}
+        # Why both reasons, not the first one found: a block by another key
+        # over other bytes fails the content check too, and naming only that
+        # hides the key mismatch. The signer counts only when a registered
+        # key identified it; an unrecognized one is labelled from the file name.
+        let reasons = [
+            (if ($verdict.error? in [null "invalid_signature"]) and $verdict.signer != $signer {
+                $"signed by ($verdict.signer) \((openssh-fingerprint $verdict.signer)\)"
+            })
+            # Why only invalid_signature names the bytes: unrecognized_signer
+            # means the block checks over them and only its key is missing.
+            (if not $verdict.valid {
+                if $verdict.error == "invalid_signature" { "invalid_signature over these bytes" } else { $verdict.error }
+            })
+        ] | compact
+        if ($reasons | is-not-empty) {
+            error make {msg: $"($sig | cwd-relative) is not a valid signature by ($signer) \((openssh-fingerprint $signer)\) over the current root statement \(sha256 ($digest)\): ($reasons | str join ', ')"}
         }
         $sig | cwd-relative
     } else {

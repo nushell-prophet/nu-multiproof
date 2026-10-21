@@ -1035,6 +1035,14 @@ def "an external signer seal refuses a signature it cannot verify before stampin
     let err = try { seal --repo $fx.repo --external-signer --beacon $TEST_BEACON --response-file $response; null } catch {|e| $e.msg }
 
     assert ($err | str contains $"signed by (principal-of $bob)")
+
+    # Both mistakes at once — another key, other bytes: the message names both.
+    "other bytes\n" | ^ssh-keygen -Y sign -q -f $bob -n file | save --raw --force $sig
+    let err = try { seal --repo $fx.repo --external-signer --beacon $TEST_BEACON --response-file $response; null } catch {|e| $e.msg }
+
+    assert ($err | str contains $"signed by (principal-of $bob)") $"the key mismatch was hidden: ($err)"
+    assert ($err | str contains "invalid_signature") $"the content mismatch was hidden: ($err)"
+    assert ($err | str contains (open --raw $root_file | hash sha256)) $"the digest to sign is missing: ($err)"
     assert not ($fx.ots_dir | path exists) "a refused signature was stamped"
 }
 
