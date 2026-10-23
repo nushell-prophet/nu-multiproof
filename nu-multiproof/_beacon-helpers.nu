@@ -38,7 +38,7 @@ export def validate-beacon [token: string]: nothing -> nothing {
 }
 
 # A validated token as data: null for `none`, else {height, hash}.
-export def parse-beacon [token: string]: nothing -> any {
+export def parse-beacon [token: string]: nothing -> oneof<record<height: int, hash: string>, nothing> {
     validate-beacon $token
     if $token == $BEACON_NONE { return null }
     let parts = $token | split column ":" chain height hash | first

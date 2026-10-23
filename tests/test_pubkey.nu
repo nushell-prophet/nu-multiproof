@@ -30,6 +30,55 @@ const SK_ECDSA = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbml
 # identities. Built by hand from the constant above, not by this repo's code.
 const RSA_PADDED_MODULUS = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAgAAxMZ8FFYbCIeusNTiBhxcq9Ka4qJ8R6BxJpEnYA7zKPOrw2qx8DvPB+ckOGYUXFEwUuKS2DGxjHhkHx0AWySOD/F2q7IMrO03zGfaCau/7b0p7fOcX5F4sYUkkzJpdw/NBQL4UuIT450m6mmlXgXFund7ggxqYm12fXrXnfZ2NT7FbbLxE+e6KCfKhoeHt5apMAlyWgihgGOM6rU2SgBI7JtD3ArnhQ7jfc1k082MvV2bnKnBmgQ7Ja8pYseQFvNUMDs1pZBO57pFhgoLki1Hs5rPMq9TVPWdhwZcLd4VQuQS6jzqw1keeY4RELhlfEVWQU+i2lX1XT6oTQNZSU5/Yw=="
 
+@before-each
+def setup []: nothing -> record {
+    {tmp_dir: (mktemp --directory)}
+}
+
+@after-each
+def cleanup [] {
+    rm --recursive --force $in.tmp_dir
+}
+
+def ssh-keygen-accepts [dir: path line: string]: nothing -> bool {
+    let file = $"($dir)/candidate.pub"
+
+    $line | save --force $file
+    (do { ^ssh-keygen -lf $file } | complete | get exit_code) == 0
+}
+
+# SHA256 fingerprint ssh-keygen computes for a key line — the identity OpenSSH
+# itself would report for it.
+def fingerprint-of [dir: path line: string]: nothing -> string {
+    let file = $"($dir)/fingerprint.pub"
+
+    $line | save --force $file
+    ^ssh-keygen -lf $file | str trim | split row " " | get 1
+}
+
+# The same fingerprint written the way this project writes it. `ssh-keygen -lf`
+# prints `SHA256:<unpadded base64>`, and nushell's `decode base64` is strict RFC
+# 4648, so the padding a 32-byte digest drops has to be put back.
+def ssh-fingerprint-hex [dir: path line: string]: nothing -> string {
+    let b64 = fingerprint-of $dir $line | str replace "SHA256:" ""
+
+    $"($b64)=" | decode base64 | encode hex | str lowercase
+}
+
+def canonical-accepts [line: string]: nothing -> bool {
+    try { $line | pubkey canonical; true } catch { false }
+}
+
+def generate-real-keys [dir: path prefix: string]: nothing -> list<string> {
+    [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
+    | each {|args|
+        let path = $"($dir)/($prefix)-($args | str join '-')"
+
+        ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
+        open --raw $"($path).pub" | str trim
+    }
+}
+
 @test
 def "canonical is the type and base64 plus a newline with comment and extra whitespace dropped" [] {
     assert equal ($"($ED25519) alice@host\n" | pubkey canonical) $"($ED25519)\n"
@@ -91,13 +140,7 @@ def "canonical refuses a second encoding of a key it already accepts" [] {
 @test
 def "canonical is a fixed point for real keys of every accepted type" [] {
     let tmp_dir = $in.tmp_dir
-    let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
-        | each {|args|
-            let path = $"($tmp_dir)/fixed-($args | str join '-')"
-
-            ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
-            open --raw $"($path).pub" | str trim
-        }
+    let generated = generate-real-keys $tmp_dir fixed
 
     for key in ($generated ++ [$ED25519 $RSA $SK $SK_ECDSA]) {
         let line = $key | split row --regex '\s+' | first 2 | str join " "
@@ -220,55 +263,6 @@ def "canonical rejects a truncated or padded blob" [] {
     assert error {|| $"ssh-ed25519 ($padded)" | pubkey canonical }
 }
 
-# The outside oracle, and it pins one direction only: nothing `canonical`
-# accepts may be a line `ssh-keygen -lf` cannot load. A key that fails that way
-# is a trust-list entry which silently verifies nothing.
-#
-# Not the converse, and that is deliberate — `canonical` is strictly the
-# narrower of the two. `-lf` loads a certificate, an authorized_keys options
-# prefix and a padded copy of a registered key; each is refused here, and each
-# has its own test above. Asserting set *equality* would either fail or, worse,
-# pass by leaving those vectors out of the candidate list, which is what an
-# earlier version of this test did.
-#
-# The check is one-sided, so it would also pass if `canonical` refused
-# everything. The real keys below are asserted accepted by both to keep it from
-# holding vacuously.
-@before-each
-def setup []: nothing -> record {
-    {tmp_dir: (mktemp --directory)}
-}
-
-@after-each
-def cleanup [] {
-    rm --recursive --force $in.tmp_dir
-}
-
-def ssh-keygen-accepts [dir: path line: string]: nothing -> bool {
-    let file = $"($dir)/candidate.pub"
-
-    $line | save --force $file
-    (do { ^ssh-keygen -lf $file } | complete | get exit_code) == 0
-}
-
-# SHA256 fingerprint ssh-keygen computes for a key line — the identity OpenSSH
-# itself would report for it.
-def fingerprint-of [dir: path line: string]: nothing -> string {
-    let file = $"($dir)/fingerprint.pub"
-
-    $line | save --force $file
-    ^ssh-keygen -lf $file | str trim | split row " " | get 1
-}
-
-# The same fingerprint written the way this project writes it. `ssh-keygen -lf`
-# prints `SHA256:<unpadded base64>`, and nushell's `decode base64` is strict RFC
-# 4648, so the padding a 32-byte digest drops has to be put back.
-def ssh-fingerprint-hex [dir: path line: string]: nothing -> string {
-    let b64 = fingerprint-of $dir $line | str replace "SHA256:" ""
-
-    $"($b64)=" | decode base64 | encode hex | str lowercase
-}
-
 # The outside oracle for the principal. Every principal this project writes —
 # the trust-list line, the `.sig` file name, `merkle verify --signer` — is this
 # digest, so a derivation that drifted from OpenSSH's own would mint identities
@@ -278,13 +272,7 @@ def ssh-fingerprint-hex [dir: path line: string]: nothing -> string {
 @test
 def "fingerprint is the digest ssh-keygen prints written as hex" [] {
     let tmp_dir = $in.tmp_dir
-    let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
-        | each {|args|
-            let path = $"($tmp_dir)/fp-($args | str join '-')"
-
-            ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
-            open --raw $"($path).pub" | str trim
-        }
+    let generated = generate-real-keys $tmp_dir fp
 
     for key in ($generated ++ [$ED25519 $RSA $SK $SK_ECDSA]) {
         let mine = $key | pubkey fingerprint
@@ -316,13 +304,23 @@ def "fingerprint refuses an encoding canonical refuses" [] {
         | decode base64
         | hash sha256
 
-    assert not ($unvalidated == ($RSA | pubkey fingerprint)) "the padded blob hashes the same, so this pins nothing"
+    assert not equal $unvalidated ($RSA | pubkey fingerprint) "the padded blob hashes the same, so this pins nothing"
 }
 
-def canonical-accepts [line: string]: nothing -> bool {
-    try { $line | pubkey canonical; true } catch { false }
-}
-
+# The outside oracle, and it pins one direction only: nothing `canonical`
+# accepts may be a line `ssh-keygen -lf` cannot load. A key that fails that way
+# is a trust-list entry which silently verifies nothing.
+#
+# Not the converse, and that is deliberate — `canonical` is strictly the
+# narrower of the two. `-lf` loads a certificate, an authorized_keys options
+# prefix and a padded copy of a registered key; each is refused here, and each
+# has its own test above. Asserting set *equality* would either fail or, worse,
+# pass by leaving those vectors out of the candidate list, which is what an
+# earlier version of this test did.
+#
+# The check is one-sided, so it would also pass if `canonical` refused
+# everything. The real keys below are asserted accepted by both to keep it from
+# holding vacuously.
 @test
 def "canonical never accepts a key ssh-keygen cannot load" [] {
     let tmp_dir = $in.tmp_dir
@@ -330,13 +328,7 @@ def "canonical never accepts a key ssh-keygen cannot load" [] {
     let ed_type = ($ed_blob | bytes at 0..<15)
 
     # Real keys of every type ssh-keygen here can still generate.
-    let generated = [["ed25519"] ["rsa"] ["ecdsa" "-b" "256"] ["ecdsa" "-b" "384"] ["ecdsa" "-b" "521"]]
-        | each {|args|
-            let path = $"($tmp_dir)/gen-($args | str join '-')"
-
-            ^ssh-keygen -t $args.0 ...($args | skip 1) -f $path -N "" -q -C "someone@host"
-            open --raw $"($path).pub" | str trim
-        }
+    let generated = generate-real-keys $tmp_dir gen
 
     let candidates = $generated ++ [
         $ED25519

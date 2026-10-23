@@ -31,6 +31,7 @@ def statement-with [dir: path beacon: string]: nothing -> path {
 def "the genesis block verifies as a lower bound" [] {
     with-temp-dir "beacon-genesis" {|dir|
         let result = beacon verify (statement-with $dir $"bitcoin:0:($GENESIS_HASH)")
+
         assert $result.valid
         assert equal $result.height 0
         assert equal $result.block_hash $GENESIS_HASH
@@ -49,6 +50,7 @@ def "a beacon naming the wrong block at its height is not valid" [] {
     with-temp-dir "beacon-wrong" {|dir|
         let wrong = "0000000000000000000000000000000000000000000000000000000000000001"
         let result = beacon verify (statement-with $dir $"bitcoin:0:($wrong)")
+
         assert not $result.valid
         assert ($result.error | str contains $GENESIS_HASH)
         # A verdict, not a throw: the explorers answered and agreed, and what
@@ -66,6 +68,7 @@ def "a freshly minted beacon verifies" [] {
     with-temp-dir "beacon-minted" {|dir|
         let minted = beacon latest
         let result = beacon verify (statement-with $dir $minted.token)
+
         assert $result.valid
         assert equal $result.height $minted.height
         assert equal $result.block_hash $minted.block_hash

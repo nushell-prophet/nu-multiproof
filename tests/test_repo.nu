@@ -77,11 +77,11 @@ def "init from inside a multiproofs dir is refused and names the home" [] {
 
     mkdir ($sub | path join multiproofs pubkeys)
     cd ($sub | path join multiproofs pubkeys)
-    let err = try { repo-root --init; null } catch {|e| $e.msg }
+    let err = try { repo-root --init; null } catch {|e| $e }
 
     assert ($err != null) "init resolved to a directory inside a home"
-    assert str contains $err $sub
-    assert str contains $err "--repo"
+    assert str contains $err.msg $sub
+    assert str contains $err.details.help "--repo"
 }
 
 @test
@@ -133,7 +133,7 @@ def "a current directory reached through a symlink resolves inside the repo" [] 
 @test
 def "outside a git repo the default fails and names the flag" [] {
     cd $in.tmp_dir
-    let err = try { repo-root; null } catch {|e| $e.msg }
+    let err = try { repo-root; null } catch {|e| $e }
 
-    assert str contains $err "--repo"
+    assert str contains $err.details.help "--repo"
 }

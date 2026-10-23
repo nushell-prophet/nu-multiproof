@@ -55,7 +55,7 @@ export def ignore-rules [root: path]: nothing -> list<string> {
     if ($text | describe) != "string" {
         error make {msg: $"($file) is not UTF-8 text"}
     }
-    let rules = $text | split row "\n" | where $it != "" and not ($it | str starts-with "#")
+    let rules = $text | split row "\n" | where $it != "" and $it !~ '^#'
 
     # A loop and not `each`: an error raised inside an `each` closure reaches
     # the caller as a bare "Eval block failed with pipeline input".
@@ -70,7 +70,7 @@ export def ignore-rules [root: path]: nothing -> list<string> {
 }
 
 # Why a rule line is refused, or null when it is a plain path.
-def rule-defect [line: string]: nothing -> any {
+export def rule-defect [line: string]: nothing -> oneof<string, nothing> {
     let parts = $line | split row "/"
 
     if $line =~ '[\x00-\x1f\x7f]' { return "holds a control byte" }
@@ -113,7 +113,7 @@ export def refuse-untracked-rules [root: path]: nothing -> nothing {
     let listed = ^git -C $root ls-files -z -- $":\(literal\)($IGNORE_FILE)" | split row (char --integer 0) | where $it != ""
 
     if ($listed | is-empty) {
-        error make {msg: $"($root | path join $IGNORE_FILE) is not tracked — its rules would shape the manifest while no row commits to them. `git add` it, or remove it"}
+        error make {msg: $"($root | path join $IGNORE_FILE) is not tracked — its rules would shape the manifest while no row commits to them" help: "`git add` it, or remove it"}
     }
 }
 
@@ -133,16 +133,16 @@ export def refuse-untracked-rules [root: path]: nothing -> nothing {
 # Why -z: without it core.quotePath C-quotes non-ASCII names ("\346\226\207.md"),
 # poisoning the filepath as an open path and as future merkle leaf bytes.
 # Filepath = the raw path bytes as stored in git.
-# Why -s: it carries the staged mode in the same pass, which the symlink gate
+# Why --stage: it carries the staged mode in the same pass, which the symlink gate
 # needs — no extra stat over the tree.
 export def tracked-entries [root: path]: nothing -> table {
     let exclude_prefix = $MULTIPROOFS_DIR + "/"
     let rules = ignore-rules $root
     let entries = (
-        ^git -C $root ls-files -s -z -- "."
+        ^git -C $root ls-files --stage -z -- "."
         | split row (char --integer 0)
         | where $it != ""
-        # Why split on the first tab instead of `parse`: ls-files -s separates
+        # Why split on the first tab instead of `parse`: ls-files --stage separates
         # "<mode> <object> <stage>" from the path with one tab, and the path
         # itself may contain tabs (see the control-byte gate below).
         | each {|row|
@@ -167,7 +167,7 @@ export def tracked-entries [root: path]: nothing -> table {
     let control_byte_paths = $entries | get path | where $it =~ '[\x00-\x1f]'
 
     if ($control_byte_paths | is-not-empty) {
-        error make {msg: $"git-tracked filenames contain control bytes \(< 0x20\), which merkle leaves reject — rename: ($control_byte_paths | to json)"}
+        error make {msg: $"git-tracked filenames contain control bytes \(< 0x20\), which merkle leaves reject: ($control_byte_paths | to json)" help: "rename these files"}
     }
 
     # Why reject symlinks (mode 120000) rather than follow or hash them: one
@@ -183,7 +183,7 @@ export def tracked-entries [root: path]: nothing -> table {
     let symlink_paths = $entries | where mode == "120000" | get path
 
     if ($symlink_paths | is-not-empty) {
-        error make {msg: $"git-tracked symlinks are not supported — one manifest row cannot describe both the link and its target; remove or replace: ($symlink_paths | to json)"}
+        error make {msg: $"git-tracked symlinks are not supported — one manifest row cannot describe both the link and its target: ($symlink_paths | to json)" help: "remove or replace these symlinks"}
     }
 
     $entries

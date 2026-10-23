@@ -26,7 +26,7 @@ def make-sealable-repo [tmp_dir: path]: nothing -> record {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     ^git -C $repo config user.email "seal-test@example.com"
     ^git -C $repo config user.name "Seal Test"
 
@@ -41,7 +41,7 @@ def make-sealable-repo [tmp_dir: path]: nothing -> record {
 
     "v1\n" | save --force $"($repo)/file.txt"
     ^git -C $repo add file.txt
-    ^git -C $repo commit -q -m "init"
+    ^git -C $repo commit --quiet --message "init"
 
     {repo: $repo key: $key_path pubkeys: $pubkeys ots_dir: $"($repo)/multiproofs/ots-timestamps"}
 }
@@ -50,6 +50,15 @@ def make-sealable-repo [tmp_dir: path]: nothing -> record {
 # what every `.sig` file here is named for.
 def principal-of [key: path]: nothing -> string {
     open --raw $"($key).pub" | pubkey fingerprint
+}
+
+# The 8-character prefix that names the bundle of a statement: the start of
+# the uppercase sha256 of its bytes.
+def bundle-prefix [file: path]: nothing -> string {
+    open --raw $file
+    | hash sha256
+    | str uppercase
+    | str substring 0..<8
 }
 
 # Why a fixture, not rm at the end of test bodies: after-each runs even when
@@ -379,10 +388,7 @@ def "seal --no-content-anchor dates every signature and leaves the content undat
     # root statement's own hash whether or not that hash was posted anywhere, so
     # a retry after a rejected calendar answer lands in this same directory.
     let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
-    let root_prefix = open --raw $root_file
-        | hash sha256
-        | str uppercase
-        | str substring 0..<8
+    let root_prefix = bundle-prefix $root_file
 
     assert equal (
         $result.bundle | path basename
@@ -446,10 +452,7 @@ def "seal --no-content-anchor refuses to overwrite a frozen copy of other conten
     # bundle has to carry the name the next seal will derive.
     seal --repo $fx.repo --no-stamp | ignore
     let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
-    let root_prefix = open --raw $root_file
-        | hash sha256
-        | str uppercase
-        | str substring 0..<8
+    let root_prefix = bundle-prefix $root_file
     let planted = $"($fx.ots_dir)/tree-root.($root_prefix)"
 
     mkdir $planted
@@ -491,10 +494,7 @@ def "a rejected calendar answer leaves no bundle behind for --no-content-anchor"
     assert ($err | default "" | str contains "readable proof") $"expected the stamp to refuse: ($err)"
     assert equal (seal status --repo $fx.repo) [] "a directory holding no proof was reported as a bundle"
     let root_file = $"($fx.repo)/multiproofs/tree-root.txt"
-    let root_prefix = open --raw $root_file
-        | hash sha256
-        | str uppercase
-        | str substring 0..<8
+    let root_prefix = bundle-prefix $root_file
 
     assert equal (
         open --raw $"($fx.ots_dir)/tree-root.($root_prefix)/tree-root.txt"
@@ -551,7 +551,7 @@ def "seal reports an archived proof it cannot read and seals anyway" [] {
 
     assert ($seal_nu | path exists) $"expected the suite to run from the repo root, got ($env.PWD)"
     let run = do {
-        ^nu --no-config-file -c $"use ($seal_nu); seal --repo ($fx.repo) --no-stamp | ignore"
+        ^nu --no-config-file --commands $"use ($seal_nu); seal --repo ($fx.repo) --no-stamp | ignore"
     } | complete
 
     assert equal $run.exit_code 0 $"seal failed: ($run.stderr)"
@@ -623,13 +623,13 @@ def "seal status marks only the bundle whose snapshot is the live artifact" [] {
     seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response | ignore
     "v2\n" | save --force $"($fx.repo)/file.txt"
     ^git -C $fx.repo add file.txt
-    ^git -C $fx.repo commit -q -m "v2"
+    ^git -C $fx.repo commit --quiet --message "v2"
     let second = seal --repo $fx.repo --beacon $TEST_BEACON --response-file $response
 
     let rows = seal status --repo $fx.repo
 
     assert equal ($rows | length) 2 "the second seal did not produce its own bundle"
-    assert equal ($rows | where current | get bundle) [
+    assert equal ($rows | where $it.current | get bundle) [
         ($second.root_ots | path dirname | path relative-to $fx.repo)
     ] "current does not single out the seal in force"
 }
@@ -971,7 +971,7 @@ def "seal status says nothing about a parked rejected calendar answer" [] {
 
     assert ($seal_nu | path exists) $"expected the suite to run from the repo root, got ($env.PWD)"
     let run = do {
-        ^nu --no-config-file -c $"use ($seal_nu); seal status --repo ($fx.repo) | to nuon"
+        ^nu --no-config-file --commands $"use ($seal_nu); seal status --repo ($fx.repo) | to nuon"
     } | complete
 
     assert equal $run.exit_code 0 $"seal status failed: ($run.stderr)"
@@ -1080,11 +1080,11 @@ def "a signing key that is not on this machine names the config to fix" [] {
     let fx = make-sealable-repo $in.tmp_dir
 
     ^git -C $fx.repo config user.signingKey $"($in.tmp_dir)/elsewhere.pub"
-    let err = try { seal --repo $fx.repo --no-stamp; null } catch {|e| $e.msg }
+    let err = try { seal --repo $fx.repo --no-stamp; null } catch {|e| $e }
 
-    assert ($err | str contains "elsewhere.pub")
-    assert ($err | str contains "git config user.signingKey")
-    assert ($err | str contains "--worktree")
+    assert ($err.msg | str contains "elsewhere.pub")
+    assert ($err.details.help | str contains "git config user.signingKey")
+    assert ($err.details.help | str contains "--worktree")
 }
 
 # A public half alone, with its private key on another device: step 4 cannot
@@ -1098,9 +1098,9 @@ def "a seal with no private key here names the external signer flag" [] {
     cp $"($fx.key).pub" $pub_only
     ^git -C $fx.repo config user.signingKey $"($pub_only)/sshkey.pub"
     let err = with-env {SSH_AUTH_SOCK: ""} {
-        try { seal --repo $fx.repo --no-stamp; null } catch {|e| $e.msg }
+        try { seal --repo $fx.repo --no-stamp; null } catch {|e| $e }
     }
 
-    assert ($err | str contains "No private key found")
-    assert ($err | str contains "--external-signer")
+    assert ($err.msg | str contains "No private key found")
+    assert ($err.details.help | str contains "--external-signer")
 }

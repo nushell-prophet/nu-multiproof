@@ -15,7 +15,7 @@ use beacon.nu
 
 # A principal in the `SHA256:<base64>` spelling that OpenSSH and the signing
 # device print: one digest, so no key file is read to show it.
-def openssh-fingerprint [principal: string]: nothing -> string {
+export def openssh-fingerprint [principal: string]: nothing -> string {
     $"SHA256:($principal | decode hex | encode base64 | str trim --right --char '=')"
 }
 
@@ -69,16 +69,17 @@ def openssh-fingerprint [principal: string]: nothing -> string {
 # That is why it is named here in prose and the example below stays offline:
 # an @example must be pasteable into a throwaway directory without side
 # effects beyond it.
+@category multiproof
 @example "seal a throwaway repo, offline (drop --no-stamp for the calendar post)" {
     cd (mktemp --directory)
-    git init -q
+    git init --quiet
     git config user.email seal@example.com
     git config user.name sealer
     ssh-keygen -q -t ed25519 -N "" -f sealkey
     git config user.signingKey ./sealkey.pub
     "hello" | save file.txt
     git add file.txt
-    git commit -q -m "init"
+    git commit --quiet --message "init"
     nu-multiproof init
     nu-multiproof seal --no-stamp
 }
@@ -98,7 +99,10 @@ export def main [
     # skip the post they asked for. Checked first, while failing is still free:
     # everything below either rewrites artifacts or writes to a public calendar.
     if $no_stamp and $no_content_anchor {
-        error make {msg: "--no-stamp and --no-content-anchor are alternatives: --no-stamp skips step 5 entirely, --no-content-anchor runs it over the signatures only"}
+        error make {
+            msg: "--no-stamp and --no-content-anchor are alternatives: --no-stamp skips step 5 entirely, --no-content-anchor runs it over the signatures only"
+            label: {text: "drop this or --no-stamp" span: (metadata $no_content_anchor).span}
+        }
     }
     let root = repo-root $repo
     let manifest_path = manifest-path $root
@@ -271,6 +275,7 @@ export def main [
                 if $verdict.error == "invalid_signature" { "invalid_signature over these bytes" } else { $verdict.error }
             })
         ] | compact
+
         if ($reasons | is-not-empty) {
             error make {msg: $"($sig | cwd-relative) is not a valid signature by ($signer) \((openssh-fingerprint $signer)\) over the current root statement \(sha256 ($digest)\): ($reasons | str join ', ')"}
         }
@@ -446,9 +451,10 @@ export def main [
 #
 # Not a `list` subcommand: `list` is a Nushell type keyword, and this returns a
 # join over three sources rather than a listing of one.
+@category multiproof
 @example "report a throwaway repo with nothing sealed yet" {
     cd (mktemp --directory)
-    git init -q
+    git init --quiet
     mkdir multiproofs
     nu-multiproof seal status
 }
@@ -509,11 +515,11 @@ export def status [
         let prefix = $dir
             | path basename
             | parse --regex '\.(?<p>[0-9A-Fa-f]{8})$'
-            | get p?.0?
+            | get --optional p.0
             | default ""
         let keyed = $candidates
             | where $prefix != "" and ($it.hash | str starts-with ($prefix | str lowercase))
-        let snapshot = ($keyed | get 0?) | default ($candidates | get 0?)
+        let snapshot = $keyed | get --optional 0 | default ($candidates | get --optional 0)
 
         {
             bundle: ($dir | path relative-to $root)

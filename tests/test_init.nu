@@ -27,7 +27,7 @@ def make-repo [tmp_dir: path]: nothing -> path {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     $repo
 }
 
@@ -224,7 +224,7 @@ def "init reports the same key registered twice as already registered" [] {
     init --repo $repo --pubkey $"($key_path).pub"
     let first = (open --raw $"($repo)/multiproofs/pubkeys/($name)")
 
-    let out = (^nu -c $"use ($MODULE_DIR)/init.nu; init --repo ($repo) --pubkey ($key_path).pub" | complete)
+    let out = (^nu --commands $"use ($MODULE_DIR)/init.nu; init --repo ($repo) --pubkey ($key_path).pub" | complete)
 
     assert equal $out.exit_code 0 $"expected exit 0, got ($out)"
     assert ($out.stdout | str contains $"pubkey already registered: multiproofs/pubkeys/($name)") $"got ($out.stdout)"

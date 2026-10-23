@@ -63,12 +63,14 @@ def "one explorer is not enough unless it is asked for" [] {
 def "stamp reaches the public calendar and upgrade will talk to it" [] {
     with-temp-dir "network-stamp" {|dir|
         let file = $dir | path join "doc.txt"
+
         "hello opentimestamps" | save --raw --force $file
         # `stamp` returns the paths it wrote; it does NOT write <file>.ots
         # beside the input, it writes a bundle directory.
         let result = ots stamp $file --out-dir $dir
 
         let stamped = ots info $result.ots
+
         assert equal ($stamped.hash | str lowercase) (open --raw $file | hash sha256)
         assert equal $stamped.attestation.type "pending"
 
@@ -76,6 +78,7 @@ def "stamp reaches the public calendar and upgrade will talk to it" [] {
         # the point is *which* failure. "not yet confirmed" means the gate let
         # the fetch through; "refusing to contact" means the allowlist is stale.
         let outcome = try { ots upgrade $result.ots | get status } catch {|e| $e.msg }
+
         assert (not ($outcome | str contains "refusing to contact")) $"CALENDAR_ALLOWLIST does not admit ($stamped.attestation.url), the calendar the public pool named"
     }
 }

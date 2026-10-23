@@ -34,7 +34,7 @@ use _snapshot.nu write-snapshot
 # committed state, not the tree the manifest describes. One `write-tree` gives
 # blob AND tree hashes from the same snapshot, so a modified file changes its
 # parent directory's hash too.
-def git-hashes [root: path tracked_files: list<string> format: string]: nothing -> record {
+export def git-hashes [root: path tracked_files: list<string> format: string]: nothing -> record {
     if ($tracked_files | is-empty) { return {} }
 
     with-temp-dir $"build-tree-($format)" {|scratch|
@@ -48,6 +48,7 @@ def git-hashes [root: path tracked_files: list<string> format: string]: nothing 
                 # path would silently miss them.
                 $tracked_files | str join (char --integer 0) | ^git -C $root update-index --add -z --stdin
                 let tree = ^git -C $root write-tree | str trim
+
                 ^git -C $root ls-tree -r -t -z $tree
             }
         }
@@ -59,7 +60,7 @@ def git-hashes [root: path tracked_files: list<string> format: string]: nothing 
     | reduce --fold {} {|row acc| $acc | insert $row.path $row.hash }
 }
 
-def build-tree [
+export def build-tree [
     --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
 ]: nothing -> table {
     let root = repo-root $repo
@@ -127,6 +128,7 @@ def build-tree [
 # into the existing manifest — no new artifact to track. tree-hashes.csv is
 # excluded from its own manifest (build-tree filters multiproofs/ out), so the
 # root CID covers all listed files but not the CSV itself.
+@category multiproof
 @example "compute and record the IPFS root CID" { nu-multiproof tree-hashes root-cid }
 export def root-cid [
     --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
@@ -146,6 +148,7 @@ export def root-cid [
 # dirty tree gets no record instead of a hedged one. This step owns the record
 # because it is the only one that reads the working tree: the commit is answered
 # in the same pass that produces the manifest, leaving no window between them.
+@category multiproof
 @example "preview the manifest without saving" { nu-multiproof tree-hashes --echo }
 export def main [
     --echo # Output as nushell table instead of saving to file

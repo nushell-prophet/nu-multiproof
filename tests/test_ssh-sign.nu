@@ -86,7 +86,7 @@ def "sign refuses a key the trust list does not hold" [] {
 @test
 def "the signing namespace cannot be set by a caller" [] {
     for cmd in ["sign" "verify"] {
-        let out = ^nu -c $"use ($MODULE_DIR)/ssh-sign.nu; ssh-sign ($cmd) f --namespace x" | complete
+        let out = ^nu --commands $"use ($MODULE_DIR)/ssh-sign.nu; ssh-sign ($cmd) f --namespace x" | complete
 
         assert equal $out.exit_code 1 $"ssh-sign ($cmd) still takes a namespace: ($out)"
         # Not `str contains "--namespace"`: nushell echoes the offending source
@@ -106,7 +106,7 @@ def "with-signing-key removes the materialized inline key" [] {
     let key_path = $"($tmp_dir)/inline_key"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     ^ssh-keygen -t ed25519 -f $key_path -N "" -q
     ^git -C $repo config user.signingKey $"key::(open --raw $"($key_path).pub" | str trim)"
 
@@ -154,7 +154,7 @@ def "with-signing-key leaves an explicit key alone" [] {
 # is the shape it enabled.
 @test
 def "the signer name cannot be set by a caller" [] {
-    let out = ^nu -c $"use ($MODULE_DIR)/ssh-sign.nu; ssh-sign sign f --name alice" | complete
+    let out = ^nu --commands $"use ($MODULE_DIR)/ssh-sign.nu; ssh-sign sign f --name alice" | complete
 
     assert equal $out.exit_code 1 $"ssh-sign sign still takes a name: ($out)"
     # Not `str contains "--name"`: nushell echoes the offending source line in

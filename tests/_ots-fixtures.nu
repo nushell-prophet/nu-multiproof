@@ -15,9 +15,9 @@ export const ATT_BITCOIN_TAG = 0x[0588960d73d71901]
 # of the proof, so it is attacker input, and `upgrade` fetches it.
 export def build-pending-ots [
     --hash: binary = $ZERO_HASH
-    --url: string = "https://a.pool.opentimestamps.org"
+    --url: string = "https://a.pool.opentimestamps.org" # Calendar URL the attestation points at
     --with-ops
-] {
+]: nothing -> binary {
     let url_bytes = $url | into binary
     mut ots = ($OTS_HEADER | bytes add --end 0x[01 08] | bytes add --end $hash)
 
@@ -46,7 +46,10 @@ export def build-pending-ots [
 # bundle: "existed no later than T" makes the lowest block the strongest claim,
 # and picking between them was `ls` order until an assertion could see the
 # difference.
-export def build-bitcoin-ots [--hash: binary = $ZERO_HASH --height: int = 123456] {
+export def build-bitcoin-ots [
+    --hash: binary = $ZERO_HASH # File hash the proof commits to
+    --height: int = 123456 # Block height of the attestation
+]: nothing -> binary {
     let h = $height | encode-varint
     let payload = (($h | bytes length) | encode-varint) | bytes add --end $h
 
@@ -63,7 +66,7 @@ export def build-bitcoin-ots [--hash: binary = $ZERO_HASH --height: int = 123456
 # What the calendar returns from POST /digest: the tail of the timestamp chain
 # that `stamp` appends after the nonce's sha256 op — here a bare pending
 # attestation naming the public calendar.
-export def build-calendar-response [] {
+export def build-calendar-response []: nothing -> binary {
     let url_bytes = "https://a.pool.opentimestamps.org" | into binary
     let url_len = $url_bytes | bytes length
 

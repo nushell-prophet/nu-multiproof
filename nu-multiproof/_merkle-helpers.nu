@@ -146,7 +146,7 @@ export def fold-path [leaf_hash: binary steps: list]: nothing -> binary {
 # contradicting proofs verify against the same signed root (equivocation).
 export def load-leaves [manifest: path]: nothing -> table {
     if not ($manifest | path exists) {
-        error make {msg: $"manifest not found: ($manifest) — run tree-hashes first"}
+        error make {msg: $"manifest not found: ($manifest)" help: "run tree-hashes first"}
     }
     # --no-infer: a numeric-looking filepath ("123") must stay a string.
     # Builder sorts itself (byte-wise, which nu's default string sort is)

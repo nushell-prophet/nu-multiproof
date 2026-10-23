@@ -71,13 +71,23 @@ def make-test-repo [tmp_dir: path]: nothing -> path {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $"($repo)/sub"
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "hello\n" | save --force $"($repo)/README.md"
     "world\n" | save --force $"($repo)/sub/inner.txt"
     ^git -C $repo add . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
     tree-hashes --repo $repo
     $repo
+}
+
+# One ed25519 key at <tmp_dir>/sshkey, registered in the repo trust list.
+def register-key [tmp_dir: path repo: path]: nothing -> path {
+    let key_path = $"($tmp_dir)/sshkey"
+
+    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
+    mkdir $"($repo)/multiproofs/pubkeys"
+    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    $key_path
 }
 
 # --- spec cross-checks ---
@@ -213,7 +223,7 @@ def "the root-CID row is a covered leaf" [] {
     | save --force $"($tmp_dir)/multiproofs/tree-hashes.csv"
     let swapped = merkle write-root --repo $tmp_dir
 
-    assert not ($swapped.root == $with_cid.root) "changing the root-CID row left the merkle root unchanged"
+    assert not equal $swapped.root $with_cid.root "changing the root-CID row left the merkle root unchanged"
 }
 
 @test
@@ -242,7 +252,7 @@ def "an empty git repo cannot mint a root - its one-row manifest is constant too
     let repo = $"($tmp_dir)/empty"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     tree-hashes --repo $repo
 
     let err = try { merkle write-root --repo $repo; null } catch {|e| $e.msg }
@@ -562,11 +572,7 @@ def "signed roundtrip where file and directory proofs verify as valid" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
 
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
 
     let root_result = merkle write-root --repo $repo
 
@@ -581,7 +587,7 @@ def "signed roundtrip where file and directory proofs verify as valid" [] {
     assert $result.valid
     assert $result.structure_valid
     assert equal $result.content_verified true
-    assert equal ($result.signatures | where valid | length) 1
+    assert equal ($result.signatures | where $it.valid | length) 1
     assert equal $result.ots.status "absent"
 
     # Directory row: attests only a content_cid, which verify re-derives from
@@ -607,11 +613,7 @@ def "signed roundtrip where file and directory proofs verify as valid" [] {
 def "a directory row does not verify against a directory that was rewritten" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -653,11 +655,7 @@ def "a directory row does not verify against a directory that was rewritten" [] 
 def "a proven directory swapped for a symlink is refused and not re-derived" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -692,11 +690,7 @@ def "a proven directory swapped for a symlink is refused and not re-derived" [] 
 def "a deleted tracked file gives every row a verdict instead of a crash" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -727,11 +721,7 @@ def "a deleted tracked file gives every row a verdict instead of a crash" [] {
 def "an untracked file under a proven directory is outside what the row commits to" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -783,11 +773,7 @@ def "a leaf that commits to no content is not valid" [] {
 # thing away from this, so what each one proves is the mutation and nothing else.
 def make-sealed-bundle [tmp_dir: path]: nothing -> record {
     let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -843,9 +829,9 @@ def "a bundle proving the root row excludes its own proof directory from the wal
 def "the root row of a bundle distributed as a git repo still verifies" [] {
     let fx = make-sealed-bundle $in.tmp_dir
 
-    ^git -C $fx.bundle init -q
+    ^git -C $fx.bundle init --quiet
     ^git -C $fx.bundle add README.md sub/inner.txt o+e>| ignore
-    ^git -C $fx.bundle -c user.email=t@t -c user.name=t commit -q -m seed
+    ^git -C $fx.bundle -c user.email=t@t -c user.name=t commit --quiet --message seed
 
     let result = merkle verify $fx.root_proof --repo $fx.bundle --bundle
 
@@ -868,7 +854,7 @@ def "a genuine bundle unpacked inside another git repo still verifies" [] {
     let outer = $"($tmp_dir)/consumer"
 
     mkdir $outer
-    ^git -C $outer init -q
+    ^git -C $outer init --quiet
     cp --recursive $fx.bundle $"($outer)/bundle"
 
     let nested = merkle verify $fx.dir_proof --repo $"($outer)/bundle" --bundle
@@ -933,9 +919,9 @@ def "a bundle cannot hand itself the git arm by shipping its own index" [] {
     let fx = make-sealed-bundle $in.tmp_dir
 
     "payload\n" | save --force $"($fx.bundle)/sub/extra.txt"
-    ^git -C $fx.bundle init -q
+    ^git -C $fx.bundle init --quiet
     ^git -C $fx.bundle add sub/inner.txt o+e>| ignore
-    ^git -C $fx.bundle -c user.email=m@m -c user.name=m commit -q -m seed
+    ^git -C $fx.bundle -c user.email=m@m -c user.name=m commit --quiet --message seed
 
     let guarded = merkle verify $fx.dir_proof --repo $fx.bundle --bundle
 
@@ -965,18 +951,15 @@ def "a bundle cannot hand itself the git arm by shipping its own index" [] {
 def make-subproject [tmp_dir: path]: nothing -> record {
     let outer = $"($tmp_dir)/mono"
     let project = $"($outer)/project"
-    let key_path = $"($tmp_dir)/sshkey"
 
     mkdir $"($project)/sub"
-    ^git -C $outer init -q
+    ^git -C $outer init --quiet
     "hello\n" | save --force $"($project)/README.md"
     "world\n" | save --force $"($project)/sub/inner.txt"
     ^git -C $outer add . o+e>| ignore
-    ^git -C $outer -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $outer -c user.email=t@t -c user.name=t commit --quiet --message init
     tree-hashes --repo $project
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($project)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($project)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $project
     let root_result = merkle write-root --repo $project
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($project)/multiproofs/pubkeys"
@@ -1017,7 +1000,7 @@ def "a file hidden by the rule file under a subdirectory row is not verified" []
         let staged = if $commit_rule { [sub/evil.sh .multiproofignore] } else { [sub/evil.sh] }
 
         ^git -C $fx.project add ...$staged
-        ^git -C $fx.project -c user.email=t@t -c user.name=t commit -q -m evil
+        ^git -C $fx.project -c user.email=t@t -c user.name=t commit --quiet --message evil
 
         let result = merkle verify $fx.dir_proof --repo $fx.project
 
@@ -1047,7 +1030,7 @@ def "an untracked rule file leaves the root row unverified" [] {
     "evil\n" | save --force $"($fx.project)/evil.sh"
     "evil.sh\n" | save --force $"($fx.project)/.multiproofignore"
     ^git -C $fx.project add evil.sh
-    ^git -C $fx.project -c user.email=t@t -c user.name=t commit -q -m evil
+    ^git -C $fx.project -c user.email=t@t -c user.name=t commit --quiet --message evil
 
     let result = merkle verify $root_proof --repo $fx.project
 
@@ -1065,19 +1048,16 @@ def "the root row verifies in a published copy that lacks the ignored files" [] 
     let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     let published = $"($tmp_dir)/published"
-    let key_path = $"($tmp_dir)/sshkey"
 
     mkdir $"($repo)/todo"
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "hello\n" | save --force $"($repo)/README.md"
     "note\n" | save --force $"($repo)/todo/note.md"
     "todo\n" | save --force $"($repo)/.multiproofignore"
     ^git -C $repo add . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
     tree-hashes --repo $repo
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -1087,9 +1067,9 @@ def "the root row verifies in a published copy that lacks the ignored files" [] 
 
     assert equal $in_place.content_verified true "the root row did not verify in the worktree that keeps the notes"
 
-    ^git clone -q $repo $published
-    ^git -C $published rm -r -q todo
-    ^git -C $published -c user.email=t@t -c user.name=t commit -q -m export
+    ^git clone --quiet $repo $published
+    ^git -C $published rm -r --quiet todo
+    ^git -C $published -c user.email=t@t -c user.name=t commit --quiet --message export
     cp --recursive $"($repo)/multiproofs" $published
 
     let result = merkle verify ($published | path join $proof) --repo $published
@@ -1131,19 +1111,16 @@ def "the root row verifies on the walk over a copy that keeps the ignored files"
     let tmp_dir = $in.tmp_dir
     let repo = $"($tmp_dir)/repo"
     let bundle = $"($tmp_dir)/bundle"
-    let key_path = $"($tmp_dir)/sshkey"
 
     mkdir $"($repo)/todo"
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "hello\n" | save --force $"($repo)/README.md"
     "note\n" | save --force $"($repo)/todo/note.md"
     "todo\n" | save --force $"($repo)/.multiproofignore"
     ^git -C $repo add . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
     tree-hashes --repo $repo
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -1169,7 +1146,7 @@ def "an untracked bundle inside another git repo is walked without the bundle fl
     let outer = $"($tmp_dir)/consumer"
 
     mkdir $outer
-    ^git -C $outer init -q
+    ^git -C $outer init --quiet
     cp --recursive $fx.bundle $"($outer)/bundle"
 
     let result = merkle verify $fx.dir_proof --repo $"($outer)/bundle"
@@ -1188,13 +1165,13 @@ def "a bundle whose only tracked files are ignored is walked" [] {
     let outer = $"($tmp_dir)/consumer"
 
     mkdir $outer
-    ^git -C $outer init -q
+    ^git -C $outer init --quiet
     cp --recursive $fx.bundle $"($outer)/bundle"
     mkdir $"($outer)/bundle/todo"
     "note\n" | save --force $"($outer)/bundle/todo/note.md"
     "todo\n" | save --force $"($outer)/bundle/.multiproofignore"
     ^git -C $outer add bundle/todo o+e>| ignore
-    ^git -C $outer -c user.email=t@t -c user.name=t commit -q -m notes
+    ^git -C $outer -c user.email=t@t -c user.name=t commit --quiet --message notes
 
     let result = merkle verify $fx.dir_proof --repo $"($outer)/bundle"
 
@@ -1211,10 +1188,10 @@ def "a bundle whose only tracked files are its proof layer is walked" [] {
     let outer = $"($tmp_dir)/consumer"
 
     mkdir $outer
-    ^git -C $outer init -q
+    ^git -C $outer init --quiet
     cp --recursive $fx.bundle $"($outer)/bundle"
     ^git -C $outer add bundle/multiproofs o+e>| ignore
-    ^git -C $outer -c user.email=t@t -c user.name=t commit -q -m proofs
+    ^git -C $outer -c user.email=t@t -c user.name=t commit --quiet --message proofs
 
     let result = merkle verify $fx.dir_proof --repo $"($outer)/bundle"
 
@@ -1236,9 +1213,9 @@ def "a git index above a bundle does not decide its file set under the bundle fl
     mkdir $shipped
     cp --recursive $fx.bundle $"($shipped)/bundle"
     "payload\n" | save --force $"($shipped)/bundle/sub/extra.txt"
-    ^git -C $shipped init -q
+    ^git -C $shipped init --quiet
     ^git -C $shipped add bundle/README.md bundle/sub/inner.txt o+e>| ignore
-    ^git -C $shipped -c user.email=m@m -c user.name=m commit -q -m seed
+    ^git -C $shipped -c user.email=m@m -c user.name=m commit --quiet --message seed
 
     let guarded = merkle verify $fx.dir_proof --repo $"($shipped)/bundle" --bundle
 
@@ -1366,17 +1343,13 @@ def "signed roundtrip works when the repo path holds glob metacharacters" [] {
     let repo = $"($tmp_dir)/re[po] v*1?"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "hello\n" | save --force $"($repo)/README.md"
     ^git -C $repo add . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
     tree-hashes --repo $repo
 
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
 
     let root_result = merkle write-root --repo $repo
 
@@ -1387,7 +1360,7 @@ def "signed roundtrip works when the repo path holds glob metacharacters" [] {
     let result = merkle verify (merkle prove README.md --repo $repo) --repo $repo
 
     assert $result.valid "a repo path with glob metacharacters broke the roundtrip"
-    assert equal ($result.signatures | where valid | length) 1
+    assert equal ($result.signatures | where $it.valid | length) 1
     assert equal $result.signatures.0.signer (principal-of $key_path)
 }
 
@@ -1476,7 +1449,7 @@ def "signer flag pins the principal and not just any registered key" [] {
     assert $wrong.structure_valid "structure must still verify"
     assert not $wrong.valid "a signature from another principal was accepted"
     assert ($wrong.error | str contains (principal-of $alice))
-    assert equal ($wrong.signatures | where valid | get signer) [(principal-of $mallory)]
+    assert equal ($wrong.signatures | where $it.valid | get signer) [(principal-of $mallory)]
     assert error {|| merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $alice) --fail }
 
     assert (merkle verify $proof --repo $repo --pubkeys-dir $trusted --signer (principal-of $mallory)).valid
@@ -1684,7 +1657,7 @@ def "a manifest that no longer yields the signed root is caught" [] {
 
     assert $desynced.structure_valid "the proof itself still folds to the signed root"
     assert not $desynced.valid "a manifest/root desync was reported valid"
-    assert not ($desynced.manifest_root == $desynced.root) "the rebuilt root must differ"
+    assert not equal $desynced.manifest_root $desynced.root "the rebuilt root must differ"
     assert ($desynced.error | str contains "different seals")
     assert error {|| merkle verify $proof --repo $dir --fail }
 
@@ -1747,7 +1720,7 @@ def "a bundle cannot file one key under the fingerprint of another" [] {
     let honest = merkle verify $proof --repo $repo --signer (principal-of $mallory)
 
     assert $honest.valid "the key that signed the root was not recognized"
-    assert equal ($honest.signatures | where valid | get signer) [(principal-of $mallory)]
+    assert equal ($honest.signatures | where $it.valid | get signer) [(principal-of $mallory)]
 
     # And against alice's real key, held outside the artifact: not endorsed.
     let trusted = $"($tmp_dir)/trusted"
@@ -1765,11 +1738,7 @@ def "a bundle cannot file one key under the fingerprint of another" [] {
 def "pubkeys-dir flag supplies the verifier trust list from outside the bundle" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -1802,11 +1771,7 @@ def "pubkeys-dir flag supplies the verifier trust list from outside the bundle" 
 def "a portable bundle proof verifies offline in a non-git directory" [] {
     let tmp_dir = $in.tmp_dir
     let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
-
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
+    let key_path = register-key $tmp_dir $repo
     let root_result = merkle write-root --repo $repo
 
     ssh-sign sign $root_result.path --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
@@ -1832,7 +1797,7 @@ def "a portable bundle proof verifies offline in a non-git directory" [] {
 
     assert $result.valid
     assert equal $result.content_verified true
-    assert equal ($result.signatures | where valid | length) 1
+    assert equal ($result.signatures | where $it.valid | length) 1
     assert equal $result.ots.status "pending"
 }
 
@@ -2057,11 +2022,8 @@ def "proof against a different seal root throws loudly" [] {
 # perfect, and only the seal artifacts around it have moved on.
 def make-older-seal [tmp_dir: path]: nothing -> record {
     let repo = make-test-repo $tmp_dir
-    let key_path = $"($tmp_dir)/sshkey"
+    let key_path = register-key $tmp_dir $repo
 
-    ^ssh-keygen -t ed25519 -f $key_path -N "" -q
-    mkdir $"($repo)/multiproofs/pubkeys"
-    cp $"($key_path).pub" $"($repo)/multiproofs/pubkeys/sshkey.pub"
     merkle write-root --repo $repo
     let old_sig = ssh-sign sign $"($repo)/multiproofs/tree-root.txt" --key $key_path --pubkeys-dir $"($repo)/multiproofs/pubkeys"
     let proof = merkle prove README.md --repo $repo
@@ -2109,7 +2071,7 @@ def "a proof of an older seal verifies against that snapshot of the seal" [] {
     assert equal $result.manifest_root null
     # The snapshot holds no pubkeys, so a valid signature proves the trust
     # default stayed with --repo rather than following the flag
-    assert equal ($result.signatures | where valid | length) 1
+    assert equal ($result.signatures | where $it.valid | length) 1
     assert equal $result.content_verified true
 
     # A directory with no statement is named by the refusal, not read as an
@@ -2117,7 +2079,7 @@ def "a proof of an older seal verifies against that snapshot of the seal" [] {
     let empty = $"($tmp_dir)/empty"
 
     mkdir $empty
-    let missing = try { merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $empty; "no throw" } catch {|e| $e.msg }
+    let missing = try { merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $empty; "no throw" } catch {|e| $e.details.help }
 
     assert ($missing | str contains "--multiproofs-dir")
 }
@@ -2161,7 +2123,7 @@ def "a planted signature over another statement does not endorse the snapshot" [
     let result = merkle verify $fx.proof --repo $fx.repo --multiproofs-dir $forged
 
     assert not $result.valid
-    assert equal ($result.signatures | where valid | length) 0
+    assert equal ($result.signatures | where $it.valid | length) 0
     assert ($result.error | str contains "no valid signature")
 }
 

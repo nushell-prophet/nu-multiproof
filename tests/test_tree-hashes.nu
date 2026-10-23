@@ -33,7 +33,7 @@ def make-repo [tmp_dir: path]: nothing -> string {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $"($repo)/sub/deeper"
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "hello\n" | save --force $"($repo)/file.txt"
     "apple\n" | save --force $"($repo)/apple.txt"
     "world\n" | save --force $"($repo)/sub/inner.txt"
@@ -41,7 +41,7 @@ def make-repo [tmp_dir: path]: nothing -> string {
     "hidden\n" | save --force $"($repo)/.hidden"
     "nested hidden\n" | save --force $"($repo)/sub/.dotfile"
     ^git -C $repo add . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
     $repo
 }
 
@@ -230,7 +230,7 @@ def "one pass emits the root row and per-dir CIDs and the root-cid wrapper" [] {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $"($repo)/sub/deeper"
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "hello\n" | save --force $"($repo)/file.txt"
     "world\n" | save --force $"($repo)/sub/inner.txt"
     # Two levels of directory: the fold must build sub/deeper before sub, or sub
@@ -248,7 +248,7 @@ def "one pass emits the root row and per-dir CIDs and the root-cid wrapper" [] {
     # or from the dir/root CIDs the seal signs.
     "hidden\n" | save --force $"($repo)/.hidden"
     ^git -C $repo add . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
 
     let table = tree-hashes --echo --repo $repo
 
@@ -295,10 +295,10 @@ def "non-ascii filenames come through raw rather than C-quoted" [] {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "привет\n" | save --force $"($repo)/文件.md"
     ^git -C $repo add . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
 
     let table = tree-hashes --echo --repo $repo
 
@@ -320,7 +320,7 @@ def "control-byte filename is rejected at generation before any write" [] {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     # git allows tab in a tracked filename; sealing must fail at tree-hashes
     # (before the CSV regen), not later at merkle write-root
     "x\n" | save --force ($repo | path join $"a(char tab)b.txt")
@@ -338,7 +338,7 @@ def "live symlink is rejected and named" [] {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "x\n" | save --force $"($repo)/real.txt"
     ^ln -s real.txt $"($repo)/link.txt"
     ^git -C $repo add . o+e>| ignore
@@ -356,7 +356,7 @@ def "broken symlink is rejected by name rather than as an opaque open failure" [
     let repo = $"($tmp_dir)/repo"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     ^ln -s missing.txt $"($repo)/dangling.txt"
     ^git -C $repo add . o+e>| ignore
 
@@ -400,7 +400,7 @@ def "a tracked file deleted from the worktree fails the build by name" [] {
     let repo = $"($tmp_dir)/repo"
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "x\n" | save --force $"($repo)/kept.txt"
     "y\n" | save --force $"($repo)/gone.txt"
     ^git -C $repo add . o+e>| ignore

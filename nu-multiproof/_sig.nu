@@ -82,7 +82,7 @@ export def original-for-sig [sig_path: path]: nothing -> path {
 # Bare `<file>.sig` -> null; named `<file>.<signer>.sig` -> <signer>.
 # Needs the signed file to disambiguate: `a.b.sig` is bare-for-`a.b`, not
 # named-"b"-for-`a`, and only the base tells them apart.
-export def signer-from-sig [file: path sig_path: path]: nothing -> any {
+export def signer-from-sig [file: path sig_path: path]: nothing -> oneof<string, nothing> {
     let base = $file | path basename
     let sig_base = $sig_path | path basename
 

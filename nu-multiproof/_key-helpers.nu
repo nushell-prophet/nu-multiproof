@@ -24,8 +24,8 @@ use _temp-helpers.nu with-temp-dir
 # --root: repo whose git config to read (default: current directory's repo).
 export def with-signing-key [
     action: closure # Receives the key path
-    --key: path
-    --root: path
+    --key: path # Key to use as-is, skipping the git config
+    --root: path # Repo whose git config to read (default: the current directory's repo)
 ]: nothing -> any {
     if $key != null { return (do $action ($key | into string)) }
     let git = do { ^git -C ($root | default ".") config user.signingKey } | complete
@@ -34,7 +34,7 @@ export def with-signing-key [
         # Why not "or pass --key": seal has no such flag, and this is
         # the only message its caller ever sees. `ssh-sign sign --key` short-
         # circuits before reaching here, so naming the config serves both.
-        error make {msg: "no git signing key configured — set it with: git config user.signingKey <path-to-key>"}
+        error make {msg: "no git signing key configured" help: "set it with: git config user.signingKey <path-to-key>"}
     }
     let raw = $git.stdout | str trim
 
@@ -43,6 +43,7 @@ export def with-signing-key [
         # which signing-principal reads as "this is the public half".
         return (with-temp-dir "signing-key" {|dir|
             let pub = $dir | path join "key.pub"
+
             $raw | str replace "key::" "" | save --raw $pub
             do $action $pub
         })
@@ -57,7 +58,7 @@ export def with-signing-key [
         # Why the fix is named: the config is often inherited — a linked
         # worktree reads the main checkout's — so the path can be right on
         # another machine and the reader has no idea where it came from.
-        error make {msg: $"signing key not found: ($raw) — set user.signingKey to the key this repo signs with \(`git config user.signingKey <key>.pub`; in a linked worktree add --worktree, or the main checkout changes too\); with `seal --external-signer` the public half alone is enough"}
+        error make {msg: $"signing key not found: ($raw)" help: $"set user.signingKey to the key this repo signs with \(`git config user.signingKey <key>.pub`; in a linked worktree add --worktree, or the main checkout changes too\); with `seal --external-signer` the public half alone is enough"}
     }
 }
 
@@ -79,7 +80,7 @@ export def signing-principal [key: path pubkeys_dir: path]: nothing -> string {
     let principal = fingerprint-file $pub_path
 
     if $principal not-in (registered-principals $pubkeys_dir) {
-        error make {msg: $"the signing key \(($principal)\) is not registered in ($pubkeys_dir)/ — register it with `init --pubkey ($pub_path)`, or nothing reading this artifact can check the signature"}
+        error make {msg: $"the signing key \(($principal)\) is not registered in ($pubkeys_dir)/" help: $"register it with `init --pubkey ($pub_path)`, or nothing reading this artifact can check the signature"}
     }
     $principal
 }

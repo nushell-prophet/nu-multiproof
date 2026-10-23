@@ -37,7 +37,7 @@ export def check-min-sources [min_sources: int]: nothing -> nothing {
 
 # GET an Esplora endpoint, returning its trimmed text body or null on any
 # non-200 / transport error (so a single flaky mirror doesn't abort the run).
-export def esplora-get [url: string]: nothing -> any {
+export def esplora-get [url: string]: nothing -> oneof<string, nothing> {
     let r = try { http get --full --allow-errors --max-time $NETWORK_TIMEOUT $url } catch { return null }
 
     if $r.status != 200 { return null }

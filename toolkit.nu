@@ -19,7 +19,11 @@ export def main [] { }
 # Pass --threads 0 for nutest's own default (0 means one per core).
 # Investigated in cozy/todo/20260830-debug-freeze.md; the fault is in the
 # runtime, not here, so this default should go once it is fixed upstream.
-export def 'main test' [--network --no-fail --threads: int = 1] {
+export def 'main test' [
+    --network # run tests-network/, which reaches the internet and writes a public timestamp
+    --no-fail # exit 0 even when a test fails
+    --threads: int = 1 # nutest threads; 0 means one per core
+]: nothing -> any {
     use ../nutest/nutest
 
     let path = if $network { "tests-network/" } else { "tests/" }

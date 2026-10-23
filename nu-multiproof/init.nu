@@ -10,6 +10,7 @@ use pubkey.nu
 # config. A key is stored as `<fingerprint>.pub` in `pubkey canonical` form —
 # `<type> <base64>\n`, comment stripped — so its file bytes hash identically
 # everywhere and its name says which key it is (see pubkey.nu).
+@category multiproof
 @example "bootstrap multiproofs/ in the current repo" { nu-multiproof init }
 export def main [
     --repo: path # Target repo root (default: the current directory)
@@ -47,7 +48,7 @@ export def main [
 # (tests/test_pubkey.nu "canonical never accepts a key ssh-keygen cannot load").
 # Loadable is not the same as usable: nothing here says anyone holds the matching
 # private key, only that a verifier can read the entry.
-def resolve-key [root: path pubkey: any]: nothing -> any {
+export def resolve-key [root: path pubkey: oneof<path, nothing>]: nothing -> oneof<string, nothing> {
     if $pubkey != null {
         return (resolve-pubkey $pubkey)
     }
@@ -106,7 +107,7 @@ def resolve-key [root: path pubkey: any]: nothing -> any {
 # another key, and a gate on the label (a `/` writes outside pubkeys/, and a
 # control byte makes a name `ls` cannot round-trip, which throws on every later
 # render — see todo/20260727-023419). `mv` is the escape hatch.
-def register [canon: string pubkeys_dir: path root: path]: nothing -> nothing {
+export def register [canon: string pubkeys_dir: path root: path]: nothing -> nothing {
     let principal = $canon | pubkey fingerprint
     let dest = $pubkeys_dir | path join $"($principal).pub"
 
@@ -128,9 +129,10 @@ def register [canon: string pubkeys_dir: path root: path]: nothing -> nothing {
                     $"($dest | path relative-to $root) is named for this key's fingerprint but holds a different key — refusing to overwrite the trust list"
                     $"  stored there: (ssh-fingerprint (canonical-file $dest))"
                     $"  offered:      (ssh-fingerprint $canon)"
-                    "the file was not written by `init`; remove or rename it, then register again"
+                    "the file was not written by `init`"
                 ] | str join "\n"
             )
+            help: "remove or rename it, then register again"
         }
     }
 
@@ -146,7 +148,7 @@ def register [canon: string pubkeys_dir: path root: path]: nothing -> nothing {
 # operator-facing messages only, never as an identity this code compares.
 # Falls back to the key line itself so a fingerprint failure never replaces the
 # real message.
-def ssh-fingerprint [key: string]: nothing -> string {
+export def ssh-fingerprint [key: string]: nothing -> string {
     let out = $key | ^ssh-keygen -lf - | complete
 
     if $out.exit_code == 0 {
@@ -161,7 +163,7 @@ def ssh-fingerprint [key: string]: nothing -> string {
 # private key into pubkeys/. Prefer the `.pub` sibling when present (forgiving
 # misconfig); otherwise run the whole file through `pubkey canonical`, which a
 # private key fails on its second line.
-def resolve-pubkey [key_path: path]: nothing -> string {
+export def resolve-pubkey [key_path: path]: nothing -> string {
     let expanded = $key_path | path expand
     let pub_sibling = $"($expanded).pub"
 

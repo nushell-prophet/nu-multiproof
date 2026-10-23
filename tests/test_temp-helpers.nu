@@ -82,7 +82,7 @@ def "with-temp-file returns more than 256 KiB of external output" [] {
 
     assert ($helpers | path exists) $"expected the suite to run from the repo root, got ($env.PWD)"
     let script = $"use ($helpers) with-temp-file; with-temp-file 'probe' {|f| ^head -c 400000 /dev/zero | ^tr '\\0' 'x' } | str length | print"
-    let run = do { ^timeout 60 nu --no-config-file -c $script } | complete
+    let run = do { ^timeout 60 nu --no-config-file --commands $script } | complete
 
     assert equal $run.exit_code 0 $"helper did not return \(124 = deadlock\): ($run.stderr)"
     assert equal ($run.stdout | str trim) "400000"

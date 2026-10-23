@@ -87,7 +87,7 @@ export def parse-snapshot-statement [file: path]: nothing -> string {
 #
 # Not `diff-index --quiet HEAD`: it reports stale stat info as a difference
 # unless the index is refreshed first, which `status` does as part of its job.
-export def snapshot-state [root: path]: nothing -> any {
+export def snapshot-state [root: path]: nothing -> oneof<record<commit: string, clean: bool>, nothing> {
     let head = do { ^git -C $root rev-parse HEAD } | complete
 
     if $head.exit_code != 0 { return null }
@@ -119,7 +119,7 @@ export def snapshot-state [root: path]: nothing -> any {
 # Returns the commit it recorded, or null when it recorded nothing. The commit is
 # read back out of the file rather than returned from memory — this module writes
 # an artifact, so it parses that artifact back before reporting success.
-export def write-snapshot [root: path]: nothing -> any {
+export def write-snapshot [root: path]: nothing -> oneof<string, nothing> {
     let path = snapshot-path $root
     let state = snapshot-state $root
 

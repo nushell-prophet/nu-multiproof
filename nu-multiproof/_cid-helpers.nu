@@ -85,7 +85,7 @@ export def encode-base58 []: binary -> string {
     mut nums = ($byte_list | skip while { $in == 0 })
     mut digits = []
 
-    while not ($nums | is-empty) {
+    while ($nums | is-not-empty) {
         mut carry = 0
         mut quotient = []
 
@@ -139,7 +139,7 @@ export def link-bytes [name: string node: record]: nothing -> binary {
 
 export def block-node [block: binary file_size: int children: list]: nothing -> record {
     {
-        digest: ($block | hash sha256 | decode hex)
+        digest: ($block | hash sha256 --binary)
         # append 0: a leaf and an empty directory both link nothing, and
         # `math sum` refuses an empty list
         dag_size: (($block | bytes length) + ($children | get dag_size | append 0 | math sum))

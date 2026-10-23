@@ -46,6 +46,7 @@ def "hello world string" [] {
 def "utf-8 file read with open --raw" [] {
     with-temp-dir "cid-utf8" {|dir|
         let file = $dir | path join "hello.txt"
+
         "hello world" | save --raw --force $file
         assert equal (open --raw $file | cid-v0) "Qmf412jQZiuVUtdgnB36FXFX7xg5V6KEbSJ4dpQuhkLyfD"
     }

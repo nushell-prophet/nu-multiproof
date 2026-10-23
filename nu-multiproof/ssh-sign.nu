@@ -11,6 +11,7 @@ use _fs.nu cwd-relative
 # Sign a file with an SSH key.
 # Creates {path}.{fingerprint}.sig alongside the input file, where the
 # fingerprint is the signing key's own (see `pubkey fingerprint`).
+@category multiproof
 @example "sign the root statement with the git signing key" { nu-multiproof ssh-sign sign multiproofs/tree-root.txt }
 export def sign [
     path: path # File to sign
@@ -23,7 +24,7 @@ export def sign [
     # materialized to a temp file, which with-signing-key deletes on the way out.
     with-signing-key --key $key {|key|
         let signer_name = signing-principal $key (
-            if $pubkeys_dir != null { $pubkeys_dir } else { pubkeys-dir (repo-root) }
+            $pubkeys_dir | default { pubkeys-dir (repo-root) }
         )
 
         # Why the content goes in over stdin instead of naming the file: given a
@@ -38,14 +39,16 @@ export def sign [
         let signed = (do {
             open --raw $path | into binary | ^ssh-keygen -Y sign -q -f $key -n $NAMESPACE
         } | complete)
+
         if $signed.exit_code != 0 {
             # Why the hint: a public half with no private key here is the setup
             # of a signer on another device, and the seal that hit this has
             # already rewritten its root — the next step is the flag, not a key.
             let hint = if ($signed.stderr | str contains "No private key found") {
-                " — if the private half lives on another device, seal with --external-signer"
-            } else { "" }
-            error make {msg: $"ssh-keygen could not sign ($path): ($signed.stderr | str trim)($hint)"}
+                "if the private half lives on another device, seal with --external-signer"
+            }
+
+            error make {msg: $"ssh-keygen could not sign ($path): ($signed.stderr | str trim)" help: $hint}
         }
 
         let sig_path = (sig-path-for $path $signer_name)
@@ -67,8 +70,9 @@ export def sign [
             let check = (do {
                 open --raw $path | into binary | ^ssh-keygen -Y check-novalidate -n $NAMESPACE -s $tmp_sig
             } | complete)
+
             if $check.exit_code != 0 {
-                error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony. Re-run and complete the prompt."}
+                error make {msg: $"ssh-keygen wrote an invalid \(empty?\) signature for ($path) — cancelled or failed signing ceremony" help: "re-run and complete the prompt"}
             }
             mv --force $tmp_sig $sig_path
         }
@@ -99,6 +103,7 @@ export def sign [
 # duplicating `sig-files-for` outside the module that owns it and printing the
 # same signature's verdict twice. A path is not an identity: read `sig` as
 # "which file this verdict is about", never as who signed.
+@category multiproof
 @example "verify all signatures on the root statement" { nu-multiproof ssh-sign verify multiproofs/tree-root.txt }
 export def verify [
     path: path # File to verify (or a .sig file — verifies just that sig, original inferred)
@@ -115,7 +120,10 @@ export def verify [
         # invalid_signature} verdict row. Checked before original-for-sig so
         # the error names the path the caller typed.
         if not ($path | path exists) {
-            error make {msg: $"signature file not found: ($path)"}
+            error make {
+                msg: $"signature file not found: ($path)"
+                help: "check the .sig path, or pass the signed file to verify every signature beside it"
+            }
         }
         {file: (original-for-sig $path) sig: ($path | into string)}
     } else {
@@ -123,9 +131,7 @@ export def verify [
     }
     let path = $target.file
 
-    let pubkeys_dir = if $pubkeys_dir != null { $pubkeys_dir } else {
-        pubkeys-dir (repo-root)
-    }
+    let pubkeys_dir = $pubkeys_dir | default { pubkeys-dir (repo-root) }
     let signers = (allowed-signers-body $pubkeys_dir)
 
     if ($signers | str trim | is-empty) {
@@ -160,6 +166,7 @@ export def verify [
                 let v = (do {
                     open --raw $path | ^ssh-keygen -Y verify -f $signers_file -I $signer -n $NAMESPACE -s $sig_path
                 } | complete)
+
                 if $v.exit_code == 0 {
                     print $"($signer): valid"
                     {signer: $signer valid: true sig: ($sig_path | cwd-relative | into string)}
@@ -174,8 +181,10 @@ export def verify [
                 let cn = (do {
                     open --raw $path | ^ssh-keygen -Y check-novalidate -n $NAMESPACE -s $sig_path
                 } | complete)
+
                 if $cn.exit_code == 0 {
                     let label = (signer-from-sig $path $sig_path | default "unknown")
+
                     print $"($label): unrecognized signer \(sig cryptographically valid but key not in pubkeys_dir\)"
                     {signer: $label valid: false error: "unrecognized_signer" sig: ($sig_path | cwd-relative | into string)}
                 } else {
@@ -192,9 +201,9 @@ export def verify [
     }
 
     if $fail {
-        let bad = $results | where not valid
+        let bad = $results | where not $it.valid
 
-        if not ($bad | is-empty) {
+        if ($bad | is-not-empty) {
             error make {msg: $"($bad | length) invalid signature\(s\) for ($path)"}
         }
     }

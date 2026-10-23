@@ -95,7 +95,7 @@ use ots.nu
 # flag, the same arm a `.git` at the bundle root already earns; `--bundle` is
 # the defence for both. Pinned by "a git index above a bundle does not decide
 # its file set under the bundle flag".
-def dir-enumeration [target: path bundle: bool rules: list<string>]: nothing -> string {
+export def dir-enumeration [target: path bundle: bool rules: list<string>]: nothing -> string {
     if $bundle { return "walk" }
     # Not tracked-entries: it throws on a symlink or a control byte, which would
     # turn the choice of an arm into a crash before the content check runs.
@@ -133,7 +133,7 @@ def dir-enumeration [target: path bundle: bool rules: list<string>]: nothing -> 
 # null there restores the exact hole this closes, and an attacker can ship a
 # hand-built manifest as easily as a repo. Nothing is enumerated for it, so it
 # reports no enumeration either.
-def derive-dir-cid [target: path leaf: record bundle: bool]: nothing -> record {
+export def derive-dir-cid [target: path leaf: record bundle: bool]: nothing -> record {
     if $leaf.content_cid == "" { return {verdict: "unverifiable" enumeration: null} }
     # A rule file that cannot be read is a defect of the artifact: the builder
     # refuses it, so it was not sealed this way. A verdict, not a throw. Pinned
@@ -200,6 +200,7 @@ def derive-dir-cid [target: path leaf: record bundle: bool]: nothing -> record {
 # minted would make an offline re-derivation impossible. Bare `write-root` writes
 # `none`, which is a legal statement: an offline seal says so rather than
 # claiming a bound it could not mint.
+@category multiproof
 @example "derive and record the merkle root" { nu-multiproof merkle write-root }
 export def write-root [
     --repo: path # Target repo root (default: the nearest dir holding multiproofs/, up to the git root)
@@ -225,7 +226,7 @@ export def write-root [
     if ($leaves | where filepath != "." | is-empty) {
         error make {msg: $"($manifest) lists no files — the root of a no-file tree is the same for every empty repo, so signing it would state nothing about this one"}
     }
-    let root_hex = mth ($leaves | each { leaf-hash $in }) | encode hex | str lowercase
+    let root_hex = mth ($leaves | each { leaf-hash $in }) | encode hex --lower
     let out = merkle-root-path $target
     # The seal counter is minted here because this is the one place a root is
     # written, and the statement being replaced is the only record of the
@@ -289,12 +290,16 @@ export def write-root [
 # `beacon` comes back as the raw token, `none` included — the same shape `prev`
 # has, and the shape the signature covers. `beacon verify` is what turns it into
 # a checked bound; nothing that only reads a file may report one.
+@category multiproof
 @example "read one seal snapshot's statement" { nu-multiproof merkle read-root seals/672c33f2bb0b/tree-root.txt }
 export def read-root [
     file: path # Statement file to read
 ]: nothing -> record<root: string, seq: int, prev: string, beacon: string> {
     if not ($file | path exists) {
-        error make {msg: $"root statement not found: ($file)"}
+        error make {
+            msg: $"root statement not found: ($file)"
+            help: "pass a root statement file: multiproofs/tree-root.txt, or a seal snapshot's copy"
+        }
     }
     parse-root-statement $file
 }
@@ -302,6 +307,7 @@ export def read-root [
 # Extract a compact inclusion proof for one manifest row. The consumer's full
 # artifact set: this proof file + tree-root.txt + a .sig over it + the
 # signer's pubkey (+ the tree-root OTS bundle for the time anchor).
+@category multiproof
 @example "extract a compact inclusion proof" { nu-multiproof merkle prove README.md }
 export def prove [
     filepath: string # Manifest row to prove (as listed in tree-hashes.csv; a trailing / is accepted for a directory row)
@@ -321,13 +327,19 @@ export def prove [
     # then name nothing either — a message that reads as if the argument were
     # missing rather than absolute. The repo root is the "." row, never "/".
     if ($key | is-empty) {
-        error make {msg: $"($filepath) names no manifest row — paths are relative to the repo root, which is the \".\" row"}
+        error make {
+            msg: $"($filepath) names no manifest row — paths are relative to the repo root, which is the \".\" row"
+            help: "pass a path as tree-hashes.csv lists it, or . for the repo root"
+        }
     }
     let leaves = load-leaves (manifest-path $target)
     let hit = $leaves | enumerate | where item.filepath == $key
 
     if ($hit | is-empty) {
-        error make {msg: $"($key) is not in the manifest — see `tree-hashes --echo` for listed paths"}
+        error make {
+            msg: $"($key) is not in the manifest"
+            help: "pass a path relative to the repo root, as tree-hashes.csv lists it — see `tree-hashes --echo` for listed paths"
+        }
     }
     # The slash is one-way evidence, so it can only reject. Present, the caller
     # means a directory; absent, it says nothing at all, since `merkle prove
@@ -337,7 +349,7 @@ export def prove [
     # disagreeing about what that path IS, and handing back the file's proof
     # would answer a question nobody asked.
     if $key != $filepath and $hit.0.item.content_sha256 != "" {
-        error make {msg: $"($filepath) names a directory, but the manifest lists ($key) as a file — drop the trailing slash to prove the file"}
+        error make {msg: $"($filepath) names a directory, but the manifest lists ($key) as a file" help: "drop the trailing slash to prove the file"}
     }
     let leaf_hashes = $leaves | each { leaf-hash $in }
     let proof = {
@@ -345,10 +357,10 @@ export def prove [
         leaf: $hit.0.item
         path: (
             audit-path $leaf_hashes $hit.0.index
-            | each {|step| {side: $step.side hash: ($step.hash | encode hex | str lowercase)} }
+            | each {|step| {side: $step.side hash: ($step.hash | encode hex --lower)} }
         )
         # Self-description only — verify trusts the SIGNED root file, never this copy
-        root: (mth $leaf_hashes | encode hex | str lowercase)
+        root: (mth $leaf_hashes | encode hex --lower)
     }
     # Under multiproofs/ (excluded from the manifest), never next to the source
     # file — that would pollute the worktree and the next manifest. Not a
@@ -436,6 +448,7 @@ export def prove [
 # --pubkeys-dir points the check at a list the verifier holds; --signer names one
 # key by fingerprint, which is a statement about key material and so holds even
 # against the bundle's own list.
+@category multiproof
 @example "verify a proof, failing on invalid (for CI)" { nu-multiproof merkle verify proof.json --fail }
 export def verify [
     proof_file: path
@@ -493,11 +506,14 @@ export def verify [
     let root_file = $seal_dir | path join $MERKLE_ROOT_FILE
 
     if not ($root_file | path exists) {
-        error make {msg: (if $multiproofs_dir == null {
-            $"root statement not found: ($root_file) — run `merkle write-root` or `seal`"
-        } else {
-            $"root statement not found: ($root_file) — --multiproofs-dir must name a directory holding the seal's ($MERKLE_ROOT_FILE)"
-        })}
+        error make {
+            msg: $"root statement not found: ($root_file)"
+            help: (if $multiproofs_dir == null {
+                "run `merkle write-root` or `seal`"
+            } else {
+                $"--multiproofs-dir must name a directory holding the seal's ($MERKLE_ROOT_FILE)"
+            })
+        }
     }
     let signed_statement = parse-root-statement $root_file
     let signed_root = $signed_statement.root
@@ -513,7 +529,7 @@ export def verify [
         error make {msg: $"proof is for a different seal: proof commits to ($proof.root), signed root is ($signed_root)"}
     }
 
-    let folded = fold-path (leaf-hash $proof.leaf) $proof.path | encode hex | str lowercase
+    let folded = fold-path (leaf-hash $proof.leaf) $proof.path | encode hex --lower
     let structure_valid = $folded == $signed_root
 
     # The signed statement is a claim ABOUT the manifest. `seal` writes the CSV
@@ -529,7 +545,7 @@ export def verify [
     # signed root is caught".
     let manifest = $seal_dir | path join $MANIFEST_FILE
     let manifest_root = if ($manifest | path exists) {
-        mth (load-leaves $manifest | each { leaf-hash $in }) | encode hex | str lowercase
+        mth (load-leaves $manifest | each { leaf-hash $in }) | encode hex --lower
     } else { null }
     let manifest_matches = $manifest_root == null or $manifest_root == $signed_root
 
@@ -607,7 +623,7 @@ export def verify [
     # signature says only "these bytes existed by T"; that it is an endorsement
     # OF THIS ROOT is what the signature check establishes, which is why both
     # halves have to hold before a row appears.
-    let endorsements = $sig_check.sigs | where valid | each {|s|
+    let endorsements = $sig_check.sigs | where $it.valid | each {|s|
         # `path expand` because a verify row's `sig` is a label — relative to the
         # cwd it was made in — and this reads the bytes behind it. The expand
         # resolves against that same cwd, so it is the inverse, not a guess.

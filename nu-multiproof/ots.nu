@@ -35,7 +35,7 @@ const CALENDAR_ALLOWLIST = [
 # shared with `beacon`.
 
 # LEB128 varuint decode at offset
-def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
+export def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
     let buf = $in
     mut value = 0
     mut shift = 1
@@ -59,7 +59,7 @@ def parse-varuint [offset: int]: binary -> record<value: int, offset: int> {
 }
 
 # Parse length-prefixed bytes at offset
-def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
+export def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
     let buf = $in
     let len = $buf | parse-varuint $offset
 
@@ -88,7 +88,7 @@ def parse-varbytes [offset: int]: binary -> record<bytes: binary, offset: int> {
 # accepted URI charset is exactly the reference set", the cap by "the pending
 # URI length cap is the reference client 1000 bytes" — since nothing in this
 # repo carries that file and a comment naming an absent source is not a check.
-def check-uri [raw: binary]: nothing -> string {
+export def check-uri [raw: binary]: nothing -> string {
     if ($raw | bytes length) > 1000 {
         error make {msg: "malformed OTS file: pending attestation URI exceeds 1000 bytes"}
     }
@@ -101,7 +101,7 @@ def check-uri [raw: binary]: nothing -> string {
 }
 
 # Parse one operation given the tag byte already read
-def parse-op [tag: int offset: int]: binary -> record<op: record, offset: int> {
+export def parse-op [tag: int offset: int]: binary -> record<op: record, offset: int> {
     let buf = $in
 
     match $tag {
@@ -126,7 +126,7 @@ def parse-op [tag: int offset: int]: binary -> record<op: record, offset: int> {
 # Not `binary -> record` though a record is all it ever yields: the body is a
 # `loop` whose only exit is the `return` below, and the parser types a `loop` as
 # nothing, so the declared record is rejected before anything runs.
-def parse-timestamp [offset: int]: binary -> any {
+export def parse-timestamp [offset: int]: binary -> any {
     let buf = $in
     mut pos = $offset
     mut ops = []
@@ -174,7 +174,7 @@ def parse-timestamp [offset: int]: binary -> any {
                 }
                 {type: "bitcoin" height: $height.value}
             } else {
-                {type: "unknown" tag: ($att_tag | encode hex | str lowercase)}
+                {type: "unknown" tag: ($att_tag | encode hex --lower)}
             }
 
             return {ops: $ops attestation: $attestation att_offset: $att_start offset: $pos}
@@ -188,7 +188,7 @@ def parse-timestamp [offset: int]: binary -> any {
 }
 
 # Parse a complete .ots file
-def parse-ots []: binary -> record {
+export def parse-ots []: binary -> record {
     let buf = $in
 
     let header = $buf | bytes at 0..30
@@ -236,12 +236,12 @@ def parse-ots []: binary -> record {
 }
 
 # Replay operations on binary hash input
-def replay-ops [ops: list]: binary -> binary {
+export def replay-ops [ops: list]: binary -> binary {
     mut hash = $in
 
     for op in $ops {
         $hash = match $op.type {
-            "sha256" => { $hash | hash sha256 | decode hex }
+            "sha256" => { $hash | hash sha256 --binary }
             "append" => { $hash | bytes add --end $op.data }
             "prepend" => { $op.data | bytes add --end $hash }
             _ => { error make {msg: $"cannot replay op: ($op.type)"} }
@@ -254,18 +254,19 @@ def replay-ops [ops: list]: binary -> binary {
 # `ots info x.ots | get attestation.height`. ops is a table ({type, data?} with
 # hex-encoded data); the default table rendering is already human-readable, so
 # no string-building is needed.
+@category multiproof
 @example "read the attestation from a proof" { nu-multiproof ots info proof.ots | get attestation }
 export def info [ots_file: path]: nothing -> record {
     let parsed = open --raw $ots_file | into binary | parse-ots
 
     {
-        # Why str lowercase: `encode hex` emits uppercase, but every persisted
+        # Why encode hex --lower: `encode hex` emits uppercase, but every persisted
         # hash in this project (tree-hashes.csv, proof files) is lowercase —
         # it comes from `hash sha256`/git. Lowercase is canonical.
-        hash: ($parsed.hash | encode hex | str lowercase)
+        hash: ($parsed.hash | encode hex --lower)
         ops: (
             $parsed.ops | each {|op|
-                if $op.data? == null { $op } else { $op | update data { encode hex | str lowercase } }
+                if $op.data? == null { $op } else { $op | update data { encode hex --lower } }
             }
         )
         attestation: $parsed.attestation
@@ -296,15 +297,24 @@ export def info [ots_file: path]: nothing -> record {
 # safe to paste. A fully runnable offline example is impossible for this
 # command — a valid calendar answer only ever comes from a calendar — so the
 # example shows the offline seam and fails locally when the file is absent.
+@category multiproof
 @example "assemble a proof from a saved calendar answer, offline" { nu-multiproof ots stamp multiproofs/tree-hashes.csv --response-file calendar-answer.bin }
-export def stamp [file: path --out-dir: path --into: path --response-file: path]: nothing -> record {
+export def stamp [
+    file: path
+    --out-dir: path # Directory new bundles are created in (default: the repo's ots directory)
+    --into: path # Existing bundle directory to join
+    --response-file: path # Calendar answer read from disk instead of posting
+]: nothing -> record {
     # Why refused rather than given a precedence: the two say different things
     # about where this proof goes, and picking one silently would file a stamp
     # somewhere the caller did not ask for. Checked before the calendar post
     # below — that post is a permanent public write, so an argument error has to
     # fail while failing is still free.
     if $out_dir != null and $into != null {
-        error make {msg: "--out-dir and --into are alternatives: --out-dir is the directory bundles are created in, --into is one existing bundle this stamp joins"}
+        error make {
+            msg: "--out-dir and --into are alternatives: --out-dir is the directory bundles are created in, --into is one existing bundle this stamp joins"
+            label: {text: "drop this or --out-dir" span: (metadata $into).span}
+        }
     }
     # A bundle names the proof `<stem>.ots` and the frozen copy `<stem>.<ext>`,
     # so a file whose extension already IS `ots` asks for one path to hold two
@@ -363,9 +373,9 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
     } else {
         ots-dir (repo-root)
     }
-    let file_hash = open --raw $file | hash sha256 | decode hex
+    let file_hash = open --raw $file | hash sha256 --binary
     let nonce = random binary 16
-    let merkle_tip = $file_hash | bytes add --end $nonce | hash sha256 | decode hex
+    let merkle_tip = $file_hash | bytes add --end $nonce | hash sha256 --binary
 
     let calendar_bytes = if $response_file != null {
         open --raw $response_file | into binary
@@ -549,7 +559,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             list-files $bundle_dir --regular
             | where $it != $copy_path
             | where not ($it | path basename | str ends-with ".ots")
-            | where (open --raw $it | hash sha256 | decode hex) == $incumbent
+            | where (open --raw $it | hash sha256 --binary) == $incumbent
         }
 
         if ($orphans | is-not-empty) {
@@ -611,9 +621,10 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
             msg: (
                 [
                     $"the proof was written, its frozen copy was not: ($e.msg)"
-                    $"($ots_path) is a complete proof of ($file), which is unchanged — copy it to ($copy_path) to finish the bundle"
+                    $"($ots_path) is a complete proof of ($file), which is unchanged"
                 ] | str join "\n"
             )
+            help: $"copy ($file) to ($copy_path) to finish the bundle"
         }
     }
 
@@ -656,7 +667,7 @@ export def stamp [file: path --out-dir: path --into: path --response-file: path]
 #
 # Not a glob here: `str ends-with` on a value that came from a file. This repo
 # has already been bitten by feeding data-derived text to glob.
-def check-calendar-url [url: string]: nothing -> nothing {
+export def check-calendar-url [url: string]: nothing -> nothing {
     let u = try { $url | url parse } catch {
         error make {msg: $"refusing to contact the calendar named in the proof: ($url) is not a URL"}
     }
@@ -683,8 +694,13 @@ def check-calendar-url [url: string]: nothing -> nothing {
 # --calendar: contact this calendar instead of the one named in the proof.
 # Why an override and not a wider allowlist: the URL in the file is attacker
 # input, the URL on the command line is the operator's decision.
+@category multiproof
 @example "upgrade a pending proof once Bitcoin confirms it" { nu-multiproof ots upgrade proof.ots }
-export def upgrade [ots_file: path --response-file: path --calendar: string]: nothing -> record {
+export def upgrade [
+    ots_file: path
+    --response-file: path # Calendar response read from disk instead of fetching it
+    --calendar: string # Calendar to contact instead of the one named in the proof
+]: nothing -> record {
     let buf = open --raw $ots_file | into binary
     let parsed = $buf | parse-ots
 
@@ -696,11 +712,11 @@ export def upgrade [ots_file: path --response-file: path --calendar: string]: no
         open --raw $response_file | into binary
     } else {
         let current_hash = $parsed.hash | replay-ops $parsed.ops
-        # Why str lowercase: same canonical-hex rule as `info` above. The
+        # Why encode hex --lower: same canonical-hex rule as `info` above. The
         # reference calendar unhexlifies server-side and accepts either case,
         # but this is the one hash this project sends off the machine — it
         # should not ride on another server's undocumented tolerance.
-        let hash_hex = $current_hash | encode hex | str lowercase
+        let hash_hex = $current_hash | encode hex --lower
         let base_url = if $calendar != null { $calendar } else {
             check-calendar-url $parsed.attestation.url
             $parsed.attestation.url
@@ -750,7 +766,7 @@ export def upgrade [ots_file: path --response-file: path --calendar: string]: no
 
 # Print a human summary of a verify result and, under --fail, turn an invalid
 # proof into a non-zero exit (matching merkle/ssh-sign verify).
-def emit-verify [result: record fail: bool]: nothing -> record {
+export def emit-verify [result: record fail: bool]: nothing -> record {
     if $result.valid {
         print $"✓ Bitcoin block ($result.height) verified independently"
         print $"  block hash:    ($result.block_hash)"
@@ -790,11 +806,12 @@ def emit-verify [result: record fail: bool]: nothing -> record {
 #   --file:        also confirm the proof commits to this content (closes the loop)
 #   --sources:     Esplora-compatible API bases to cross-check
 #   --min-sources: how many must answer and agree before a result is asserted
+@category multiproof
 @example "verify an anchor, failing on invalid (for CI)" { nu-multiproof ots verify proof.ots --fail }
 export def verify [
     ots_file: path
-    --file: path
-    --sources: list<string> = $DEFAULT_EXPLORERS
+    --file: path # Also confirm the proof commits to this content
+    --sources: list<string> = $DEFAULT_EXPLORERS # Esplora-compatible API bases to cross-check
     --min-sources: int = 2 # Explorers that must agree before a result is asserted
     --fail # Exit non-zero on an invalid proof (for CI)
 ]: nothing -> record {
@@ -802,7 +819,7 @@ export def verify [
     let parsed = open --raw $ots_file | into binary | parse-ots
 
     match $parsed.attestation.type {
-        "pending" => { error make {msg: $"proof is still pending on calendar ($parsed.attestation.url) — run `ots upgrade` after Bitcoin confirms it, then verify"} }
+        "pending" => { error make {msg: $"proof is still pending on calendar ($parsed.attestation.url)" help: "run `ots upgrade` after Bitcoin confirms it, then verify"} }
         "bitcoin" => { }
         $other => { error make {msg: $"unsupported attestation type: ($other)"} }
     }
@@ -814,7 +831,7 @@ export def verify [
     let base = {
         valid: false
         height: $height
-        file_hash: ($parsed.hash | encode hex | str lowercase)
+        file_hash: ($parsed.hash | encode hex --lower)
         block_hash: null
         block_time: null
         merkle_root: null
@@ -826,7 +843,7 @@ export def verify [
     # Content binding (if requested): a mismatch means the proof does not cover
     # this file — an invalid result, not an error.
     let content_verified = if $file != null {
-        (open --raw $file | hash sha256 | decode hex) == $parsed.hash
+        (open --raw $file | hash sha256 --binary) == $parsed.hash
     } else { null }
 
     if $content_verified == false {

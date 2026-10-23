@@ -55,6 +55,7 @@ const DEFAULT_DEPTH = 6
 # claims "not before", so an earlier block is a weaker claim and never a false
 # one — the same reason a signer naming an old block deliberately harms nobody
 # but itself.
+@category multiproof
 @example "mint a beacon token for a seal (reaches the network)" { nu-multiproof beacon latest }
 export def latest [
     --sources: list<string> = $DEFAULT_EXPLORERS # Esplora-compatible API bases to cross-check
@@ -63,7 +64,10 @@ export def latest [
 ]: nothing -> record {
     check-min-sources $min_sources
     if $depth < 0 {
-        error make {msg: "--depth must be zero or more blocks below the tip"}
+        error make {
+            msg: "--depth must be zero or more blocks below the tip"
+            label: {text: "negative depth" span: (metadata $depth).span}
+        }
     }
     let height = tip-height $sources $min_sources $depth
     let looked_up = block-hash-at $height $sources $min_sources
@@ -83,7 +87,7 @@ export def latest [
 
 # Print a human summary and, under --fail, turn a beacon that does not match
 # Bitcoin into a non-zero exit (matching ots/merkle/ssh-sign verify).
-def emit-verify [result: record fail: bool]: nothing -> record {
+export def emit-verify [result: record fail: bool]: nothing -> record {
     if $result.valid {
         print $"✓ beacon block ($result.height) confirmed independently"
         print $"  block hash:    ($result.block_hash)"
@@ -110,6 +114,7 @@ def emit-verify [result: record fail: bool]: nothing -> record {
 # answering, explorers disagreeing, a statement carrying no beacon at all. None
 # of those is a fact about the statement, and calling a good beacon invalid is
 # its own false statement.
+@category multiproof
 @example "check the lower bound on a seal (reaches the network)" { nu-multiproof beacon verify multiproofs/tree-root.txt }
 export def verify [
     statement: path # Root statement file (multiproofs/tree-root.txt, or a seal snapshot's copy)

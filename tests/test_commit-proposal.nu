@@ -22,10 +22,10 @@ def committed-repo [tmp_dir: path]: nothing -> record {
     let repo = $tmp_dir | path join repo
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "alpha\n" | save --force ($repo | path join a.txt)
     ^git -C $repo add -- . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
     {root: $repo commit: (^git -C $repo rev-parse HEAD | str trim)}
 }
 

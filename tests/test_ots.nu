@@ -82,11 +82,11 @@ def "an ascii file is rejected as a bad header and not a type mismatch" [] {
 
 @test
 def "fork produces error" [] {
-    let forked = (
+    let forked = (bytes build
         $OTS_HEADER
-        | bytes add --end 0x[01 08]
-        | bytes add --end $ZERO_HASH
-        | bytes add --end 0x[ff]
+        0x[01 08]
+        $ZERO_HASH
+        0x[ff]
     )
 
     $forked | save --raw --force /tmp/test_ots_fork.ots
@@ -101,7 +101,7 @@ def "fork produces error" [] {
 # of a pending OTS, produces a parseable upgraded buffer.
 # Format: TAG_ATTESTATION (0x00) + ATT_BITCOIN_TAG (8 bytes) + varbytes payload.
 # Payload encodes the block height as varuint, length-prefixed.
-def build-bitcoin-attestation-bytes [] {
+def build-bitcoin-attestation-bytes []: nothing -> binary {
     # Height 123456 as LEB128 = 0xC0C407 (3 bytes); outer varbytes len = 3.
     0x[00]
     | bytes add --end $ATT_BITCOIN_TAG
@@ -251,12 +251,14 @@ def "check-block-header does not bound the work behind a header" [] {
     # mapping; a powLimit floor would buy only ~2^32 hashes.
     # Pinned so a future reader does not mistake acceptance for a work check.
     let root = "forged" | hash sha256 --binary
-    let header = 0x[01000000]
-        | bytes add --end (0..<32 | each { 0x[00] } | bytes collect)
-        | bytes add --end $root
-        | bytes add --end 0x[00000000]
-        | bytes add --end 0x[ffff7f20]
-        | bytes add --end 0x[04000000]
+    let header = (bytes build
+        0x[01000000]
+        (0..<32 | each { 0x[00] } | bytes collect)
+        $root
+        0x[00000000]
+        0x[ffff7f20]
+        0x[04000000]
+    )
 
     assert equal ($header | bytes length) 80
     let block_hash = $header
@@ -358,14 +360,15 @@ def "an attestation payload with trailing bytes is refused" [] {
     # Payload length 5: the 3-byte height varint for 123456, then 2 junk bytes
     # inside the attestation's own length-prefixed field. The reference wraps
     # each payload in its own context and ends it with assert_eof.
-    $OTS_HEADER
-    | bytes add --end 0x[01 08]
-    | bytes add --end $ZERO_HASH
-    | bytes add --end 0x[08]
-    | bytes add --end 0x[00]
-    | bytes add --end $ATT_BITCOIN_TAG
-    | bytes add --end 0x[05 C0C407 ffff]
-    | save --raw --force $path
+    (bytes build
+        $OTS_HEADER
+        0x[01 08]
+        $ZERO_HASH
+        0x[08]
+        0x[00]
+        $ATT_BITCOIN_TAG
+        0x[05 C0C407 ffff]
+    ) | save --raw --force $path
 
     let outcome = try { ots info $path; "accepted" } catch {|e| $e.msg }
 
@@ -381,17 +384,18 @@ def "a pending attestation payload with trailing bytes is refused" [] {
     let uri = "https://a.calendar.opentimestamps.org" | into binary
     let uri_len = $uri | bytes length
 
-    $OTS_HEADER
-    | bytes add --end 0x[01 08]
-    | bytes add --end $ZERO_HASH
-    | bytes add --end 0x[08]
-    | bytes add --end 0x[00]
-    | bytes add --end 0x[83dfe30d2ef90c8e]
-    | bytes add --end ($uri_len + 3 | into binary --endian little | bytes at 0..0)
-    | bytes add --end ($uri_len | into binary --endian little | bytes at 0..0)
-    | bytes add --end $uri
-    | bytes add --end 0x[ffff]
-    | save --raw --force $path
+    (bytes build
+        $OTS_HEADER
+        0x[01 08]
+        $ZERO_HASH
+        0x[08]
+        0x[00]
+        0x[83dfe30d2ef90c8e]
+        ($uri_len + 3 | into binary --endian little | bytes at 0..0)
+        ($uri_len | into binary --endian little | bytes at 0..0)
+        $uri
+        0x[ffff]
+    ) | save --raw --force $path
 
     let outcome = try { ots info $path; "accepted" } catch {|e| $e.msg }
 
@@ -409,16 +413,17 @@ def "a pending URI holding characters the format forbids is refused" [] {
     let uri = 0x[68747470733a2f2f61 2e 63616c656e6461722e6f70656e74696d657374616d70732e6f7267 3f 78]
     let uri_len = $uri | bytes length
 
-    $OTS_HEADER
-    | bytes add --end 0x[01 08]
-    | bytes add --end $ZERO_HASH
-    | bytes add --end 0x[08]
-    | bytes add --end 0x[00]
-    | bytes add --end 0x[83dfe30d2ef90c8e]
-    | bytes add --end ($uri_len + 1 | into binary --endian little | bytes at 0..0)
-    | bytes add --end ($uri_len | into binary --endian little | bytes at 0..0)
-    | bytes add --end $uri
-    | save --raw --force $path
+    (bytes build
+        $OTS_HEADER
+        0x[01 08]
+        $ZERO_HASH
+        0x[08]
+        0x[00]
+        0x[83dfe30d2ef90c8e]
+        ($uri_len + 1 | into binary --endian little | bytes at 0..0)
+        ($uri_len | into binary --endian little | bytes at 0..0)
+        $uri
+    ) | save --raw --force $path
 
     let outcome = try { ots info $path; "accepted" } catch {|e| $e.msg }
 
@@ -437,16 +442,17 @@ def "the pending URI length cap is the reference client 1000 bytes" [] {
     # the length clause can be what refuses this.
     let over = $"($tmp_dir)/uri-1001.ots"
 
-    $OTS_HEADER
-    | bytes add --end 0x[01 08]
-    | bytes add --end $ZERO_HASH
-    | bytes add --end 0x[08]
-    | bytes add --end 0x[00]
-    | bytes add --end 0x[83dfe30d2ef90c8e]
-    | bytes add --end 0x[EB 07]
-    | bytes add --end 0x[E9 07]
-    | bytes add --end ("" | fill --character "a" --width 1001 | into binary)
-    | save --raw --force $over
+    (bytes build
+        $OTS_HEADER
+        0x[01 08]
+        $ZERO_HASH
+        0x[08]
+        0x[00]
+        0x[83dfe30d2ef90c8e]
+        0x[EB 07]
+        0x[E9 07]
+        ("" | fill --character "a" --width 1001 | into binary)
+    ) | save --raw --force $over
     let outcome = try { ots info $over; "accepted" } catch {|e| $e.msg }
 
     assert ($outcome | str contains "exceeds 1000 bytes") $"expected the length refusal, got: ($outcome)"
@@ -454,16 +460,17 @@ def "the pending URI length cap is the reference client 1000 bytes" [] {
     # Accepted: exactly 1000 — the reference cap is >, not >=.
     let at_cap = $"($tmp_dir)/uri-1000.ots"
 
-    $OTS_HEADER
-    | bytes add --end 0x[01 08]
-    | bytes add --end $ZERO_HASH
-    | bytes add --end 0x[08]
-    | bytes add --end 0x[00]
-    | bytes add --end 0x[83dfe30d2ef90c8e]
-    | bytes add --end 0x[EA 07]
-    | bytes add --end 0x[E8 07]
-    | bytes add --end ("" | fill --character "a" --width 1000 | into binary)
-    | save --raw --force $at_cap
+    (bytes build
+        $OTS_HEADER
+        0x[01 08]
+        $ZERO_HASH
+        0x[08]
+        0x[00]
+        0x[83dfe30d2ef90c8e]
+        0x[EA 07]
+        0x[E8 07]
+        ("" | fill --character "a" --width 1000 | into binary)
+    ) | save --raw --force $at_cap
     assert equal (ots info $at_cap | get attestation.url) ("" | fill --character "a" --width 1000)
 }
 
@@ -770,8 +777,7 @@ def "a frozen copy that cannot be written throws instead of returning the bundle
     let out_dir = $"($tmp_dir)/bundles"
     let prefix = open --raw $file
         | hash sha256
-        | decode hex
-        | encode hex
+        | str uppercase
         | str substring 0..<8
     let dir = bundle-dir-for $file $prefix $out_dir
 

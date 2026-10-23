@@ -20,11 +20,11 @@ def cleanup [] {
 # the commit it made.
 def make-repo [repo: path]: nothing -> string {
     mkdir ($repo | path join sub)
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "alpha\n" | save --force ($repo | path join a.txt)
     "beta\n" | save --force ($repo | path join sub b.txt)
     ^git -C $repo add -- . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m init
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message init
     ^git -C $repo rev-parse HEAD | str trim
 }
 
@@ -119,7 +119,7 @@ def "the snapshot leaves out exactly the paths the manifest leaves out" [] {
     "foo\n" | save --force ($repo | path join todofoo.md)
     "todo\n" | save --force ($repo | path join .multiproofignore)
     ^git -C $repo add -- . o+e>| ignore
-    ^git -C $repo -c user.email=t@t -c user.name=t commit -q -m todo
+    ^git -C $repo -c user.email=t@t -c user.name=t commit --quiet --message todo
     let head = ^git -C $repo rev-parse HEAD | str trim
 
     # The note is outside the manifest, so the manifest of HEAD's tree and of
@@ -164,7 +164,7 @@ def "a repo before its first commit gets no record" [] {
     let repo = $tmp_dir | path join repo
 
     mkdir $repo
-    ^git -C $repo init -q
+    ^git -C $repo init --quiet
     "alpha\n" | save --force ($repo | path join a.txt)
     ^git -C $repo add -- . o+e>| ignore
 

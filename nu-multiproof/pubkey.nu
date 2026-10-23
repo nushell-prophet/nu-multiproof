@@ -47,6 +47,7 @@ const KEY_TYPES = [
 # Reduce an SSH public key line to canonical form: `<type> <base64>\n`.
 # Errors on anything that is not one well-formed public key of a known type,
 # and on a key whose bytes are not the ones OpenSSH writes for it.
+@category multiproof
 export def canonical []: string -> string {
     let line = $in | str trim
 
@@ -108,6 +109,7 @@ export def canonical []: string -> string {
 # bytes while OpenSSH reports the same fingerprint for it. Hashing an
 # unvalidated line would hand one key a second principal — the identity fork
 # `canonical` exists to close, re-opened one function along.
+@category multiproof
 @example "the principal a stored public key signs under" {
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOi7LinplEQewM3/l8Ol9rE85+YwhvLPKf+ZUUf36Xuf" | nu-multiproof pubkey fingerprint
 } --result "b610a91de8fa99e224f6b2e7fb6bb8c9e8f0303f8d72d14e5a494ab8d1c68011"
@@ -147,7 +149,7 @@ export def fingerprint []: string -> string {
 # Reject rather than return OpenSSH's version: the caller is registering key
 # material into a trust list, and silently storing bytes other than the ones it
 # was handed is how one key becomes two identities in the first place.
-def openssh-reserialize [line: string]: nothing -> string {
+export def openssh-reserialize [line: string]: nothing -> string {
     # Why this is asked before any work: a missing binary makes an external call
     # *throw*, and `complete` does not catch that — only a non-zero exit. The
     # throw travelled up to `canonical-file`, which wrapped it as "<file> is not
@@ -163,6 +165,7 @@ def openssh-reserialize [line: string]: nothing -> string {
     with-temp-dir "pubkey" {|dir|
         let source = $dir | path join "key.pub"
         let envelope = $dir | path join "key.rfc4716"
+
         $"($line)\n" | save --force $source
         # Why 0600 on a *public* key: when -e cannot read the line as a public
         # key it retries it as a private one, and a private key at the default
@@ -173,6 +176,7 @@ def openssh-reserialize [line: string]: nothing -> string {
         ^chmod 600 $source
 
         let exported = do { ^ssh-keygen -e -m RFC4716 -f $source } | complete
+
         if $exported.exit_code != 0 {
             # Why `complete`: ssh-keygen writes the reason ("invalid format",
             # "unknown key type") to stderr, and a bare external call would
@@ -185,6 +189,7 @@ def openssh-reserialize [line: string]: nothing -> string {
         $exported.stdout | save --force $envelope
 
         let imported = do { ^ssh-keygen -i -m RFC4716 -f $envelope } | complete
+
         if $imported.exit_code != 0 {
             error make {msg: $"ssh-keygen cannot read back this SSH pubkey: (reason $imported $envelope)"}
         }
@@ -194,6 +199,6 @@ def openssh-reserialize [line: string]: nothing -> string {
 
 # What ssh-keygen said, with the temp path it names replaced by what that path
 # held. The caller is looking at a key line, not at a file this module made.
-def reason [result: record path: path]: nothing -> string {
+export def reason [result: record path: path]: nothing -> string {
     $result.stderr | str trim | str replace --all $path "the given key"
 }

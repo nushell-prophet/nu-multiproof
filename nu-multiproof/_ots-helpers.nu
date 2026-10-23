@@ -1,7 +1,7 @@
 # Internal helpers for ots.nu. Not part of the public nu-multiproof API
-# (mod.nu does not re-export this file). Lives separately so the pure
-# extensionless-input case can be tested without invoking `stamp` and the
-# calendar network call.
+# (mod.nu does not re-export this file). Lives separately because seal.nu,
+# beacon.nu and _explorer.nu share these helpers with ots.nu, and none of
+# them makes a network call.
 
 # The bundle directory a proof over <file> is filed under: `<stem>.<HASH8>`,
 # the grammar every name-based reader places a proof by (README, "OTS bundle").
@@ -24,7 +24,7 @@ export def bundle-dir-for [file: path hash_prefix: string out_dir: path]: nothin
 # `tree-root.txt` in it against the root hex, and `seal status` reads the same
 # copy.
 export def freeze-bundle [file: path out_dir: path]: nothing -> path {
-    let file_hash = open --raw $file | hash sha256 | decode hex
+    let file_hash = open --raw $file | hash sha256 --binary
     # Uppercase here while every compared hash in this project is lowercase, for
     # the same reason `stamp` does it: this is only a directory name, and the
     # form is already baked into committed bundles and into README. `encode hex`
@@ -64,7 +64,7 @@ export def write-frozen-copy [
     # Measured limit, stated because it is not closed: the verify read and the
     # copy read are two passes, so this narrows the window, it does not remove
     # it.
-    if (open --raw $file | hash sha256 | decode hex) != $file_hash {
+    if (open --raw $file | hash sha256 --binary) != $file_hash {
         error make {
             msg: $"($file) changed while it was being timestamped"
             help: "the proof commits to the bytes read at the start of the run; a bundle must not hold anything else under that name"
@@ -92,7 +92,7 @@ export def check-frozen-copy [
     why: string # what a mismatch means at this callsite
 ]: nothing -> nothing {
     if not ($copy_path | path exists) { return }
-    if (open --raw $copy_path | hash sha256 | decode hex) != $file_hash {
+    if (open --raw $copy_path | hash sha256 --binary) != $file_hash {
         error make {msg: $"collision in ($copy_path | path dirname): ($why)"}
     }
 }
@@ -114,13 +114,10 @@ export def copy-path-for [file: path bundle_dir: path]: nothing -> string {
 # order explorers and block heights use.
 export def block-hash-of [header: binary]: nothing -> string {
     $header
-    | hash sha256
-    | decode hex
-    | hash sha256
-    | decode hex
+    | hash sha256 --binary
+    | hash sha256 --binary
     | bytes reverse
-    | encode hex
-    | str lowercase
+    | encode hex --lower
 }
 
 # The `time` field of a raw 80-byte header (bytes 68..71, little-endian).
@@ -199,11 +196,11 @@ export def check-block-header [
     let header_root = $header | bytes at 36..67
 
     if $header_root != $expected_root {
-        error make {msg: $"merkle root mismatch: header commits to ($header_root | encode hex | str lowercase), proof replays to ($expected_root | encode hex | str lowercase)"}
+        error make {msg: $"merkle root mismatch: header commits to ($header_root | encode hex --lower), proof replays to ($expected_root | encode hex --lower)"}
     }
     {
         block_hash: $block_hash
-        merkle_root: ($header_root | encode hex | str lowercase)
+        merkle_root: ($header_root | encode hex --lower)
         time: (header-time $header)
     }
 }
