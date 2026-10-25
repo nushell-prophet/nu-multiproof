@@ -112,6 +112,8 @@ The other commands take bytes or a file path, and no repo at all.
 ```nushell no-run
 use nu-multiproof/   # from this repo's root; from elsewhere, give the path
 
+nu-multiproof init   # create multiproofs/, register the signing key
+
 # The whole pipeline in one step; its five stages are listed below.
 nu-multiproof seal
 nu-multiproof seal --repo path/to/other/repo   # seal a repo other than the CWD's
@@ -122,7 +124,6 @@ nu-multiproof seal --external-signer           # stage 4 on another device: run,
 nu-multiproof seal status                      # every bundle and its anchor state; not a verdict
 
 # The steps seal wraps, one by one
-nu-multiproof init                             # create multiproofs/, register the signing key
 nu-multiproof tree-hashes                      # the content manifest (SHA-256, git hashes, IPFS CID v0)
 nu-multiproof merkle write-root                # the root statement, multiproofs/tree-root.txt
 nu-multiproof ssh-sign sign multiproofs/tree-root.txt --key ~/.ssh/id_ed25519   # the key must be registered
